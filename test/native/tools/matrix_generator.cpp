@@ -298,10 +298,10 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         EngineDescriptor d;
         d.metadata = {"retro_games", "Retro Games Showcase", "arcade", FIRMWARE_VERSION};
         d.requirements.needsNetwork = true;
-        d.requirements.targetFps = 30;
+        d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 8000;
+        d.requirements.internalPersistentBytes = 24000;
         d.requirements.internalContiguousBytes = 12000;
         engines.push_back(d);
     }
@@ -310,10 +310,10 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         EngineDescriptor d;
         d.metadata = {"movie_showcase", "Movie Showcase", "media", FIRMWARE_VERSION};
         d.requirements.needsNetwork = true;
-        d.requirements.targetFps = 30;
+        d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 8000;
+        d.requirements.internalPersistentBytes = 24000;
         d.requirements.internalContiguousBytes = 12000;
         engines.push_back(d);
     }
@@ -322,10 +322,10 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         EngineDescriptor d;
         d.metadata = {"series_showcase", "Series Showcase", "media", FIRMWARE_VERSION};
         d.requirements.needsNetwork = true;
-        d.requirements.targetFps = 30;
+        d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 8000;
+        d.requirements.internalPersistentBytes = 24000;
         d.requirements.internalContiguousBytes = 12000;
         engines.push_back(d);
     }
@@ -334,10 +334,10 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         EngineDescriptor d;
         d.metadata = {"anime_showcase", "Anime Showcase", "media", FIRMWARE_VERSION};
         d.requirements.needsNetwork = true;
-        d.requirements.targetFps = 30;
+        d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 8000;
+        d.requirements.internalPersistentBytes = 24000;
         d.requirements.internalContiguousBytes = 12000;
         engines.push_back(d);
     }

@@ -5,7 +5,9 @@
 #include "engines/TempEngine.h"
 #include "engines/MessageEngine.h"
 #include "engines/MediaShowcaseEngines.h"
+#include "engines/FrontendSyncEngine.h"
 #include "engines/clocks/ClockFaceFont.h"
+#include "core/drawing/IDrawingSurface.h"
 #include "core/I18n.h"
 
 void setUp(void) {}
@@ -285,6 +287,109 @@ void test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation(
     TEST_ASSERT_EQUAL_STRING("cps2,neogeo,megadrive", smallBuf);
 }
 
+/**
+ * @brief Regression test verifying that `MediaShowcaseBase::render()` and `InGameShowcaseEngine::render()`
+ *        preserve `hasNewFrame() == true` immediately after drawing a dirty frame (preventing the
+ *        `FPS: 0.0 present` black-screen bug) and return `false` on clean intermediate ticks.
+ */
+void test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art() {
+    class TestSurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        TestSurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 128 * 32; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override { return CanvasView{}; }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+        size_t countNonBlackPixels() const {
+            size_t n = 0;
+            for (size_t i = 0; i < 128 * 32; ++i) {
+                if (pixels[i] != 0) ++n;
+            }
+            return n;
+        }
+    };
+
+    class TestEngineContext : public EngineContext {
+    public:
+        IDrawingSurface* surf = nullptr;
+        explicit TestEngineContext(IDrawingSurface* s) : surf(s) {}
+        IDrawingSurface* getSurface() override { return surf; }
+        FrontendSyncEngine* getEventBus() override { return nullptr; }
+        void getSystemTime(struct tm* t) override {
+            if (t) memset(t, 0, sizeof(*t));
+        }
+        DisplayGeometry getGeometry() const override {
+            DisplayGeometry g;
+            g.width = 128;
+            g.height = 32;
+            g.nativeWidth = 128;
+            g.nativeHeight = 32;
+            return g;
+        }
+    };
+
+    TestSurface128x32 surf;
+    TestEngineContext ctx(&surf);
+
+    RetroGamesEngine gamesEng;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(gamesEng.initialize(&ctx, nullptr)));
+    TEST_ASSERT_EQUAL_STRING("esp32_ut0001_games_128x32", gamesEng.sessionId());
+
+    gamesEng.activate();
+    gamesEng.render(&ctx);
+    // CRITICAL: hasNewFrame() is queried AFTER render() by RotationManager / DisplayRuntime!
+    TEST_ASSERT_TRUE(gamesEng.hasNewFrame());
+    TEST_ASSERT_TRUE(surf.countNonBlackPixels() > 20U);
+
+    // Immediate second render without dirty state change must NOT trigger redundant HUB75 flip
+    gamesEng.render(&ctx);
+    TEST_ASSERT_FALSE(gamesEng.hasNewFrame());
+    gamesEng.deactivate();
+
+    // Verify InGameShowcaseEngine follows the identical post-render hasNewFrame() contract
+    InGameShowcaseEngine inGameEng;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(inGameEng.initialize(&ctx, nullptr)));
+    inGameEng.activate();
+    static const uint16_t dummyRow[4] = {0xF800, 0x07E0, 0x001F, 0xFFFF};
+    inGameEng.publishFrame(dummyRow, 2, 2);
+    inGameEng.update(&ctx);
+    inGameEng.render(&ctx);
+    TEST_ASSERT_TRUE(inGameEng.hasNewFrame());
+    inGameEng.render(&ctx);
+    TEST_ASSERT_FALSE(inGameEng.hasNewFrame());
+    inGameEng.deactivate();
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -297,6 +402,7 @@ void setup() {
     RUN_TEST(test_date_line_follows_the_language);
     RUN_TEST(test_media_showcase_ready_payload_zero_copy_parsing);
     RUN_TEST(test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation);
+    RUN_TEST(test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art);
     UNITY_END();
 }
 

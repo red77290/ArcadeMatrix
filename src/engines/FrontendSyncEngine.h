@@ -39,7 +39,7 @@ public:
 
     bool isRealtime() const override { return true; }
     bool needsClear() const override { return false; }
-    bool hasNewFrame() const override { return m_dirty; }
+    bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool allowRotation() const override { return false; }
 
     // Lock-free Core 0 -> Core 1 frame handoff
@@ -75,6 +75,7 @@ private:
 
     uint32_t m_lastRenderedSeq = 0;
     bool m_dirty = false;
+    bool m_renderedNewFrame = false;
 };
 
 // Listens for game-launch/stop events from Recalbox/Batocera/RetroPie over MQTT and displays the

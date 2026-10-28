@@ -9,6 +9,7 @@
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
 #include <esp_task_wdt.h>
 #if defined(ESP32)
@@ -81,36 +82,22 @@ bool parseUrlHostAndPort(const char* rawUrl, uint16_t defaultPort, char* outHost
     return true;
 }
 
-void resolveMdnsHostInPlace(char* hostBuf, size_t hostCap) {
-#if defined(ESP32) && !defined(UNIT_TEST)
-    if (!hostBuf || hostCap == 0) return;
-    size_t len = strlen(hostBuf);
-    if (len > 6 && strcasecmp(hostBuf + len - 6, ".local") == 0) {
-        char mdnsName[64];
-        size_t baseLen = len - 6;
-        if (baseLen >= sizeof(mdnsName)) baseLen = sizeof(mdnsName) - 1;
-        memcpy(mdnsName, hostBuf, baseLen);
-        mdnsName[baseLen] = '\0';
-        IPAddress ip = MDNS.queryHost(mdnsName, 500);
-        if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
-            snprintf(hostBuf, hostCap, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-        }
-    }
-#else
-    (void)hostBuf;
-    (void)hostCap;
-#endif
-}
-
 bool resolveBaseServerUrl(const char* rawUrl, char* outBaseUrl, size_t outCap, char* outResolvedHost, size_t hostCap) {
     uint16_t port = 8890;
-    bool isHttps = false;
-    if (!parseUrlHostAndPort(rawUrl, 8890, outResolvedHost, hostCap, port, isHttps)) {
-        return false;
-    }
-    resolveMdnsHostInPlace(outResolvedHost, hostCap);
-    snprintf(outBaseUrl, outCap, "%s://%s:%u", isHttps ? "https" : "http", outResolvedHost, port);
-    return true;
+    bool online = false;
+    return net::ShowcaseDiscovery::resolveUrl(
+        rawUrl,
+        outBaseUrl,
+        outCap,
+        outResolvedHost,
+        hostCap,
+        port,
+        online,
+        nullptr,
+        0,
+        true,
+        false
+    );
 }
 
 bool readExactTokenAware(
@@ -213,6 +200,7 @@ EngineError InGameShowcaseEngine::initialize(EngineContext* context, const Engin
     m_width = geom.width > 0 ? geom.width : 128;
     m_height = geom.height > 0 ? geom.height : 32;
     m_dirty = false;
+    m_renderedNewFrame = false;
     return EngineError::OK;
 }
 
@@ -220,6 +208,7 @@ void InGameShowcaseEngine::activate() {
     m_displayEngaged.store(true, std::memory_order_release);
     m_lastRenderedSeq = 0;
     m_dirty = true;
+    m_renderedNewFrame = false;
 }
 
 void InGameShowcaseEngine::update(EngineContext* context) {
@@ -231,8 +220,15 @@ void InGameShowcaseEngine::update(EngineContext* context) {
 }
 
 void InGameShowcaseEngine::render(EngineContext* context) {
+    if (!m_dirty) {
+        m_renderedNewFrame = false;
+        return;
+    }
     IDrawingSurface* s = (context && context->getSurface()) ? context->getSurface() : m_surface;
-    if (!s) return;
+    if (!s) {
+        m_renderedNewFrame = false;
+        return;
+    }
 
     const uint16_t* ptr = m_activeFramePtr.load(std::memory_order_acquire);
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
@@ -245,22 +241,26 @@ void InGameShowcaseEngine::render(EngineContext* context) {
         m_lastRenderedSeq = seq;
     }
     m_dirty = false;
+    m_renderedNewFrame = true;
 }
 
 void InGameShowcaseEngine::deactivate() {
     // Invariant 15: 100% allocation-free and wait-free on Core 1
     m_displayEngaged.store(false, std::memory_order_release);
     m_dirty = false;
+    m_renderedNewFrame = false;
 }
 
 void InGameShowcaseEngine::pause() {
     m_displayEngaged.store(false, std::memory_order_release);
+    m_renderedNewFrame = false;
 }
 
 void InGameShowcaseEngine::resume() {
     m_displayEngaged.store(true, std::memory_order_release);
     m_lastRenderedSeq = 0;
     m_dirty = true;
+    m_renderedNewFrame = false;
 }
 
 void InGameShowcaseEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
@@ -429,10 +429,10 @@ bool FrontendSyncEngine::parseShowcaseHealthBroker(
     char hostBuf[96] = "";
     if (!isLoopbackOrEmptyHost(rawHost)) {
         copySafeCStr(hostBuf, sizeof(hostBuf), rawHost);
-        resolveMdnsHostInPlace(hostBuf, sizeof(hostBuf));
+        net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890);
     } else if (fallbackHost && !isLoopbackOrEmptyHost(fallbackHost)) {
         copySafeCStr(hostBuf, sizeof(hostBuf), fallbackHost);
-        resolveMdnsHostInPlace(hostBuf, sizeof(hostBuf));
+        net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890);
     } else {
         return false;
     }
@@ -752,11 +752,10 @@ void FrontendSyncEngine::reconnect() {
     if (stopReconnectRequested.load(std::memory_order_acquire)) return;
     if (WiFi.status() == WL_CONNECTED) {
         String cid = mqttConfig.deviceName;
-#if defined(ESP32)
-        char macHex[8];
-        snprintf(macHex, sizeof(macHex), "_%04X", static_cast<unsigned>(ESP.getEfuseMac() & 0xFFFFU));
-        cid += macHex;
-#endif
+        char hwId[8] = "";
+        net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
+        cid += "_";
+        cid += hwId;
         bool connected = false;
         if (!m_activeFromShowcase && mqttConfig.user.length() > 0) {
             connected = mqttClient.connect(cid.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str());
@@ -797,7 +796,13 @@ void FrontendSyncEngine::handleMessage(String topic, String msg) {
     }
 
     if (topic.startsWith("dmd_showcase/clients/") && topic.endsWith("/command")) {
-        if (msg.indexOf("\"play_now\"") != -1) {
+        char hwPrefix[20] = "";
+        char hwId[8] = "";
+        net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
+        snprintf(hwPrefix, sizeof(hwPrefix), "esp32_%s_", hwId);
+        // Only wake up for commands targeting this board's hardware ID (or legacy broadcast slot)
+        if ((topic.indexOf(hwPrefix) != -1 || topic.indexOf("/esp32_games_") != -1) &&
+            msg.indexOf("\"play_now\"") != -1) {
             m_readyWakeupHint.store(true, std::memory_order_release);
         }
         return;
@@ -1161,7 +1166,7 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                 char resolvedShowcaseHost[96] = "";
                 if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
                     char syncClientId[48];
-                    snprintf(syncClientId, sizeof(syncClientId), "esp32_games_%ux%u_sync", targetW, targetH);
+                    net::ShowcaseDiscovery::formatClientId("games", targetW, targetH, true, syncClientId, sizeof(syncClientId));
 
                     MqttConfig reqMqttCfg;
                     reqMqttCfg.card_style_source = wcfg.cardStyleSource;
