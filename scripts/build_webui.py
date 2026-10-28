@@ -214,6 +214,39 @@ else:
 try:
     Import("env")
     env.Append(CPPDEFINES=[("BUILD_GIT_COMMIT", f'\\"{git_commit}\\"')])
+
+    def verify_app0_partition_fit(source, target, env):
+        import struct
+
+        fw_path = str(target[0])
+        build_dir = os.path.dirname(fw_path)
+        part_path = os.path.join(build_dir, "partitions.bin")
+        if not os.path.exists(fw_path) or not os.path.exists(part_path):
+            return
+        fw_size = os.path.getsize(fw_path)
+        raw = open(part_path, "rb").read()
+        app0_size = None
+        for off in range(0, len(raw) - 31, 32):
+            magic, ptype, sub, addr, size = struct.unpack("<HBBII", raw[off : off + 12])
+            if magic != 0x50AA:
+                break
+            if ptype == 0x00 and sub in (0x00, 0x10):
+                app0_size = size
+                break
+        if app0_size is not None:
+            safety_margin = 16384
+            pct = (fw_size * 100.0) / float(app0_size)
+            print(
+                f"🔍 [Partition Gate] firmware.bin = {fw_size} B / app0 = {app0_size} B ({pct:.1f}%, headroom = {app0_size - fw_size} B)"
+            )
+            if fw_size > app0_size - safety_margin:
+                print(
+                    f"❌ FATAL ERROR: firmware.bin ({fw_size} B) exceeds app0 partition safety limit "
+                    f"({app0_size - safety_margin} B, partition={app0_size} B)! ESP32 bootloader will SW_RESET bootloop."
+                )
+                sys.exit(1)
+
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", verify_app0_partition_fit)
 except Exception:
     pass
 
