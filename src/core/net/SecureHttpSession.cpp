@@ -4,16 +4,18 @@
 #include <string.h>
 
 #if defined(ARDUINO)
+#include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_task_wdt.h>
 #endif
+#include <new>
 
 namespace net {
 
 struct SessionTransport {
     virtual ~SessionTransport() = default;
-    virtual bool connect(const char* host, uint16_t port, uint32_t timeoutSec) = 0;
+    virtual bool connect(const char* host, uint16_t port, uint32_t timeoutSec, bool https) = 0;
     virtual bool connected() = 0;
     virtual void stop() = 0;
     virtual bool begin(const String& host, uint16_t port, const String& path, bool https, const SecureHttpOptions& options) = 0;
@@ -29,31 +31,55 @@ struct SessionTransport {
 #if defined(ARDUINO)
 class EspSessionTransport : public SessionTransport {
 public:
-    EspSessionTransport() {
-        _client.setInsecure();
-    }
+    EspSessionTransport() = default;
 
-    bool connect(const char* host, uint16_t port, uint32_t timeoutSec) override {
-        _client.setHandshakeTimeout(timeoutSec);
-        return _client.connect(host, port, timeoutSec * 1000);
+    bool connect(const char* host, uint16_t port, uint32_t timeoutSec, bool https) override {
+        _activeHttps = https;
+        if (https) {
+            if (!_tlsClient) {
+                _tlsClient.reset(new (std::nothrow) WiFiClientSecure());
+                if (!_tlsClient) return false;
+                _tlsClient->setInsecure();
+            }
+            _tlsClient->setHandshakeTimeout(timeoutSec);
+            return _tlsClient->connect(host, port, timeoutSec * 1000);
+        }
+        return _plainClient.connect(host, port, timeoutSec * 1000);
     }
 
     bool connected() override {
-        return _client.connected();
+        if (_activeHttps) {
+            return _tlsClient && _tlsClient->connected();
+        }
+        return _plainClient.connected();
     }
 
     void stop() override {
-        _client.stop();
+        if (_tlsClient) {
+            _tlsClient->stop();
+        }
+        _plainClient.stop();
     }
 
     bool begin(const String& host, uint16_t port, const String& path, bool https, const SecureHttpOptions& options) override {
+        _activeHttps = https;
         _http.setTimeout(options.requestTimeoutMs);
         _http.setUserAgent(options.userAgent);
         _http.setReuse(options.keepAlive);
         if (options.followRedirects) {
             _http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
         }
-        bool ok = _http.begin(_client, host, port, path, https);
+        bool ok = false;
+        if (https) {
+            if (!_tlsClient) {
+                _tlsClient.reset(new (std::nothrow) WiFiClientSecure());
+                if (!_tlsClient) return false;
+                _tlsClient->setInsecure();
+            }
+            ok = _http.begin(*_tlsClient, host, port, path, true);
+        } else {
+            ok = _http.begin(_plainClient, host, port, path, false);
+        }
         if (ok) {
             if (!options.authUser.isEmpty() && !options.authPassword.isEmpty()) {
                 _http.setAuthorization(options.authUser.c_str(), options.authPassword.c_str());
@@ -100,8 +126,10 @@ public:
     }
 
 private:
-    WiFiClientSecure _client;
+    WiFiClient _plainClient;
+    std::unique_ptr<WiFiClientSecure> _tlsClient;
     HTTPClient _http;
+    bool _activeHttps = false;
 };
 #endif
 
@@ -196,33 +224,53 @@ bool SecureHttpSession::ensureConnected() {
 
     _state = SessionState::Connecting;
 
-    // Invariant N1: TLS admission check before handshake
-    if (!NetworkBudget::canStartTlsSession()) {
-        _lastError = TransportError::TlsDenied;
-        _state = SessionState::Disconnected;
-        return false;
-    }
-
-    // Invariant N2: Handshake lock strictly limited to connect()
-    {
-        NetworkBudget::ScopedTlsHandshakeLock lock;
-        if (!lock) {
-            _lastError = lock.isDeniedByBudget() ? TransportError::TlsDenied
-                                                : TransportError::LockContended;
+    if (_isHttps) {
+        // Invariant N1: TLS admission check before handshake
+        if (!NetworkBudget::canStartTlsSession()) {
+            _lastError = TransportError::TlsDenied;
             _state = SessionState::Disconnected;
             return false;
         }
 
+        // Invariant N2: Handshake lock strictly limited to connect()
+        {
+            NetworkBudget::ScopedTlsHandshakeLock lock;
+            if (!lock) {
+                _lastError = lock.isDeniedByBudget() ? TransportError::TlsDenied
+                                                    : TransportError::LockContended;
+                _state = SessionState::Disconnected;
+                return false;
+            }
+
+#if defined(ARDUINO)
+            esp_task_wdt_reset();
+#endif
+            bool connected = _transport->connect(_host.c_str(), _port, _options.handshakeTimeoutSec, true);
+            if (!connected) {
+                _lastError = TransportError::ConnectFailed;
+                _state = SessionState::Disconnected;
+                return false;
+            }
+            // lock destructor runs here: released immediately upon connect() success!
+        }
+    } else {
+        // Plain HTTP transport (no TLS handshake, zero mbedTLS record buffers):
+        // bypass the 46 KB TLS admission gate and connect over plain TCP.
+        if (!NetworkBudget::acquireHttp()) {
+            _lastError = TransportError::ConnectFailed;
+            _state = SessionState::Disconnected;
+            return false;
+        }
 #if defined(ARDUINO)
         esp_task_wdt_reset();
 #endif
-        bool connected = _transport->connect(_host.c_str(), _port, _options.handshakeTimeoutSec);
+        bool connected = _transport->connect(_host.c_str(), _port, _options.handshakeTimeoutSec, false);
+        NetworkBudget::releaseHttp();
         if (!connected) {
             _lastError = TransportError::ConnectFailed;
             _state = SessionState::Disconnected;
             return false;
         }
-        // 👉 lock destructor runs here: released immediately upon connect() success!
     }
 
     if (_aborted.load(std::memory_order_acquire)) {

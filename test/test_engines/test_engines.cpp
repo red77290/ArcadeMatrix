@@ -8,6 +8,8 @@
 #include "engines/FrontendSyncEngine.h"
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/drawing/IDrawingSurface.h"
+#include "core/net/SecureHttpSession.h"
+#include "core/NetworkBudget.h"
 #include "core/I18n.h"
 
 void setUp(void) {}
@@ -390,6 +392,176 @@ void test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art() {
     inGameEng.deactivate();
 }
 
+/**
+ * @brief Regression test verifying:
+ * 1. `MediaShowcaseBase::countUtf8Glyphs` accurately counts NFC/NFD accented strings and `œ`/`Œ` ligatures.
+ * 2. 128x32 Card rendering strictly clips scrolling accented Title and Synopsis inside `[35, 126)`,
+ *    writing ZERO text pixels behind the `32x32` jacket poster (`x = 0..32`), gutter (`x = 34`), or right margin (`x = 126..127`).
+ * 3. Plain-HTTP `SecureHttpSession` (`setHttps(false)`, port 8890) bypasses `NetworkBudget::canStartTlsSession()`
+ *    and never fails with `TransportError::TlsDenied` or increments `getTlsDeniedCount()`.
+ */
+void test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls() {
+    // 1. UTF-8 glyph counting (NFC + NFD + ligatures)
+    TEST_ASSERT_EQUAL_UINT32(23U, static_cast<uint32_t>(MediaShowcaseBase::countUtf8Glyphs("Épisode : L'Épée à Noël")));
+    // NFD "E" + U+0301 combining acute + "pée" -> 4 rendered glyphs (É, p, é, e)
+    TEST_ASSERT_EQUAL_UINT32(4U, static_cast<uint32_t>(MediaShowcaseBase::countUtf8Glyphs("E\xCC\x81p\xC3\xA9""e")));
+    // Ligatures œ (o+e = 2 columns) and Œ (O+E = 2 columns)
+    TEST_ASSERT_EQUAL_UINT32(5U, static_cast<uint32_t>(MediaShowcaseBase::countUtf8Glyphs("cœur")));
+    TEST_ASSERT_EQUAL_UINT32(6U, static_cast<uint32_t>(MediaShowcaseBase::countUtf8Glyphs("Œuvre")));
+
+    // 2. Strict horizontal clipping on 128x32 Card with all-black 32x32 poster (`2,048` zero bytes = 2,732 Base64 'A's)
+    class ClipSurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        ClipSurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 128 * 32; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override { return CanvasView{}; }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    class ClipEngineContext : public EngineContext {
+    public:
+        IDrawingSurface* surf = nullptr;
+        explicit ClipEngineContext(IDrawingSurface* s) : surf(s) {}
+        IDrawingSurface* getSurface() override { return surf; }
+        FrontendSyncEngine* getEventBus() override { return nullptr; }
+        void getSystemTime(struct tm* t) override {
+            if (t) memset(t, 0, sizeof(*t));
+        }
+        DisplayGeometry getGeometry() const override {
+            DisplayGeometry g;
+            g.width = 128;
+            g.height = 32;
+            g.nativeWidth = 128;
+            g.nativeHeight = 32;
+            return g;
+        }
+    };
+
+    ClipSurface128x32 surf;
+    ClipEngineContext ctx(&surf);
+    RetroGamesEngine gamesEng;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(gamesEng.initialize(&ctx, nullptr)));
+    gamesEng.activate();
+
+    // Waiting screen (!hasData) renders centered steady status text on bottom band (y = 26..30)
+    surf.clear(0);
+    gamesEng.render(&ctx);
+    size_t bottomStatusPixels = 0;
+    for (int y = 26; y <= 30; ++y) {
+        for (int x = 2; x < 126; ++x) {
+            if (surf.pixels[y * 128 + x] != 0) ++bottomStatusPixels;
+        }
+    }
+    TEST_ASSERT_TRUE(bottomStatusPixels > 15U);
+
+    // Feed an accented Card payload with an all-zero 32x32 RGB565 poster
+    String zeroPosterB64;
+    zeroPosterB64.reserve(2732);
+    for (int i = 0; i < 2732; ++i) {
+        zeroPosterB64 += 'A';
+    }
+    String cardJson =
+        String("{\"ready\":true,\"item_id\":\"pkg_clip_fr\",\"domain\":\"games\",\"card\":{") +
+        "\"id\":\"pkg_clip_fr\",\"title\":\"L'Épée Légendaire de Noël — Édition Cœur d'Émeraude\"," +
+        "\"year\":\"1994\",\"badge\":\"SNES\",\"badge_color\":\"#00E5FF\",\"rating\":\"9.5\"," +
+        "\"poster_width\":32,\"poster_height\":32,\"poster_rgb565_b64\":\"" + zeroPosterB64 + "\"," +
+        "\"synopsis\":\"À l'aube d'un été brûlant, le héros traverse château, forêt et île mystérieuse…\"," +
+        "\"has_panoramas\":true,\"has_video\":true,\"stream_fps\":20,\"stream_duration_s\":10.0}}";
+    std::vector<char> mutableCard(cardJson.begin(), cardJson.end());
+    mutableCard.push_back('\0');
+    char parsedId[64] = "";
+    bool hasStream = false;
+    uint32_t streamMaxMs = 0;
+    bool explicitWarming = false;
+    TEST_ASSERT_TRUE(gamesEng.parseReadyPayloadInPlaceBuf(
+        mutableCard.data(), false, parsedId, sizeof(parsedId), hasStream, streamMaxMs, explicitWarming
+    ));
+    TEST_ASSERT_EQUAL_STRING("pkg_clip_fr", parsedId);
+
+    // Advance scroll time so both Title and Synopsis are actively mid-scroll leftward toward x = 35
+    delay(1800);
+    gamesEng.update(&ctx);
+    surf.clear(0);
+    gamesEng.render(&ctx);
+
+    size_t posterLeakPixels = 0;
+    size_t rightMarginLeakPixels = 0;
+    size_t clippedTextRegionPixels = 0;
+    for (int y = 0; y < 32; ++y) {
+        // Columns 0..31 (32x32 poster), 32 (left gutter), and 34 (right gutter around x=33 divider) must stay 100% black!
+        for (int x = 0; x <= 34; ++x) {
+            if (x == 33) continue; // Intentional 1px subtle vertical divider
+            if (surf.pixels[y * 128 + x] != 0) ++posterLeakPixels;
+        }
+        for (int x = 35; x < 126; ++x) {
+            if (surf.pixels[y * 128 + x] != 0) ++clippedTextRegionPixels;
+        }
+        for (int x = 126; x < 128; ++x) {
+            if (surf.pixels[y * 128 + x] != 0) ++rightMarginLeakPixels;
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(posterLeakPixels));
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(rightMarginLeakPixels));
+    TEST_ASSERT_TRUE(clippedTextRegionPixels > 60U);
+    gamesEng.deactivate();
+
+    // 3. Plain-HTTP SecureHttpSession (`setHttps(false)`) must NEVER invoke `canStartTlsSession()`
+    NetworkBudget::markBulkTransferActive(5000);
+    uint32_t deniedBefore = NetworkBudget::getTlsDeniedCount().load(std::memory_order_relaxed);
+    {
+        net::SecureHttpOptions httpsOpts;
+        httpsOpts.handshakeTimeoutSec = 1;
+        httpsOpts.requestTimeoutMs = 200;
+        net::SecureHttpSession httpsSess("127.0.0.1", 443, httpsOpts);
+        TEST_ASSERT_FALSE(httpsSess.ensureConnected());
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(net::TransportError::TlsDenied), static_cast<int>(httpsSess.lastError()));
+        uint32_t deniedAfterHttps = NetworkBudget::getTlsDeniedCount().load(std::memory_order_relaxed);
+        TEST_ASSERT_TRUE(deniedAfterHttps > deniedBefore);
+
+        net::SecureHttpOptions plainOpts;
+        plainOpts.handshakeTimeoutSec = 1;
+        plainOpts.requestTimeoutMs = 200;
+        plainOpts.ownerId = net::OWNER_SHOWCASE;
+        net::SecureHttpSession plainSess("127.0.0.1", 8890, plainOpts);
+        plainSess.setHttps(false);
+        plainSess.ensureConnected();
+        TEST_ASSERT_NOT_EQUAL(static_cast<int>(net::TransportError::TlsDenied), static_cast<int>(plainSess.lastError()));
+        TEST_ASSERT_EQUAL_UINT32(deniedAfterHttps, NetworkBudget::getTlsDeniedCount().load(std::memory_order_relaxed));
+    }
+    NetworkBudget::clearBulkTransfer();
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -403,6 +575,7 @@ void setup() {
     RUN_TEST(test_media_showcase_ready_payload_zero_copy_parsing);
     RUN_TEST(test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation);
     RUN_TEST(test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art);
+    RUN_TEST(test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls);
     UNITY_END();
 }
 
