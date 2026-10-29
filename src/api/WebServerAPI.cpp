@@ -2019,11 +2019,11 @@ void WebServerAPI::setupRoutes() {
             if (!doc["data_mqtt_pass"].isNull()) cfg.dataMqtt.pass = (const char*)doc["data_mqtt_pass"];
             // Showcase server & MQTT
             if (!doc["showcase_enabled"].isNull()) cfg.showcase.enabled = (bool)doc["showcase_enabled"];
-            if (!doc["showcase_server_url"].isNull()) cfg.showcase.server_url = (const char*)doc["showcase_server_url"];
+            if (!doc["showcase_server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_server_url"]), true);
             if (!doc["showcase_transport_mode"].isNull()) cfg.showcase.transport_mode = (const char*)doc["showcase_transport_mode"];
             if (!doc["showcase_use_broker"].isNull()) cfg.showcase.use_showcase_broker = (bool)doc["showcase_use_broker"];
             if (!doc["showcase_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = (const char*)doc["showcase_broker_source"];
-            if (!doc["showcase_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = (const char*)doc["showcase_custom_url"];
+            if (!doc["showcase_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_custom_url"]), false);
             if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
             if (!doc["api_token"].isNull()) {
                 String newTok = doc["api_token"].as<String>();
@@ -2663,11 +2663,11 @@ void WebServerAPI::setupRoutes() {
             if (doc.containsKey("showcase")) {
                 JsonObject sc = doc["showcase"].as<JsonObject>();
                 if (!sc["enabled"].isNull()) cfg.showcase.enabled = sc["enabled"].as<bool>();
-                if (!sc["server_url"].isNull()) cfg.showcase.server_url = sc["server_url"].as<String>();
+                if (!sc["server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(sc["server_url"].as<String>(), true);
                 if (!sc["transport_mode"].isNull()) cfg.showcase.transport_mode = sc["transport_mode"].as<String>();
                 if (!sc["use_showcase_broker"].isNull()) cfg.showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
                 if (!sc["mqtt_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
-                if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = sc["mqtt_custom_url"].as<String>();
+                if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(sc["mqtt_custom_url"].as<String>(), false);
                 changed = true;
             }
             if (changed) {
@@ -2846,6 +2846,11 @@ void WebServerAPI::setupRoutes() {
                 false,
                 false)) {
             request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Showcase server URL\"}");
+            return;
+        }
+        if (net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHostBuf)) {
+            net::ShowcaseDiscovery::triggerBackgroundScan(port);
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
             return;
         }
         String resolvedHost(resolvedHostBuf);

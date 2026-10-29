@@ -348,16 +348,11 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
     if (doc.containsKey("showcase")) {
         JsonObjectConst sc = doc["showcase"];
         if (sc.containsKey("enabled")) showcase.enabled = sc["enabled"].as<bool>();
-        showcase.server_url = sc["server_url"] | showcase.server_url;
-        if (showcase.server_url == "http://192.168.1.50:8000" ||
-            showcase.server_url == "http://127.0.0.1:8080" ||
-            showcase.server_url == "http://dmdmediashowcase.local:8080") {
-            showcase.server_url = "http://dmdmediashowcase.local:8890";
-        }
+        showcase.server_url = normalizeMdnsEndpointUrl(String(sc["server_url"] | showcase.server_url), true);
         showcase.transport_mode = sc["transport_mode"] | showcase.transport_mode;
         if (sc.containsKey("use_showcase_broker")) showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
         showcase.mqtt_broker_source = sc["mqtt_broker_source"] | showcase.mqtt_broker_source;
-        showcase.mqtt_custom_url = sc["mqtt_custom_url"] | showcase.mqtt_custom_url;
+        showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String(sc["mqtt_custom_url"] | showcase.mqtt_custom_url), false);
     }
 
     if (doc.containsKey("rotation")) {

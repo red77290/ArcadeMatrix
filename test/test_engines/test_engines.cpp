@@ -9,6 +9,8 @@
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/drawing/IDrawingSurface.h"
 #include "core/net/SecureHttpSession.h"
+#include "core/net/ShowcaseDiscovery.h"
+#include "core/ConfigLoader.h"
 #include "core/NetworkBudget.h"
 #include "core/I18n.h"
 
@@ -594,6 +596,58 @@ void test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis() {
     TEST_ASSERT_TRUE(MediaShowcaseBase::shouldReportNetworkOffline(5U));
 }
 
+void test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing() {
+    // 1. Legacy v1.0.0 & single-label LAN hostnames normalize to `.local`
+    TEST_ASSERT_EQUAL_STRING(
+        "http://dmdmediashowcase.local:8890",
+        normalizeMdnsEndpointUrl("http://dmdmediashowcase:8890", true).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "http://dmdmediashowcase.local:8890",
+        normalizeMdnsEndpointUrl("http://dmdmediashowcase:8080", true).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "http://mybox.local:8890",
+        normalizeMdnsEndpointUrl("http://mybox:8890", false).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "mqtt://mosquitto.local:1883",
+        normalizeMdnsEndpointUrl("mqtt://mosquitto:1883", false).c_str()
+    );
+    // 2. IPv4, localhost, IPv6, and existing `.local` / FQDN stay untouched
+    TEST_ASSERT_EQUAL_STRING(
+        "http://192.168.1.22:8890",
+        normalizeMdnsEndpointUrl("http://192.168.1.22:8890", true).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "http://localhost:8890",
+        normalizeMdnsEndpointUrl("http://localhost:8890", false).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "http://[::1]:8890",
+        normalizeMdnsEndpointUrl("http://[::1]:8890", false).c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "http://dmdmediashowcase.local:8890",
+        normalizeMdnsEndpointUrl("http://dmdmediashowcase.local:8890", true).c_str()
+    );
+
+    // 3. ShowcaseDiscovery::parseEndpoint normalizes single-label LAN hostnames and classifies them as auto-discoverable
+    char scheme[16] = "";
+    char host[64] = "";
+    uint16_t port = 0;
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::parseEndpoint(
+        "http://dmdmediashowcase:8890", 8890, scheme, sizeof(scheme), host, sizeof(host), port
+    ));
+    TEST_ASSERT_EQUAL_STRING("http", scheme);
+    TEST_ASSERT_EQUAL_STRING("dmdmediashowcase.local", host);
+    TEST_ASSERT_EQUAL_UINT16(8890U, port);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("dmdmediashowcase"));
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("myshowcase"));
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::isAutoDiscoverableHost("localhost"));
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::isAutoDiscoverableHost("192.168.1.22"));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -609,6 +663,7 @@ void setup() {
     RUN_TEST(test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art);
     RUN_TEST(test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls);
     RUN_TEST(test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis);
+    RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
     UNITY_END();
 }
 

@@ -20,6 +20,7 @@
 #include <WiFi.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <lwip/inet.h>
 #include <lwip/sockets.h>
 #endif
 #endif
@@ -1069,14 +1070,18 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
             return false;
         }
         copySafeStr(outHost, hostCap, showcaseHost);
-        net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
+            return false;
+        }
         outPort = 1883;
         return true;
     }
     if (strcasecmp(cfg.mqttBrokerSource, "custom") == 0 && cfg.mqttCustomUrl[0] != '\0') {
         if (parseHostAndPort(cfg.mqttCustomUrl, 1883, outHost, hostCap, outPort)) {
-            net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
-            return true;
+            if (net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
+                return true;
+            }
+            return false;
         }
     }
     {
@@ -1084,7 +1089,9 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
         const auto& snap = guard.get();
         if (snap.mqtt.broker.length() > 0) {
             copySafeStr(outHost, hostCap, snap.mqtt.broker.c_str());
-            net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
+            if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
+                return false;
+            }
             outPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
                 ? static_cast<uint16_t>(snap.mqtt.port)
                 : 1883;
@@ -1093,7 +1100,9 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
     }
     if (hasServerUrl) {
         copySafeStr(outHost, hostCap, showcaseHost);
-        net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
+            return false;
+        }
         outPort = 1883;
         return true;
     }
@@ -1190,6 +1199,9 @@ void MediaShowcaseBase::clearLiveCardState() {
     m_liveCard.hasPoster = false;
     m_liveCard.hasVideoFrame = false;
     m_seq.fetch_add(1, std::memory_order_release);
+    if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+        m_frameSeq.fetch_add(1, std::memory_order_release);
+    }
     m_renderCard.hasData = false;
     m_renderCard.hasPoster = false;
     m_renderCard.hasVideoFrame = false;
@@ -1259,13 +1271,11 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         slot.enabled = sc.enabled;
         String srv = sc.server_url;
         srv.trim();
-        if (srv.endsWith("/")) srv.remove(srv.length() - 1);
         if (srv.isEmpty()) {
             // Backward-compatible fallback to per-instance config if system showcase not set
             srv = config->getString("server_url", "http://dmdmediashowcase.local:8890");
-            srv.trim();
-            if (srv.endsWith("/")) srv.remove(srv.length() - 1);
         }
+        srv = normalizeMdnsEndpointUrl(srv, true);
         copySafeStr(slot.serverUrl, sizeof(slot.serverUrl), srv.c_str());
 
         String tMode = sc.transport_mode.isEmpty() ? config->getString("transport_mode", "mqtt_udp") : sc.transport_mode;
@@ -1277,6 +1287,7 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         copySafeStr(slot.mqttBrokerSource, sizeof(slot.mqttBrokerSource), bSource.c_str());
 
         String cUrl = sc.mqtt_custom_url.isEmpty() ? config->getString("mqtt_custom_url", "") : sc.mqtt_custom_url;
+        cUrl = normalizeMdnsEndpointUrl(cUrl, false);
         copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), cUrl.c_str());
     }
 
@@ -1330,12 +1341,16 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
     m_lastPublishedCfgGen = 0;
     m_consecutiveNetFailures = 0;
+    m_udpBlockedHint = false;
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
     if (m_wantActive.load(std::memory_order_acquire)) {
         m_skipTurnImmediately.store(false, std::memory_order_release);
         m_turnDone.store(false, std::memory_order_release);
         m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
         clearLiveCardState();
+        m_lastRenderedCardSeq = 0xFFFFFFFFU;
+        m_lastRenderedFrameSeq = 0xFFFFFFFFU;
+        m_lastRenderedPhase = 0xFFU;
         m_dirty = true;
         startWorkerTask();
     }
@@ -1353,6 +1368,9 @@ void MediaShowcaseBase::activate() {
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
     // Strict Consume-Once & Zero-Cache: start every turn with a clean slate
     clearLiveCardState();
+    m_lastRenderedCardSeq = 0xFFFFFFFFU;
+    m_lastRenderedFrameSeq = 0xFFFFFFFFU;
+    m_lastRenderedPhase = 0xFFU;
     m_dirty = true;
     m_renderedNewFrame = false;
 
@@ -1517,8 +1535,8 @@ void MediaShowcaseBase::runWorkerLoop() {
                 // Flat-stack HTTP DMDS fallback executed AFTER `runMqttUdpTurn()` freed its stack frame,
                 // MQTT TCP socket, and UDP socket. Uses `?purge=true` to uphold Consume-Once semantics.
                 if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                    char fallbackPath[144];
-                    snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=true", domain, httpFallbackItemId);
+                    char fallbackPath[160];
+                    snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1", domain, httpFallbackItemId);
                     streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
                 }
                 finishTurnItem();
@@ -2023,6 +2041,72 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         while (lwip_recvfrom(udpFd, m_ioScratch, 1040, MSG_DONTWAIT, nullptr, nullptr) > 0) {}
         m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
 
+        // Punch a client-initiated UDP return pinhole (`DMDH|<session>|<lan_ip>` -> `<showcase_ip>:5569`)
+        // so Docker / Rancher Desktop VM bridges forward `DMDF` datagrams back to `localUdpPort`.
+        constexpr uint16_t kShowcaseUdpPunchPort = 5569U;
+        struct sockaddr_in punchAddr;
+        memset(&punchAddr, 0, sizeof(punchAddr));
+        punchAddr.sin_family = AF_INET;
+        punchAddr.sin_port = htons(kShowcaseUdpPunchPort);
+        bool hasPunchTarget = false;
+        {
+            char showcaseHost[64] = "";
+            uint16_t showcasePort = 8890;
+            if (parseHostAndPort(cfg.serverUrl, 8890, showcaseHost, sizeof(showcaseHost), showcasePort) &&
+                net::ShowcaseDiscovery::resolveHostInPlace(showcaseHost, sizeof(showcaseHost), showcasePort, false) &&
+                inet_aton(showcaseHost, &punchAddr.sin_addr) != 0) {
+                hasPunchTarget = true;
+            } else if (inet_aton(mqttHost, &punchAddr.sin_addr) != 0) {
+                hasPunchTarget = true;
+            }
+        }
+        char helloPkt[96];
+        int helloLen = snprintf(helloPkt, sizeof(helloPkt), "DMDH|%s|%s", m_sessionId, localIpBuf);
+        auto sendUdpPunch = [&]() {
+            if (hasPunchTarget && helloLen > 0) {
+                lwip_sendto(
+                    udpFd,
+                    helloPkt,
+                    static_cast<size_t>(helloLen),
+                    0,
+                    reinterpret_cast<const struct sockaddr*>(&punchAddr),
+                    sizeof(punchAddr)
+                );
+            }
+        };
+
+        sendUdpPunch();
+        if (m_udpBlockedHint) {
+            // Fast 65ms probe on subsequent items when container NAT previously blocked UDP:
+            // upgrades back to UDP immediately if `:5569/udp` responds with `DMDA`, otherwise
+            // switches straight to zero-heap TCP streaming without a 1.2s delay or extra MQTT calls!
+            bool gotPunchAck = false;
+            if (hasPunchTarget) {
+                fd_set pfds;
+                FD_ZERO(&pfds);
+                FD_SET(udpFd, &pfds);
+                struct timeval ptv = {0, 65000};
+                if (lwip_select(udpFd + 1, &pfds, nullptr, nullptr, &ptv) > 0 && FD_ISSET(udpFd, &pfds)) {
+                    while (true) {
+                        int pLen = lwip_recvfrom(udpFd, m_ioScratch, 1040, MSG_DONTWAIT, nullptr, nullptr);
+                        if (pLen <= 0) break;
+                        if (pLen >= 4 && (memcmp(m_ioScratch, "DMDA", 4) == 0 || memcmp(m_ioScratch, "DMDF", 4) == 0)) {
+                            gotPunchAck = true;
+                        }
+                    }
+                }
+            }
+            if (gotPunchAck) {
+                m_udpBlockedHint = false;
+            } else {
+                closeUdpSocket(udpFd);
+                if (m_wantActive.load(std::memory_order_acquire) && outHttpFallbackItemId && fallbackItemCap > 0) {
+                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+                }
+                return true;
+            }
+        }
+
         // Flash MQTT `start_stream`: connects, publishes, and closes TCP BEFORE UDP frames flow!
         {
             char startStreamCmd[192];
@@ -2052,18 +2136,36 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                 return true;
             }
         }
+        sendUdpPunch();
 
         uint32_t streamT0 = millis();
         uint32_t firstUdpPktMs = 0;
         uint32_t lastUdpPktMs = 0;
+        bool resentPunch = false;
         uint16_t curFrameSeq = 0xFFFF;
         uint64_t chunkMask = 0;
         size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
         constexpr size_t kUdpPktCap = 1040U;
-        constexpr uint32_t kUdpInitialGraceMs = 4000U;
+        constexpr uint32_t kUdpInitialGraceMs = 1200U;
         uint8_t* udpBuf = reinterpret_cast<uint8_t*>(m_ioScratch);
         bool stoppedEarlyByClient = false;
         bool initialGraceTimeout = false;
+
+        auto markFrameWriteBegin = [&]() {
+            if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+                m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+            }
+        };
+        auto markFrameWriteComplete = [&]() {
+            if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+                m_frameSeq.fetch_add(1, std::memory_order_release);
+            }
+            if (!m_liveCard.hasVideoFrame) {
+                m_seq.fetch_add(1, std::memory_order_acq_rel);
+                m_liveCard.hasVideoFrame = true;
+                m_seq.fetch_add(1, std::memory_order_release);
+            }
+        };
 
         while (m_wantActive.load(std::memory_order_acquire) &&
                m_cfgGen.load(std::memory_order_acquire) == startGen &&
@@ -2071,6 +2173,10 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
                 stoppedEarlyByClient = (maxCfgStreamMs + 500U < naturalStreamMs);
                 break;
+            }
+            if (firstUdpPktMs == 0U && !resentPunch && (millis() - streamT0) >= 250U) {
+                resentPunch = true;
+                sendUdpPunch();
             }
 
             fd_set rfds;
@@ -2085,7 +2191,12 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                 while (m_wantActive.load(std::memory_order_acquire)) {
                     int rLen = lwip_recvfrom(udpFd, udpBuf, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr);
                     if (rLen <= 0) break;
+                    if (rLen >= 4 && memcmp(udpBuf, "DMDA", 4) == 0) {
+                        m_udpBlockedHint = false;
+                        continue;
+                    }
                     if (rLen > 10 && memcmp(udpBuf, "DMDF", 4) == 0) {
+                        m_udpBlockedHint = false;
                         uint16_t seq = static_cast<uint16_t>(udpBuf[4] | (udpBuf[5] << 8));
                         uint8_t chunkIdx = udpBuf[6];
                         uint8_t totalChunks = udpBuf[7] > 0 ? udpBuf[7] : 1;
@@ -2094,22 +2205,21 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
                         if (seq != curFrameSeq) {
                             if (chunkMask != 0) {
-                                m_seq.fetch_add(1, std::memory_order_acq_rel);
-                                m_liveCard.hasVideoFrame = true;
-                                m_seq.fetch_add(1, std::memory_order_release);
+                                markFrameWriteComplete();
                             }
                             curFrameSeq = seq;
                             chunkMask = 0;
                         }
                         if (chunkIdx < totalChunks && totalChunks <= 64 && (static_cast<size_t>(byteOff) + payloadBytes) <= maxBufBytes) {
+                            if (chunkMask == 0) {
+                                markFrameWriteBegin();
+                            }
                             memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpBuf + 10, payloadBytes);
                             chunkMask |= (1ULL << chunkIdx);
                             uint64_t expectedMask = (totalChunks == 64) ? ~0ULL : ((1ULL << totalChunks) - 1ULL);
                             if (chunkMask == expectedMask) {
                                 chunkMask = 0;
-                                m_seq.fetch_add(1, std::memory_order_acq_rel);
-                                m_liveCard.hasVideoFrame = true;
-                                m_seq.fetch_add(1, std::memory_order_release);
+                                markFrameWriteComplete();
                             }
                             uint32_t pktNow = millis();
                             if (firstUdpPktMs == 0U) firstUdpPktMs = pktNow;
@@ -2136,6 +2246,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             }
         }
 
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+            m_frameSeq.fetch_add(1, std::memory_order_release);
+        }
         if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
             stoppedEarlyByClient = true;
         }
@@ -2144,11 +2257,18 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         closeUdpSocket(udpFd);
 
         if (initialGraceTimeout) {
-            // Container-to-LAN UDP blocked by VM NAT: stop server UDP stream FIRST so `ffmpeg -re`
-            // never floods port 5568 concurrently with the HTTP `.rgb565.stream?purge=true` fallback!
+            m_udpBlockedHint = true;
+            // Container-to-LAN UDP blocked by VM NAT: stop server `ffmpeg -re` while explicitly
+            // preserving `.rgb565.stream` (`"purge":false,"reason":"tcp_fallback"`) so the immediate
+            // zero-heap TCP fallback fetches `200 OK` instead of `404 Not Found`!
             if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                char stopCmd[128];
-                snprintf(stopCmd, sizeof(stopCmd), "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
+                char stopCmd[168];
+                snprintf(
+                    stopCmd,
+                    sizeof(stopCmd),
+                    "{\"action\":\"stop_stream\",\"item_id\":\"%s\",\"purge\":false,\"reason\":\"tcp_fallback\"}",
+                    itemIdBuf
+                );
                 publishFlashMqttEvent(
                     mqttHost,
                     mqttPort,
@@ -2237,7 +2357,8 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
                 nullptr,
                 0,
                 true,
-                false)) {
+                false) ||
+            net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHost)) {
             handleTransientHttpFailure();
             return;
         }
@@ -2470,37 +2591,299 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 }
 
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
-    if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565) {
+    if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565 || !m_ioScratch) {
         return false;
     }
 
+#if defined(ESP32) && !defined(UNIT_TEST)
+    // Zero-Heap ZeDMD-Grade Raw LwIP TCP Streamer:
+    // Bypasses `SecureHttpClient` / `HTTPClient` / `WiFiClient` (~10 KB DRAM saved on ESP32_STD)
+    // and pairs with Showcase `?paced=1` (`X-DMD-Paced: 1`) so `TCP_WND` stays 100% open with
+    // zero client-side sleep and zero `TCP ZeroWindow` stalls!
+    char resolvedHost[64] = "";
+    uint16_t resolvedPort = 8890;
+    const char* rawPath = streamPath;
+
+    if (strncasecmp(streamPath, "http://", 7) == 0 || strncasecmp(streamPath, "https://", 8) == 0) {
+        if (!parseHostAndPort(streamPath, 8890, resolvedHost, sizeof(resolvedHost), resolvedPort)) {
+            return false;
+        }
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(resolvedHost, sizeof(resolvedHost), resolvedPort, true)) {
+            return false;
+        }
+        const char* afterScheme = strstr(streamPath, "://");
+        const char* slash = afterScheme ? strchr(afterScheme + 3, '/') : nullptr;
+        rawPath = slash ? slash : "/";
+    } else {
+        char baseServerUrl[112] = "";
+        bool resolvedOnline = false;
+        if (!net::ShowcaseDiscovery::resolveUrl(
+                serverUrl,
+                baseServerUrl,
+                sizeof(baseServerUrl),
+                resolvedHost,
+                sizeof(resolvedHost),
+                resolvedPort,
+                resolvedOnline,
+                nullptr,
+                0,
+                true,
+                false) ||
+            net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHost)) {
+            return false;
+        }
+    }
+
+    char reqPath[176];
+    if (strstr(rawPath, "paced=") != nullptr) {
+        copySafeStr(reqPath, sizeof(reqPath), rawPath);
+    } else {
+        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1", rawPath, (strchr(rawPath, '?') != nullptr) ? "&" : "?");
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(resolvedPort);
+    if (inet_aton(resolvedHost, &addr.sin_addr) == 0) {
+        IPAddress resolvedIp;
+        if (ESP.getFreeHeap() < 10240U || !WiFi.hostByName(resolvedHost, resolvedIp)) {
+            return false;
+        }
+        addr.sin_addr.s_addr = static_cast<uint32_t>(resolvedIp);
+    }
+
+    int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        return false;
+    }
+
+    auto closeStreamSocket = [&](bool abortWithRst) {
+        if (fd >= 0) {
+            if (abortWithRst) {
+                struct linger lin = {1, 0};
+                lwip_setsockopt(fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+            }
+            lwip_close(fd);
+            fd = -1;
+        }
+    };
+
+    int nodelay = 1;
+    lwip_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    int flags = lwip_fcntl(fd, F_GETFL, 0);
+    lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (rc < 0 && errno != EINPROGRESS) {
+        closeStreamSocket(true);
+        return false;
+    }
+    if (rc != 0) {
+        uint32_t connT0 = millis();
+        bool connected = false;
+        while ((millis() - connT0) < 1500U && m_wantActive.load(std::memory_order_acquire)) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(fd, &wfds);
+            struct timeval tv = {0, 150000};
+            int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+            if (sel > 0 && FD_ISSET(fd, &wfds)) {
+                int soErr = -1;
+                socklen_t errLen = sizeof(soErr);
+                if (lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) == 0 && soErr == 0) {
+                    connected = true;
+                }
+                break;
+            }
+        }
+        if (!connected) {
+            closeStreamSocket(true);
+            return false;
+        }
+    }
+
+    lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    struct timeval rcvTv = {0, 250000}; // 250 ms slice keeps `deactivate()` responsive (< 250 ms)
+    struct timeval sndTv = {1, 0};
+    lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
+    lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
+
+    char reqBuf[288];
+    int reqLen = snprintf(
+        reqBuf,
+        sizeof(reqBuf),
+        "GET %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
+        reqPath,
+        resolvedHost,
+        static_cast<unsigned>(resolvedPort)
+    );
+    if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) != reqLen) {
+        closeStreamSocket(true);
+        return false;
+    }
+
+    // Read HTTP response header into `m_ioScratch` (`1408` bytes preallocated)
+    size_t scratchUsed = 0;
+    size_t bodyStart = 0;
+    bool foundHeaderEnd = false;
+    uint32_t hdrT0 = millis();
+    while (!foundHeaderEnd && (millis() - hdrT0) < 3500U && m_wantActive.load(std::memory_order_acquire)) {
+        if (scratchUsed >= IO_SCRATCH_BYTES - 1U) {
+            break;
+        }
+        int r = lwip_recv(fd, m_ioScratch + scratchUsed, IO_SCRATCH_BYTES - 1U - scratchUsed, 0);
+        if (r > 0) {
+            scratchUsed += static_cast<size_t>(r);
+            m_ioScratch[scratchUsed] = '\0';
+            char* sep = strstr(m_ioScratch, "\r\n\r\n");
+            if (sep != nullptr) {
+                foundHeaderEnd = true;
+                bodyStart = static_cast<size_t>((sep - m_ioScratch) + 4);
+                *sep = '\0';
+            }
+        } else if (r == 0) {
+            break;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            break;
+        }
+    }
+
+    if (!foundHeaderEnd ||
+        (strncmp(m_ioScratch, "HTTP/1.1 200", 12) != 0 && strncmp(m_ioScratch, "HTTP/1.0 200", 12) != 0)) {
+        closeStreamSocket(true);
+        return false;
+    }
+
+    bool serverPaced = false;
+    for (const char* p = m_ioScratch; *p != '\0'; ++p) {
+        if ((*p == 'X' || *p == 'x') && strncasecmp(p, "x-dmd-paced:", 12) == 0) {
+            const char* v = p + 12;
+            while (*v == ' ' || *v == '\t') ++v;
+            if (*v == '1') {
+                serverPaced = true;
+            }
+            break;
+        }
+    }
+
+    size_t preBufferedOff = bodyStart;
+    size_t preBufferedEnd = scratchUsed;
+
+    auto readExactRawTcp = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
+        size_t got = 0;
+        if (preBufferedOff < preBufferedEnd) {
+            size_t avail = preBufferedEnd - preBufferedOff;
+            size_t take = (avail < wantLen) ? avail : wantLen;
+            memcpy(dst, m_ioScratch + preBufferedOff, take);
+            preBufferedOff += take;
+            got += take;
+        }
+        uint32_t lastProg = millis();
+        while (got < wantLen) {
+            if (!m_wantActive.load(std::memory_order_acquire)) {
+                return false;
+            }
+            int r = lwip_recv(fd, dst + got, wantLen - got, 0);
+            if (r > 0) {
+                got += static_cast<size_t>(r);
+                lastProg = millis();
+            } else if (r == 0) {
+                return false;
+            } else {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    return false;
+                }
+                if ((millis() - lastProg) >= maxIdleMs) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    uint8_t hdr[16];
+    if (!readExactRawTcp(hdr, sizeof(hdr), 3500U) || memcmp(hdr, "DMDS", 4) != 0) {
+        closeStreamSocket(true);
+        return false;
+    }
+
+    uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
+    uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
+    uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
+    uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
+    uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
+    uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
+    size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
+    size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
+    if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
+        closeStreamSocket(true);
+        return false;
+    }
+
+    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+    uint32_t maxAllowedMs = configuredMaxStreamMs(cfg);
+    uint32_t streamStartMs = millis();
+    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
+    m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+
+    uint16_t framesRead = 0;
+    for (uint16_t f = 0; f < totalFrames; ++f) {
+        if (!m_wantActive.load(std::memory_order_acquire) || m_cfgGen.load(std::memory_order_acquire) != startGen) break;
+        if ((millis() - streamStartMs) >= maxAllowedMs) break;
+
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+            m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+        }
+        bool okFrame = readExactRawTcp(reinterpret_cast<uint8_t*>(m_frame565), frameBytes, 3500U);
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+            m_frameSeq.fetch_add(1, std::memory_order_release);
+        }
+        if (!okFrame) {
+            break;
+        }
+        ++framesRead;
+        if (!m_liveCard.hasVideoFrame) {
+            m_seq.fetch_add(1, std::memory_order_acq_rel);
+            m_liveCard.hasVideoFrame = true;
+            m_seq.fetch_add(1, std::memory_order_release);
+        }
+
+        if (serverPaced) {
+            // Showcase paces frames monotonically on the server (`X-DMD-Paced: 1`), so draining
+            // `lwip_recv` immediately keeps `TCP_WND` wide open with ZERO `TCP ZeroWindow` stalls!
+            if ((f & 0x03U) == 0U) {
+                taskYIELD();
+            }
+        } else {
+            uint32_t targetElapsedMs = (fps > 0U)
+                ? ((static_cast<uint32_t>(f + 1U) * 1000U) / static_cast<uint32_t>(fps))
+                : (static_cast<uint32_t>(f + 1U) * frameDelayMs);
+            uint32_t elapsedMs = millis() - streamStartMs;
+            if (elapsedMs >= maxAllowedMs) break;
+            if (elapsedMs < targetElapsedMs) {
+                uint32_t waitMs = std::min<uint32_t>(targetElapsedMs - elapsedMs, maxAllowedMs - elapsedMs);
+                if (waitMs > 0U) {
+                    vTaskDelay(pdMS_TO_TICKS(waitMs));
+                }
+            } else if ((f & 0x07U) == 0U) {
+                vTaskDelay(1);
+            }
+        }
+    }
+
+    closeStreamSocket(framesRead < totalFrames);
+    return (framesRead > 0U);
+#else
     net::SecureHttpResponse sResp;
     {
         char fullUrl[256];
         if (strncmp(streamPath, "http", 4) == 0) {
             copySafeStr(fullUrl, sizeof(fullUrl), streamPath);
         } else {
-            char baseServerUrl[112] = "";
-            char resolvedHost[64] = "";
-            uint16_t resolvedPort = 8890;
-            bool resolvedOnline = false;
-            if (!net::ShowcaseDiscovery::resolveUrl(
-                    serverUrl,
-                    baseServerUrl,
-                    sizeof(baseServerUrl),
-                    resolvedHost,
-                    sizeof(resolvedHost),
-                    resolvedPort,
-                    resolvedOnline,
-                    nullptr,
-                    0,
-                    true,
-                    false)) {
-                copySafeStr(baseServerUrl, sizeof(baseServerUrl), serverUrl);
-            }
-            snprintf(fullUrl, sizeof(fullUrl), "%s%s", baseServerUrl, streamPath);
+            snprintf(fullUrl, sizeof(fullUrl), "%s%s", serverUrl, streamPath);
         }
-
         net::SecureHttpOptions httpOpts;
         httpOpts.ownerId = net::OWNER_SHOWCASE;
         httpOpts.requestTimeoutMs = 4500;
@@ -2516,51 +2899,28 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     if (!readExactFromStream(st, hdr, sizeof(hdr), m_wantActive) || memcmp(hdr, "DMDS", 4) != 0) {
         return false;
     }
-    uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
     uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
     uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
     uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
-    uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
-    uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
     size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
     size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
     if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
         return false;
     }
 
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-    uint32_t maxAllowedMs = configuredMaxStreamMs(cfg);
-    uint32_t streamStartMs = millis();
-    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
     for (uint16_t f = 0; f < totalFrames; ++f) {
-        if (!m_wantActive.load(std::memory_order_acquire) || m_cfgGen.load(std::memory_order_acquire) != startGen) break;
-        if ((millis() - streamStartMs) >= maxAllowedMs) break;
+        if (!m_wantActive.load(std::memory_order_acquire)) break;
         if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
             break;
         }
+        m_frameSeq.fetch_add(2, std::memory_order_release);
         m_seq.fetch_add(1, std::memory_order_acq_rel);
         m_liveCard.hasVideoFrame = true;
         m_seq.fetch_add(1, std::memory_order_release);
-#if defined(ESP32)
-        // Monotonic wall-clock pacing from `streamStartMs` prevents cumulative TCP/RTOS tick drift
-        // (e.g., keeping 30 FPS at exact 60.0s instead of drifting to 90–120s).
-        uint32_t targetElapsedMs = (fps > 0U)
-            ? ((static_cast<uint32_t>(f + 1U) * 1000U) / static_cast<uint32_t>(fps))
-            : (static_cast<uint32_t>(f + 1U) * frameDelayMs);
-        uint32_t elapsedMs = millis() - streamStartMs;
-        if (elapsedMs >= maxAllowedMs) break;
-        if (elapsedMs < targetElapsedMs) {
-            uint32_t waitMs = std::min<uint32_t>(targetElapsedMs - elapsedMs, maxAllowedMs - elapsedMs);
-            if (waitMs > 0U) {
-                vTaskDelay(pdMS_TO_TICKS(waitMs));
-            }
-        } else if ((f & 0x07U) == 0U) {
-            vTaskDelay(1);
-        }
-#endif
     }
     return true;
+#endif
 }
 
 void MediaShowcaseBase::update(EngineContext* context) {
@@ -2570,19 +2930,36 @@ void MediaShowcaseBase::update(EngineContext* context) {
     const auto& snap = guard.get();
     m_rotationSlotCount.store(static_cast<uint8_t>(snap.rotation.size()), std::memory_order_relaxed);
 
-    // Lock-free seqlock check for updated CardSnapshot from Core 0 worker
+    // Lock-free seqlock check: only copy CardSnapshot when `m_seq` is EVEN and actually changed
     uint32_t s1 = m_seq.load(std::memory_order_acquire);
-    if ((s1 & 1U) == 0U) {
+    if ((s1 & 1U) == 0U && s1 != m_lastRenderedCardSeq) {
         CardSnapshot temp = m_liveCard;
         uint32_t s2 = m_seq.load(std::memory_order_acquire);
         if (s1 == s2) {
             m_renderCard = temp;
+            m_lastRenderedCardSeq = s1;
             m_dirty = true;
         }
     }
 
+    uint8_t curPhase = m_phase.load(std::memory_order_acquire);
+    if (curPhase != m_lastRenderedPhase) {
+        m_lastRenderedPhase = curPhase;
+        m_dirty = true;
+    }
+
     uint32_t now = millis();
-    if (now - m_lastScrollStepMs >= 33) {
+    if (curPhase == static_cast<uint8_t>(Phase::LiveStream)) {
+        // Tear-free double-buffer handoff: only mark dirty when Core 0 finished a complete new frame (`EVEN` seq)
+        uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+        if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
+            m_lastRenderedFrameSeq = fSeq;
+            m_dirty = true;
+        } else if (!m_renderCard.hasVideoFrame && (now - m_lastScrollStepMs) >= 90U) {
+            m_lastScrollStepMs = now;
+            m_dirty = true;
+        }
+    } else if ((now - m_lastScrollStepMs) >= 33U) {
         m_lastScrollStepMs = now;
         m_dirty = true;
     }
@@ -3054,17 +3431,26 @@ void MediaShowcaseBase::render(EngineContext* context) {
         return;
     }
 
-    s->clear(0);
     uint32_t elapsedMs = millis() - m_activatedAtMs;
     Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
     if (curPhase == Phase::LiveStream) {
         if (m_renderCard.hasVideoFrame && m_frame565 != nullptr) {
+            // Never clear or blit while Core 0 is mid-frame (`ODD` m_frameSeq): preserve the
+            // previous complete frame in `CanvasBufferedSurface` until `m_frameSeq` turns `EVEN`.
+            if ((m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
+                m_dirty = false;
+                m_renderedNewFrame = false;
+                return;
+            }
+            s->clear(0);
             s->blit565(m_frame565, 0, 0, m_width, m_height);
         } else {
+            s->clear(0);
             drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
         }
     } else {
+        s->clear(0);
         drawCardPhase(s, m_renderCard, elapsedMs);
     }
 

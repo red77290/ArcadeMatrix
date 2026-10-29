@@ -360,11 +360,15 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
     if (outShowcase && doc.containsKey("showcase")) {
         JsonObjectConst sc = doc["showcase"];
         if (sc.containsKey("enabled")) outShowcase->enabled = sc["enabled"].as<bool>();
-        if (sc.containsKey("server_url")) outShowcase->server_url = sc["server_url"].as<String>();
+        if (sc.containsKey("server_url")) {
+            outShowcase->server_url = normalizeMdnsEndpointUrl(sc["server_url"].as<String>(), true);
+        }
         if (sc.containsKey("transport_mode")) outShowcase->transport_mode = sc["transport_mode"].as<String>();
         if (sc.containsKey("use_showcase_broker")) outShowcase->use_showcase_broker = sc["use_showcase_broker"].as<bool>();
         if (sc.containsKey("mqtt_broker_source")) outShowcase->mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
-        if (sc.containsKey("mqtt_custom_url")) outShowcase->mqtt_custom_url = sc["mqtt_custom_url"].as<String>();
+        if (sc.containsKey("mqtt_custom_url")) {
+            outShowcase->mqtt_custom_url = normalizeMdnsEndpointUrl(sc["mqtt_custom_url"].as<String>(), false);
+        }
     }
     return true;
 }

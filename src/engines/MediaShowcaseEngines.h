@@ -42,7 +42,13 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
-    void resume() override { m_dirty = true; m_renderedNewFrame = false; }
+    void resume() override {
+        m_lastRenderedCardSeq = 0xFFFFFFFFU;
+        m_lastRenderedFrameSeq = 0xFFFFFFFFU;
+        m_lastRenderedPhase = 0xFFU;
+        m_dirty = true;
+        m_renderedNewFrame = false;
+    }
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
@@ -213,17 +219,19 @@ protected:
 
     // Session & Handoff state between Core 0 worker and Core 1 render loop
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
-    std::atomic<uint32_t> m_seq{0}; // Seqlock for CardSnapshot + pixel buffers
+    std::atomic<uint32_t> m_seq{0};      // Seqlock for CardSnapshot metadata
+    std::atomic<uint32_t> m_frameSeq{0}; // Tear-free frame seq: ODD while Core 0 writes m_frame565, EVEN when complete
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
-    char* m_ioScratch = nullptr;     // Preallocated 1280 B SRAM scratch for MQTT TX/RX & UDP DMDF chunks
+    char* m_ioScratch = nullptr;     // Preallocated 1408 B SRAM scratch for MQTT TX/RX, HTTP headers & UDP DMDF chunks
     char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     uint32_t m_mqttConnSeq = 0;
     uint32_t m_lastPublishedCfgGen = 0;
     uint8_t m_consecutiveNetFailures = 0;
+    bool m_udpBlockedHint = false;
 
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};
@@ -247,6 +255,9 @@ protected:
     uint32_t m_phaseStartedAtMs = 0;
     uint32_t m_lastScrollStepMs = 0;
     uint32_t m_fallbackCycleMs = 24000;
+    uint32_t m_lastRenderedCardSeq = 0xFFFFFFFFU;
+    uint32_t m_lastRenderedFrameSeq = 0xFFFFFFFFU;
+    uint8_t m_lastRenderedPhase = 0xFFU;
     bool m_dirty = true;
     bool m_renderedNewFrame = false;
 
