@@ -490,11 +490,27 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         uint8_t candidate = candidateDepths[i];
         int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)bytesPerBit;
         int64_t estimatedFree = (int64_t)currentFreeInternalHeap + deltaMem;
-        // HUB75 DMA bit-planes are many small per-row chunks (logBoot9: freeing 43 KB of panel left
-        // the largest block unchanged), so on an emptied zone the DMA cost never reduces the block.
-        int64_t estimatedBlock = panelReleased
-            ? (int64_t)currentLargestBlock
-            : (int64_t)currentLargestBlock + deltaMem;
+        // HUB75 DMA bit-planes are many small per-row chunks (e.g. sixteen 2 KB rows on 128x32),
+        // so on an emptied zone the DMA cost does not monolithically carve the largest block, and
+        // when evaluating a depth upgrade (`!panelReleased && deltaMem < 0`), TLSF best-fit absorbs
+        // small per-row chunks into non-largest free blocks before drawing from `currentLargestBlock`.
+        int64_t estimatedBlock = (int64_t)currentLargestBlock;
+        if (!panelReleased) {
+            if (deltaMem >= 0) {
+                estimatedBlock = (int64_t)currentLargestBlock + deltaMem;
+            } else {
+                size_t poolFree = (currentFreeDma > 0) ? currentFreeDma : currentFreeInternalHeap;
+                int64_t nonLargestFree = (poolFree > currentLargestBlock)
+                    ? (int64_t)(poolFree - currentLargestBlock)
+                    : 0;
+                int64_t absorbableByFragments = nonLargestFree / 2;
+                int64_t extraNeeded = -deltaMem;
+                int64_t blockDraw = (extraNeeded > absorbableByFragments)
+                    ? (extraNeeded - absorbableByFragments)
+                    : 0;
+                estimatedBlock = (int64_t)currentLargestBlock - blockDraw;
+            }
+        }
         int64_t estimatedDma = (int64_t)currentFreeDma + deltaMem;
 
         bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)totalNewRamNeeded);

@@ -477,12 +477,17 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         m_matrixEngine->releasePanel();
         measure();
         MemTrace::dumpSurvivors("teardown");  // memtrace env only: who pins the emptied zone
-        // Invariant: Stage 2 re-evaluates admission on the emptied zone but must never escalate
-        // depth beyond stage1Target (which was already bounded by running baseline and engine requirements).
+        // Invariant: Stage 2 re-evaluates admission on the emptied zone. When downgrading
+        // (`stage1Target <= currentDepth`), never escalate beyond `stage1Target`; when upgrading
+        // (`stage1Target > currentDepth`, e.g. recovering from 2-bit `WEBUI_SYNC` or 4-bit TLS),
+        // evaluate up to `matrixCfg.colorDepth` (`0` = Auto 8-bit) on the exact emptied heap.
+        const uint8_t stage2Ceiling = (!forceMinimalWebUiSyncDepth && stage1Target > currentDepth)
+            ? matrixCfg.colorDepth
+            : stage1Target;
         targetDepth = forceMinimalWebUiSyncDepth
             ? 2
             : PipelineSelectionPolicy::resolveTargetDepth(
-                  stage1Target, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+                  stage2Ceiling, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
                   hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas,
                   /*panelReleased=*/true);
         LOGI("DisplayRuntime", "Teardown-then-measure for '%s': cur=%u -> target=%u (free=%u, largestBlock=%u)",

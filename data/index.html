@@ -2307,9 +2307,26 @@ class HttpRequestQueue {
 const httpQueue = new HttpRequestQueue(1);
 window.httpQueue = httpQueue;
 
+async function fetchWith503Retry(fetchFn, retry503 = true) {
+  const maxAttempts = retry503 ? 6 : 1;
+  let lastRes = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await httpQueue.enqueue(fetchFn);
+    if (res.status !== 503 || attempt + 1 >= maxAttempts) {
+      return res;
+    }
+    lastRes = res;
+    await new Promise((resolve) => setTimeout(resolve, 450));
+  }
+  return lastRes;
+}
+
 const API = {
-  async get(url, timeoutMs = API_TIMEOUT_MS) {
-    const res = await httpQueue.enqueue(() => fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) }));
+  async get(url, timeoutMs = API_TIMEOUT_MS, retry503 = true) {
+    const res = await fetchWith503Retry(
+      () => fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) }),
+      retry503
+    );
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2329,12 +2346,13 @@ const API = {
   },
 
   async post(url, data, timeoutMs = API_TIMEOUT_MS) {
-    const res = await httpQueue.enqueue(() => fetch(url, {
+    const serialized = data ? JSON.stringify(data) : undefined;
+    const res = await fetchWith503Retry(() => fetch(url, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
-      body: data ? JSON.stringify(data) : undefined,
+      body: serialized,
       signal: withTimeout(timeoutMs),
-    }));
+    }), true);
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2374,7 +2392,10 @@ const API = {
   },
 
   async delete(url) {
-    const res = await httpQueue.enqueue(() => fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() }));
+    const res = await fetchWith503Retry(
+      () => fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() }),
+      true
+    );
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -9164,10 +9185,13 @@ function initDashboard() {
     });
   }
 
-  // System Info Polling (10s interval)
+  // System Info Polling (10s interval, passive: never retry 503 or preempt DMD playback)
   const pollMetrics = async () => {
+    if (document.hidden) return;
     try {
-      const info = await API.get('/api/stats').catch(() => API.get('/api/system_info')).catch(() => null);
+      const info = await API.get('/api/stats', API_TIMEOUT_MS, false)
+        .catch(() => API.get('/api/system_info', API_TIMEOUT_MS, false))
+        .catch(() => null);
       if (!info) return;
 
       const cpuEl = document.getElementById('metric-cpu');
@@ -9944,8 +9968,9 @@ function initFighterOverlay() {
 let _audioStatusPollInterval = null;
 
 async function fetchAudioStatus() {
+  if (document.hidden) return;
   try {
-    const st = await API.get('/api/audio/status');
+    const st = await API.get('/api/audio/status', API_TIMEOUT_MS, false);
     if (!st) return;
 
     const isPlaying = st.status === 1; // STATUS_PLAYING

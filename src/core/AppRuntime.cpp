@@ -14,6 +14,12 @@
 #include "CpuLoad.h"
 #include <time.h>
 #include <lwip/dns.h>
+#if defined(ESP32)
+#include <esp_log.h>
+#include <lwip/sockets.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
 #include "esp_sntp.h"
@@ -464,6 +470,49 @@ void AppRuntime::initialize() {
     LOGI("System", "Step 3c: Starting WebServer and async_tcp task at heap baseline...");
     m_webServer = new WebServerAPI(80, nullptr);
     m_webServer->begin();
+#if defined(ESP32)
+    // Eagerly initialize ESP-IDF lazy per-subsystem locks (`s_uart_lock` in VFS UART and
+    // `async_tcp`'s thread-local LwIP `sys_thread_sem_get()` semaphore) while ~78 KB of 8-bit
+    // internal DRAM is free, guaranteeing they can never fail with `abort()` under peak runtime load.
+    ESP_LOGI("System", "Pre-warming VFS UART and AsyncTCP LwIP thread semaphores");
+    fflush(stdout);
+    {
+        int warmFd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (warmFd >= 0) {
+            int fl = lwip_fcntl(warmFd, F_GETFL, 0);
+            lwip_fcntl(warmFd, F_SETFL, fl | O_NONBLOCK);
+            struct sockaddr_in warmAddr{};
+            warmAddr.sin_family = AF_INET;
+            warmAddr.sin_port = htons(80);
+            IPAddress lip = WiFi.localIP();
+            warmAddr.sin_addr.s_addr = (lip[0] != 0)
+                ? static_cast<uint32_t>(lip)
+                : htonl(INADDR_LOOPBACK);
+            int crc = lwip_connect(warmFd, reinterpret_cast<struct sockaddr*>(&warmAddr), sizeof(warmAddr));
+            if (crc == 0 || errno == EINPROGRESS) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(warmFd, &wfds);
+                struct timeval wtv = {0, 40000};
+                if (lwip_select(warmFd + 1, nullptr, &wfds, nullptr, &wtv) > 0) {
+                    static const char kWarmReq[] = "GET /__warmup HTTP/1.0\r\nConnection: close\r\n\r\n";
+                    (void)lwip_send(warmFd, kWarmReq, sizeof(kWarmReq) - 1U, 0);
+                    fd_set rfds;
+                    FD_ZERO(&rfds);
+                    FD_SET(warmFd, &rfds);
+                    struct timeval rtv = {0, 50000};
+                    if (lwip_select(warmFd + 1, &rfds, nullptr, nullptr, &rtv) > 0) {
+                        char sink[32];
+                        (void)lwip_recv(warmFd, sink, sizeof(sink), 0);
+                    }
+                }
+            }
+            struct linger lin = {1, 0};
+            lwip_setsockopt(warmFd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+            lwip_close(warmFd);
+        }
+    }
+#endif
     MemTrace::mark("after early web server begin");
 
     // Step 3d: AudioHub & Core0 lifecycle dispatcher before HUB75 DMA allocations
@@ -661,7 +710,7 @@ void AppRuntime::initialize() {
     MemTrace::mark("after display runtime");
 
     auto desc = EngineRegistry::getDescriptor("audiovisualizer");
-    if (desc && desc->factory) {
+    if (desc && desc->available && desc->factory) {
         auto visPtr = desc->factory();
         visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
         visualizerEngine->initialize(m_appCtx, nullptr);

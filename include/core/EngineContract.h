@@ -452,6 +452,14 @@ public:
      * Defaults to true if the engine requires TLS, unless overridden with cache freshness checks.
      */
     virtual bool needsTlsFetch() const { return true; }
+
+    /**
+     * @brief Declares whether this engine object should be retired and destroyed upon leaving an
+     *        active rotation slot on non-PSRAM boards (`!hasPsram`) to prevent multi-kilobyte
+     *        idle C++ objects from bisecting internal DRAM. Engines holding cross-rotation TLS
+     *        caches (`CryptoEngine`, `WeatherEngine`, etc.) keep the default `false`.
+     */
+    virtual bool evictOnInactiveLowMemory() const { return false; }
     
     // Optional preemption lifecycle hooks (defaults to no-op for backward compatibility)
     virtual void pause() {}
