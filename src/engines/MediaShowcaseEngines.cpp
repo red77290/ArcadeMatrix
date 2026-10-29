@@ -2,6 +2,7 @@
 #include "WebUiSyncEngine.h"
 #include "fonts/ArcadeFonts.h"
 #include "../core/drawing/IDrawingSurface.h"
+#include "../core/drawing/DmdzStreamDecoder.h"
 #include "../core/ConfigLoader.h"
 #include "../core/I18n.h"
 #include "../core/Logger.h"
@@ -1095,8 +1096,8 @@ bool MediaShowcaseBase::allocateBuffers() {
         }
     } else {
         // Classic ESP32 (`esp32dev`): allocate LARGEST contiguous block (`m_frame565` = 8,192 B on 128x32)
-        // FIRST so smaller `m_poster565` (2,048 B) and `m_ioScratch` (1,472 B) allocations never fragment
-        // the largest free internal 8-bit DRAM block.
+        // FIRST and alias `m_poster565` into the start of `m_frame565` (Card phase and LiveStream phase are
+        // temporally disjoint), saving 2,048 B of internal 8-bit DRAM so HUB75 stays pinned at 8-bit depth.
         if (frameBytes > 0 && frameBytes <= 16384U &&
             showcaseFree8BitHeap() >= (frameBytes + 6144U) &&
             showcaseLargest8BitBlock() >= frameBytes) {
@@ -1108,28 +1109,37 @@ bool MediaShowcaseBase::allocateBuffers() {
                  static_cast<unsigned>(showcaseFree8BitHeap()),
                  static_cast<unsigned>(showcaseLargest8BitBlock()));
         }
-        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+        if (m_frame565 && frameBytes >= posterBytes) {
+            m_poster565 = m_frame565;
+            m_posterAliasesFrame = true;
+        } else {
+            m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+            m_posterAliasesFrame = false;
+        }
         m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     }
 #else
     m_hasPsram = true;
     m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
     m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+    m_posterAliasesFrame = false;
     m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     m_psramMqttRx = static_cast<char*>(malloc(PSRAM_MQTT_RX_BYTES));
 #endif
 
+    if (m_frame565) {
+        memset(m_frame565, 0, frameBytes);
+    }
     if (m_poster565) {
         m_posterCapBytes = posterBytes;
-        memset(m_poster565, 0, posterBytes);
+        if (!m_posterAliasesFrame) {
+            memset(m_poster565, 0, posterBytes);
+        }
     } else {
         m_posterCapBytes = 0;
     }
     if (m_ioScratch) {
         m_ioScratch[0] = '\0';
-    }
-    if (m_frame565) {
-        memset(m_frame565, 0, frameBytes);
     }
     if (m_psramMqttRx) {
         m_psramMqttRx[0] = '\0';
@@ -1148,9 +1158,12 @@ void MediaShowcaseBase::freeBuffers() {
         m_ioScratch = nullptr;
     }
     if (m_poster565) {
-        free(m_poster565);
+        if (!m_posterAliasesFrame) {
+            free(m_poster565);
+        }
         m_poster565 = nullptr;
     }
+    m_posterAliasesFrame = false;
     if (m_frame565) {
         free(m_frame565);
         m_frame565 = nullptr;
@@ -1523,7 +1536,7 @@ void MediaShowcaseBase::runWorkerLoop() {
                     snprintf(
                         fallbackPath,
                         sizeof(fallbackPath),
-                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&client_id=%s",
+                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&codec=dmdz1&client_id=%s",
                         domain,
                         httpFallbackItemId,
                         m_sessionId
@@ -1912,7 +1925,25 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                     drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
                     continue;
                 }
+                const bool borrowsFrameBuf = (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
+                if (borrowsFrameBuf && (m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+                    m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+                }
+                auto releaseBorrowedFrameBuf = [&](bool preserveAliasedPoster) {
+                    if (!borrowsFrameBuf) return;
+                    const size_t totalFrameBytes = m_framePixels * sizeof(uint16_t);
+                    const size_t keepBytes = (preserveAliasedPoster && m_posterAliasesFrame && m_liveCard.hasPoster)
+                        ? std::min(totalFrameBytes, m_posterCapBytes)
+                        : 0U;
+                    if (totalFrameBytes > keepBytes) {
+                        memset(reinterpret_cast<uint8_t*>(m_frame565) + keepBytes, 0, totalFrameBytes - keepBytes);
+                    }
+                    if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+                        m_frameSeq.fetch_add(1, std::memory_order_release);
+                    }
+                };
                 if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
+                    releaseBorrowedFrameBuf(false);
                     if (freePayloadAfter) free(payloadBuf);
                     break;
                 }
@@ -1924,9 +1955,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                         bool online = sDoc["online"] | false;
                         if (!online) {
                             if (freePayloadAfter) free(payloadBuf);
-                            if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-                                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-                            }
+                            releaseBorrowedFrameBuf(false);
                             m_statusState.store(2, std::memory_order_release);
                             m_lastPublishedCfgGen = 0;
                             clearLiveCardState();
@@ -1950,9 +1979,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                         }
                     }
                 }
-                if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-                    memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-                }
+                releaseBorrowedFrameBuf(true);
                 if (freePayloadAfter) {
                     free(payloadBuf);
                 }
@@ -2253,15 +2280,30 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
             }
         };
 
-        if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap &&
-            readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive)) {
-            rxBuf[respBytes] = '\0';
-            StaticJsonDocument<JSON_OBJECT_SIZE(44)> nextDoc;
-            if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
-                extractNextRoot(nextDoc.as<JsonObjectConst>());
+        const bool rxBorrowsFrame = (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
+        if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap) {
+            if (rxBorrowsFrame && (m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+                m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
             }
-            if (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+            const bool readOk = readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive);
+            if (readOk) {
+                rxBuf[respBytes] = '\0';
+                StaticJsonDocument<JSON_OBJECT_SIZE(44)> nextDoc;
+                if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
+                    extractNextRoot(nextDoc.as<JsonObjectConst>());
+                }
+            }
+            if (rxBorrowsFrame) {
+                const size_t totalFrameBytes = m_framePixels * sizeof(uint16_t);
+                const size_t keepBytes = (readOk && m_posterAliasesFrame && nextCard.hasPoster)
+                    ? std::min(totalFrameBytes, m_posterCapBytes)
+                    : 0U;
+                if (totalFrameBytes > keepBytes) {
+                    memset(reinterpret_cast<uint8_t*>(m_frame565) + keepBytes, 0, totalFrameBytes - keepBytes);
+                }
+                if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+                    m_frameSeq.fetch_add(1, std::memory_order_release);
+                }
             }
         } else {
             DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
@@ -2513,15 +2555,20 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    // Request `paced=1` WITHOUT `drop_late=1` so Uvicorn serves an exact `Content-Length` raw binary
-    // `DMDS` body instead of wrapping chunks in `Transfer-Encoding: chunked` (`2010\r\nDMDS...`).
+    // Request `paced=1&codec=dmdz1` WITHOUT `drop_late=1` so Uvicorn serves an exact `Content-Length`
+    // lossless `DMDZ` v1 stream (or raw binary `DMDS` on legacy servers) with zero chunked framing.
     char reqPath[288];
-    bool hasQ = (strchr(rawPath, '?') != nullptr);
-    bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
-    if (hasPaced) {
+    const bool hasQ = (strchr(rawPath, '?') != nullptr);
+    const bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
+    const bool hasCodec = (strstr(rawPath, "codec=") != nullptr);
+    if (hasPaced && hasCodec) {
         copySafeStr(reqPath, sizeof(reqPath), rawPath);
-    } else {
+    } else if (hasPaced && !hasCodec) {
+        snprintf(reqPath, sizeof(reqPath), "%s%scodec=dmdz1", rawPath, hasQ ? "&" : "?");
+    } else if (!hasPaced && hasCodec) {
         snprintf(reqPath, sizeof(reqPath), "%s%spaced=1", rawPath, hasQ ? "&" : "?");
+    } else {
+        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1&codec=dmdz1", rawPath, hasQ ? "&" : "?");
     }
 
     struct sockaddr_in addr;
@@ -2746,10 +2793,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     };
 
     uint8_t hdr[16] = {0};
-    if (!readExactStreamBody(hdr, sizeof(hdr), 3500U) || memcmp(hdr, "DMDS", 4) != 0) {
+    core::drawing::DmdzStreamHeader parsedHdr;
+    if (!readExactStreamBody(hdr, sizeof(hdr), 3500U) ||
+        !core::drawing::DmdzStreamDecoder::parseHeader(hdr, parsedHdr)) {
         LOGW(
             "Showcase",
-            "TCP stream bad DMDS magic (chunked=%u): %02x %02x %02x %02x %02x %02x",
+            "TCP stream bad header magic (chunked=%u): %02x %02x %02x %02x %02x %02x",
             isChunked ? 1U : 0U,
             hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5]
         );
@@ -2757,12 +2806,11 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return false;
     }
 
-    uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
-    uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
-    uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
-    uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
-    uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
-    uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
+    uint8_t fps = parsedHdr.fps;
+    uint16_t w = parsedHdr.width;
+    uint16_t h = parsedHdr.height;
+    uint16_t totalFrames = parsedHdr.totalFrames;
+    uint32_t frameDelayMs = parsedHdr.frameDurMs;
     size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
     size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
     if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
@@ -2773,35 +2821,53 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return false;
     }
 
+    core::drawing::DmdzStreamDecoder dmdzDec;
+    if (parsedHdr.isDmdz) {
+        dmdzDec.init(w, h);
+    }
+
     const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-    uint32_t headerExpectedMs =
-        ((static_cast<uint32_t>(totalFrames) * 1000U) / std::max<uint32_t>(1U, static_cast<uint32_t>(fps))) + 4500U;
-    uint32_t maxAllowedMs = std::min<uint32_t>(
-        180000U,
-        std::max<uint32_t>(configuredMaxStreamMs(cfg) + 4000U, headerExpectedMs)
+    (void)frameDelayMs;
+    const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(fps));
+    const uint32_t headerExpectedMs = (static_cast<uint32_t>(totalFrames) * 1000U) / safeFps;
+    // Progress-based watchdog: idle stalls are caught by the 3.5 s read timeouts below; this cap only
+    // guards against a pathologically slow stream (2x nominal duration) instead of truncating at 1x.
+    const uint32_t maxAllowedMs = std::min<uint32_t>(
+        300000U,
+        std::max<uint32_t>(configuredMaxStreamMs(cfg) + 4000U, (headerExpectedMs * 2U) + 4500U)
     );
-    uint32_t minInterFrameMs = (fps > 0U && fps <= 60U)
-        ? std::max<uint32_t>(10U, ((1000U / static_cast<uint32_t>(fps)) * 4U) / 5U)
-        : 12U;
-    uint32_t lastFrameCommitMs = 0U;
     uint32_t streamStartMs = millis();
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     m_presentedStreamFrames.store(0, std::memory_order_release);
 
+    // Client-side presentation clock: frame k is published at `scheduleT0 + k / fps`. The next frame is
+    // received while `m_frameSeq` is ODD (Core 1 keeps showing frame k-1 from its canvas/DMA), so the
+    // network read overlaps the frame period instead of adding to it. Late frames publish immediately
+    // and re-anchor the clock once they lag by more than one period (no catch-up burst).
+    uint32_t scheduleT0 = 0U;
+    uint32_t publishedOnClock = 0U;
+    const char* endReason = "eof";
+    size_t minFree8 = showcaseFree8BitHeap();
+    uint32_t lateFrames = 0U;
+
+    auto dueMsFor = [&](uint32_t k) -> uint32_t {
+        return scheduleT0 + static_cast<uint32_t>((static_cast<uint64_t>(k) * 1000ULL) / safeFps);
+    };
+
     uint16_t framesRead = 0;
     for (uint16_t f = 0; f < totalFrames; ++f) {
-        if (!m_wantActive.load(std::memory_order_acquire) ||
-            shouldYieldShowcaseToWebUi(m_hasPsram) ||
-            m_cfgGen.load(std::memory_order_acquire) != startGen) break;
-        if ((millis() - streamStartMs) >= maxAllowedMs) break;
+        if (!m_wantActive.load(std::memory_order_acquire)) { endReason = "deactivated"; break; }
+        if (shouldYieldShowcaseToWebUi(m_hasPsram)) { endReason = "webui"; break; }
+        if (m_cfgGen.load(std::memory_order_acquire) != startGen) { endReason = "cfg"; break; }
+        if ((millis() - streamStartMs) >= maxAllowedMs) { endReason = "cap"; break; }
 
-        // 1. Wait for the next frame's payload bytes to arrive WHILE `m_frameSeq` remains EVEN!
-        //    This keeps Frame `f - 1` 100% unlocked for Core 1 during the ~40-50 ms inter-frame interval.
+        // 1. Wait for the next frame's first payload bytes WHILE `m_frameSeq` remains EVEN.
         uint8_t firstFrameByte = 0;
         bool hasFirstFrameByte = false;
         if (isChunked) {
             // Advance past any trailing `\r\n<hex>\r\n` chunk framing before locking `m_frame565`
             if (!readExactStreamBody(&firstFrameByte, 1U, 3500U)) {
+                endReason = "idle";
                 break;
             }
             hasFirstFrameByte = true;
@@ -2827,50 +2893,110 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                 }
             }
             if (!socketReadable) {
+                endReason = "idle";
                 break;
             }
         }
 
-        // 2. Ensure Core 1 has blitted Frame `f - 1` AND absorb Wi-Fi AMPDU packet coalescing bursts
-        //    so two consecutive panorama frames never overwrite each other 2 ms apart on the LEDs!
+        // 2. Ensure Core 1 has blitted frame `f - 1` before it is overwritten (bounded by one period).
         if (framesRead > 0U) {
+            const uint32_t handoffBudgetMs = std::max<uint32_t>(18U, 1000U / safeFps);
             uint32_t handoffT0 = millis();
             while (m_wantActive.load(std::memory_order_acquire) &&
                    !shouldYieldShowcaseToWebUi(m_hasPsram) &&
                    m_consumedFrameSeq.load(std::memory_order_acquire) != m_frameSeq.load(std::memory_order_relaxed) &&
-                   (millis() - handoffT0) < 18U) {
+                   (millis() - handoffT0) < handoffBudgetMs) {
                 vTaskDelay(1);
             }
-            if (serverPaced) {
-                while (m_wantActive.load(std::memory_order_acquire) &&
-                       !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-                       (millis() - lastFrameCommitMs) < minInterFrameMs) {
-                    uint32_t remGap = minInterFrameMs - (millis() - lastFrameCommitMs);
-                    vTaskDelay(pdMS_TO_TICKS(remGap > 2U ? (remGap - 1U) : 1U));
+        }
+
+        // 3. Receive/decode the whole frame while ODD (Core 1 skips blits and keeps the previous frame on screen).
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+            m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+        }
+        if (f == 0U && m_posterAliasesFrame) {
+            if (m_liveCard.hasPoster) {
+                m_seq.fetch_add(1, std::memory_order_acq_rel);
+                m_liveCard.hasPoster = false;
+                m_seq.fetch_add(1, std::memory_order_release);
+            }
+            memset(m_frame565, 0, std::min(maxBufBytes, m_posterCapBytes));
+        }
+        bool okFrame = false;
+        if (parsedHdr.isDmdz) {
+            uint8_t lenBytes[2] = {0, 0};
+            bool lenOk = false;
+            if (hasFirstFrameByte) {
+                lenBytes[0] = firstFrameByte;
+                lenOk = readExactStreamBody(lenBytes + 1U, 1U, 3500U);
+            } else {
+                lenOk = readExactStreamBody(lenBytes, 2U, 3500U);
+            }
+            if (lenOk) {
+                const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) |
+                                            (static_cast<uint16_t>(lenBytes[1]) << 8);
+                dmdzDec.beginFrame(payloadLen);
+                uint8_t decChunk[384];
+                size_t rem = payloadLen;
+                okFrame = true;
+                while (rem > 0U) {
+                    const size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
+                    if (!readExactStreamBody(decChunk, take, 3500U) ||
+                        !dmdzDec.feed(decChunk, take, m_frame565)) {
+                        okFrame = false;
+                        break;
+                    }
+                    rem -= take;
+                }
+                if (okFrame && !dmdzDec.finishFrame()) {
+                    okFrame = false;
+                }
+            }
+        } else {
+            uint8_t* frameDst = reinterpret_cast<uint8_t*>(m_frame565);
+            if (hasFirstFrameByte) {
+                frameDst[0] = firstFrameByte;
+                okFrame = (frameBytes == 1U) || readExactStreamBody(frameDst + 1U, frameBytes - 1U, 3500U);
+            } else {
+                okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
+            }
+        }
+
+        // 4. Hold the completed frame until its presentation time on the client clock.
+        if (okFrame) {
+            const uint32_t now = millis();
+            if (publishedOnClock == 0U) {
+                scheduleT0 = now;
+            } else {
+                const uint32_t due = dueMsFor(publishedOnClock);
+                const int32_t lagMs = static_cast<int32_t>(now - due);
+                if (lagMs > static_cast<int32_t>(1000U / safeFps)) {
+                    // More than one period late: re-anchor so the following frames keep a steady cadence.
+                    scheduleT0 = now - static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
+                    ++lateFrames;
+                } else {
+                    while (m_wantActive.load(std::memory_order_acquire) &&
+                           !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                           static_cast<int32_t>(due - millis()) > 0) {
+                        const uint32_t rem = due - millis();
+                        vTaskDelay(pdMS_TO_TICKS(rem > 2U ? (rem - 1U) : 1U));
+                    }
                 }
             }
         }
 
-        // 3. Critical write window (~1.2 ms RAM copy): mark ODD -> drain frame -> mark EVEN immediately!
-        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-            m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
-        }
-        uint8_t* frameDst = reinterpret_cast<uint8_t*>(m_frame565);
-        bool okFrame = false;
-        if (hasFirstFrameByte) {
-            frameDst[0] = firstFrameByte;
-            okFrame = (frameBytes == 1U) || readExactStreamBody(frameDst + 1U, frameBytes - 1U, 3500U);
-        } else {
-            okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
-        }
+        // 5. Publish (EVEN) so Core 1 blits the new frame on its next tick.
         if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
             m_frameSeq.fetch_add(1, std::memory_order_release);
         }
         if (!okFrame) {
+            endReason = m_wantActive.load(std::memory_order_acquire)
+                ? (shouldYieldShowcaseToWebUi(m_hasPsram) ? "webui" : "idle")
+                : "deactivated";
             break;
         }
-        lastFrameCommitMs = millis();
         ++framesRead;
+        ++publishedOnClock;
         if (!m_liveCard.hasVideoFrame) {
             m_seq.fetch_add(1, std::memory_order_acq_rel);
             m_liveCard.hasVideoFrame = true;
@@ -2879,25 +3005,10 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         if (m_phase.load(std::memory_order_relaxed) != static_cast<uint8_t>(Phase::LiveStream)) {
             m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
         }
-
-        if (serverPaced) {
-            if ((f & 0x03U) == 0U) {
-                taskYIELD();
-            }
-        } else {
-            uint32_t targetElapsedMs = (fps > 0U)
-                ? ((static_cast<uint32_t>(f + 1U) * 1000U) / static_cast<uint32_t>(fps))
-                : (static_cast<uint32_t>(f + 1U) * frameDelayMs);
-            uint32_t elapsedMs = millis() - streamStartMs;
-            if (elapsedMs >= maxAllowedMs) break;
-            if (elapsedMs < targetElapsedMs) {
-                uint32_t waitMs = std::min<uint32_t>(targetElapsedMs - elapsedMs, maxAllowedMs - elapsedMs);
-                if (waitMs > 0U) {
-                    vTaskDelay(pdMS_TO_TICKS(waitMs));
-                }
-            } else if ((f & 0x07U) == 0U) {
-                vTaskDelay(1);
-            }
+        const size_t free8 = showcaseFree8BitHeap();
+        if (free8 < minFree8) minFree8 = free8;
+        if ((f & 0x07U) == 0U) {
+            taskYIELD();
         }
     }
 
@@ -2906,17 +3017,25 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     closeStreamSocket(framesRead < totalFrames);
     if (framesRead > 0U) {
         net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
+    }
+    {
         uint32_t durMs = std::max<uint32_t>(1U, millis() - streamStartMs);
         uint32_t pres = m_presentedStreamFrames.load(std::memory_order_acquire);
         LOGI(
             "Showcase",
-            "TCP stream done: path=%s rxFrames=%u/%u presented=%u durMs=%u effFps=%.1f",
+            "TCP stream done (%s): codec=%s path=%s rxFrames=%u/%u presented=%u late=%u durMs=%u effFps=%.1f paced=%u minFree8=%u stackFree=%u",
+            endReason,
+            parsedHdr.isDmdz ? "dmdz1" : "dmds",
             reqPath,
             static_cast<unsigned>(framesRead),
             static_cast<unsigned>(totalFrames),
             static_cast<unsigned>(pres),
+            static_cast<unsigned>(lateFrames),
             static_cast<unsigned>(durMs),
-            (static_cast<float>(pres) * 1000.0f) / static_cast<float>(durMs)
+            (static_cast<float>(pres) * 1000.0f) / static_cast<float>(durMs),
+            serverPaced ? 1U : 0U,
+            static_cast<unsigned>(minFree8),
+            static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr))
         );
     }
     return (framesRead > 0U);
@@ -2941,22 +3060,47 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
 
     Stream& st = sResp.stream();
     uint8_t hdr[16];
-    if (!readExactFromStream(st, hdr, sizeof(hdr), m_wantActive) || memcmp(hdr, "DMDS", 4) != 0) {
+    core::drawing::DmdzStreamHeader parsedHdr;
+    if (!readExactFromStream(st, hdr, sizeof(hdr), m_wantActive) ||
+        !core::drawing::DmdzStreamDecoder::parseHeader(hdr, parsedHdr)) {
         return false;
     }
-    uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
-    uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
-    uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
+    uint16_t w = parsedHdr.width;
+    uint16_t h = parsedHdr.height;
+    uint16_t totalFrames = parsedHdr.totalFrames;
     size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
     size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
     if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
         return false;
     }
 
+    core::drawing::DmdzStreamDecoder dmdzDec;
+    if (parsedHdr.isDmdz) {
+        dmdzDec.init(w, h);
+    }
+
     uint16_t framesRead = 0;
     for (uint16_t f = 0; f < totalFrames; ++f) {
         if (!m_wantActive.load(std::memory_order_acquire)) break;
-        if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
+        if (parsedHdr.isDmdz) {
+            uint8_t lenBytes[2] = {0, 0};
+            if (!readExactFromStream(st, lenBytes, 2U, m_wantActive)) break;
+            uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) | (static_cast<uint16_t>(lenBytes[1]) << 8);
+            dmdzDec.beginFrame(payloadLen);
+            uint8_t decChunk[256];
+            size_t rem = payloadLen;
+            bool ok = true;
+            while (rem > 0U) {
+                size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
+                if (!readExactFromStream(st, decChunk, take, m_wantActive) ||
+                    !dmdzDec.feed(decChunk, take, m_frame565)) {
+                    ok = false;
+                    break;
+                }
+                rem -= take;
+            }
+            if (!ok || !dmdzDec.finishFrame()) break;
+        } else if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
             break;
         }
         ++framesRead;
@@ -3544,6 +3688,12 @@ void MediaShowcaseBase::render(EngineContext* context) {
             drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
         }
     } else {
+        if (m_posterAliasesFrame && m_renderCard.hasPoster &&
+            (m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
+            // Core 0 is writing Frame 0 or borrowing `m_frame565` for JSON RX; keep last clean Canvas frame.
+            m_renderedNewFrame = false;
+            return;
+        }
         s->clear(0);
         drawCardPhase(s, m_renderCard, elapsedMs);
     }
@@ -3565,9 +3715,10 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
     desc.requirements.targetFps = 60;
+    desc.requirements.preferredColorDepth = 8;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalPersistentBytes = 14000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
     desc.requirements.scalesRgb565FrameWithGeometry = true;
@@ -3607,9 +3758,10 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
     desc.requirements.targetFps = 60;
+    desc.requirements.preferredColorDepth = 8;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalPersistentBytes = 14000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
     desc.requirements.scalesRgb565FrameWithGeometry = true;
@@ -3649,9 +3801,10 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
     desc.requirements.targetFps = 60;
+    desc.requirements.preferredColorDepth = 8;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalPersistentBytes = 14000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
     desc.requirements.scalesRgb565FrameWithGeometry = true;
@@ -3691,9 +3844,10 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
     desc.requirements.targetFps = 60;
+    desc.requirements.preferredColorDepth = 8;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalPersistentBytes = 14000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
     desc.requirements.scalesRgb565FrameWithGeometry = true;

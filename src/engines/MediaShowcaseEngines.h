@@ -282,6 +282,7 @@ protected:
     char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
+    bool m_posterAliasesFrame = false;
     uint32_t m_mqttConnSeq = 0;
     uint32_t m_lastPublishedCfgGen = 0;
     uint8_t m_consecutiveNetFailures = 0;

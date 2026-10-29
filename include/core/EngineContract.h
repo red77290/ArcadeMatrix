@@ -166,6 +166,7 @@ struct EngineRequirements {
     bool prefersDoubleBuffer = false;   ///< Engine operates best in double-buffering but tolerates single-buffer blanking
     bool supportsSingleBuffer = true;   ///< Engine operates cleanly under CANVAS_BURST_SINGLE / DIRECT_DMA_SINGLE
     uint16_t targetFps = 60;            ///< Nominal design framerate (60, 30, 10, or 1 FPS)
+    uint8_t preferredColorDepth = 0;    ///< Engine-level color depth override (e.g. 8 for full RGB565 Showcase streams); 0 = follow matrix config
 
     // --- Dynamic Memory & Footprint Modeling ---
     uint32_t internalPersistentBytes = 0;   ///< Static heap allocated by engine context
@@ -213,6 +214,9 @@ struct EngineRequirements {
         supportsSingleBuffer = supportsSingleBuffer && other.supportsSingleBuffer;
 
         targetFps = (targetFps > other.targetFps) ? targetFps : other.targetFps;
+        if (other.preferredColorDepth > preferredColorDepth) {
+            preferredColorDepth = other.preferredColorDepth;
+        }
         internalPersistentBytes = (internalPersistentBytes > other.internalPersistentBytes) ? internalPersistentBytes : other.internalPersistentBytes;
         internalContiguousBytes = (internalContiguousBytes > other.internalContiguousBytes) ? internalContiguousBytes : other.internalContiguousBytes;
         psramBytes = (psramBytes > other.psramBytes) ? psramBytes : other.psramBytes;

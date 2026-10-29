@@ -10,6 +10,7 @@ RenderStats g_renderStats;
 #include "../hal/BoardProfile.h"
 #include "Logger.h"
 #include "drawing/Hub75BulkEncoder.h"
+#include "drawing/Hub75BcmCalibration.h"
 #include "drawing/Hub75PresentationBackend.h"
 #include "drawing/PipelineSelectionPolicy.h"
 #include "drawing/Hub75DmaLayout.h"
@@ -390,7 +391,12 @@ size_t FastMatrixPanel::getDmaAllocatedBytes() const {
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
     if (color != 0) {
-        MatrixPanel_I2S_DMA::fillScreen(color);
+        // Solid colours also go through the calibrated LUTs (the library fill uses its own CIE path).
+        for (int16_t y = 0; y < _height; ++y) {
+            for (int16_t x = 0; x < _width; ++x) {
+                drawPixel(x, y, color);
+            }
+        }
         return;
     }
     auto& targetFb = frame_buffer[m_back];
@@ -442,39 +448,38 @@ uint16_t* FastMatrixPanel::getBackbufferRowPlane(uint8_t row, uint8_t plane) {
     return nullptr;
 }
 
+void FastMatrixPanel::rememberBrightness8(uint8_t b) {
+    const bool changed = (b != m_brightness8);
+    m_brightness8 = b;
+    // OE window widths depend on brightness: recalibrate LUTs (cold path, ~4 ms) on real changes only.
+    if (changed && b > 0 && initialized) {
+        initLuts(m_depth);
+    }
+}
+
 void FastMatrixPanel::initLuts(uint8_t depth) {
     if (depth < 2) depth = 2;
     if (depth > 8) depth = 8;
     m_depth = depth;
-    uint8_t shift = 8 - depth;
-    uint8_t round = (shift > 0) ? (1 << (shift - 1)) : 0;
-    uint16_t maxVal = (1 << depth) - 1;
 
-    for (int r = 0; r < 32; r++) {
-        uint8_t r8 = (r << 3) | (r >> 2);
-        uint16_t val = lumConvTab_8bit[r8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_r[r] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
-    }
-    for (int g = 0; g < 64; g++) {
-        uint8_t g8 = (g << 2) | (g >> 4);
-        uint16_t val = lumConvTab_8bit[g8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_g[g] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
-    }
-    for (int b = 0; b < 32; b++) {
-        uint8_t b8 = (b << 3) | (b >> 2);
-        uint16_t val = lumConvTab_8bit[b8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_b[b] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
-    }
+    const uint8_t brt = (m_brightness8 > 0) ? m_brightness8 : 255;
+    uint32_t weights[Hub75BcmCalibration::MAX_DEPTH] = {0};
+    Hub75BcmCalibration::computePlaneWeights(
+        depth,
+        static_cast<uint8_t>(lsbMsbTransitionBit),
+        static_cast<uint16_t>(PIXELS_PER_ROW),
+        m_cfg.latch_blanking,
+        brt,
+        weights
+    );
+    Hub75BcmCalibration::buildChannelLut(weights, depth, 5, m_lut_r);
+    Hub75BcmCalibration::buildChannelLut(weights, depth, 6, m_lut_g);
+    Hub75BcmCalibration::buildChannelLut(weights, depth, 5, m_lut_b);
 }
 
 void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
-    if (m_depth == 8) {
-        MatrixPanel_I2S_DMA::drawPixel(x, y, color);
-        return;
-    }
+    // Every depth (including 8) goes through the calibrated LUTs: the library's own CIE path
+    // ignores its non-binary bit-plane weights and produces LSB sparkle / inverted dark levels.
     if (!initialized || x < 0 || x >= _width || y < 0 || y >= _height) return;
     int16_t w = 1, h = 1;
     transform(x, y, w, h);

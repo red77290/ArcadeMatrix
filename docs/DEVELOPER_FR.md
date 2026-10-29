@@ -299,6 +299,8 @@ ArcadeMatrix V4 remplace les heuristiques approximatives par une **modélisation
    - Doit être égal à `0` pour tous les moteurs standards. Toute valeur non nulle représente des allocations dynamiques transitoires par frame, strictement proscrites sur le hot-path Core 1 (Invariant 1).
 5. **Rôle Déterminant de `needsTls` sur la Sélection du Pipeline :**
    - Déclarer `needsTls = true` avertit la `PipelineSelectionPolicy` que le moteur effectuera des poignées de main HTTPS. Sur l'ESP32 standard sans PSRAM, ce drapeau déclenche la rétrogradation dynamique de la profondeur de couleur HUB75 DMA de **8 bits à 4 bits**, récupérant **18 Ko de RAM DMA** et exposant **50 à 64 Ko de DRAM contiguë** (`NetworkBudget::TLS_MIN_LARGEST_BLOCK = 16 717 o`). Cela garantit 100 % de succès sur les handshakes TLS sans plantage mémoire.
+6. **Profondeur de Couleur Préférée par Moteur (`preferredColorDepth`) :**
+   - Les moteurs de streaming RGB565 haute fidélité (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) déclarent `preferredColorDepth = 8`. `PipelineSelectionPolicy` surclasse une profondeur manuelle inférieure (ex. `4` bits) ou `COLOR_DEPTH_AUTO` vers **8 bits** dès que la marge DMA post-boot le permet, maintient `8 -> 8` sans coupure lors des rotations (`SYSTEM_KEEP_DEPTH_RESERVE`), et restaure la profondeur configurée lors du retour vers un moteur standard.
 
 ---
 

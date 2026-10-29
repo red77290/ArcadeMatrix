@@ -6,6 +6,7 @@
 #include "core/ConfigLoader.h"
 #include "core/I18n.h"
 #include "core/drawing/Hub75DmaLayout.h"
+#include "core/drawing/DmdzStreamDecoder.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
@@ -2302,6 +2303,251 @@ void test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease(v
     TEST_ASSERT_FALSE(online);
 }
 
+#include "core/drawing/Hub75BcmCalibration.h"
+
+void test_hub75_bcm_calibrated_luts_monotonic_across_depths(void) {
+    using namespace Hub75BcmCalibration;
+
+    // 1. Reproduce the library's non-binary bit-plane weights (128 px row, latch blanking 8, full brightness)
+    uint32_t w4[MAX_DEPTH] = {0};
+    computePlaneWeights(4, 0, 128, 8, 255, w4);
+    // 4-bit planes emit 1/2/3/5 units: raw code 7 is brighter than raw code 8 (non-monotonic)
+    TEST_ASSERT_TRUE(codeEnergy(w4, 4, 7) > codeEnergy(w4, 4, 8));
+
+    uint32_t w8[MAX_DEPTH] = {0};
+    computePlaneWeights(8, 2, 128, 8, 255, w8);
+    // 8-bit with lsbMsbTransitionBit = 2: the LSB plane keeps a full OE window (8x its binary weight)
+    TEST_ASSERT_TRUE(w8[0] > w8[1]);
+    TEST_ASSERT_TRUE(w8[0] > w8[2]);
+
+    // 2. Calibrated LUTs: black stays black, full stays full, emitted light never decreases
+    const uint8_t depths[] = {2, 4, 6, 7, 8};
+    const uint8_t lsbs[] = {0, 0, 0, 1, 2};
+    const uint8_t brightness[] = {25, 56, 127, 255};
+    for (size_t di = 0; di < sizeof(depths); ++di) {
+        for (size_t bi = 0; bi < sizeof(brightness); ++bi) {
+            uint32_t w[MAX_DEPTH] = {0};
+            computePlaneWeights(depths[di], lsbs[di], 128, 8, brightness[bi], w);
+            uint8_t lutR[32];
+            uint8_t lutG[64];
+            buildChannelLut(w, depths[di], 5, lutR);
+            buildChannelLut(w, depths[di], 6, lutG);
+            const uint8_t maxCode = static_cast<uint8_t>((1U << depths[di]) - 1U);
+            TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+            TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+            TEST_ASSERT_EQUAL_UINT8(maxCode, lutR[31]);
+            TEST_ASSERT_EQUAL_UINT8(maxCode, lutG[63]);
+            for (int v = 1; v < 32; ++v) {
+                TEST_ASSERT_TRUE(codeEnergy(w, depths[di], lutR[v]) >= codeEnergy(w, depths[di], lutR[v - 1]));
+            }
+            for (int v = 1; v < 64; ++v) {
+                TEST_ASSERT_TRUE(codeEnergy(w, depths[di], lutG[v]) >= codeEnergy(w, depths[di], lutG[v - 1]));
+            }
+        }
+    }
+
+    // 3. 8-bit calibrated green keeps >= 50 of the 64 RGB565 levels distinct at 22% brightness
+    uint32_t w22[MAX_DEPTH] = {0};
+    computePlaneWeights(8, 2, 128, 8, 56, w22);
+    uint8_t lutG22[64];
+    buildChannelLut(w22, 8, 6, lutG22);
+    int distinct = 1;
+    for (int v = 1; v < 64; ++v) {
+        if (codeEnergy(w22, 8, lutG22[v]) != codeEnergy(w22, 8, lutG22[v - 1])) ++distinct;
+    }
+    TEST_ASSERT_TRUE(distinct >= 50);
+}
+
+void test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds(void) {
+    using core::drawing::DmdzStreamDecoder;
+    using core::drawing::DmdzStreamHeader;
+
+    const uint8_t dmdzHdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 1, 20,
+        16, 0,   // width = 16
+        6, 0,    // height = 6 (96 pixels -> exercises LONG SKIP > 64!)
+        4, 0,    // totalFrames = 4
+        50, 0,   // frameDurMs = 50
+        0, 0
+    };
+    DmdzStreamHeader hdr;
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(dmdzHdrRaw, hdr));
+    TEST_ASSERT_TRUE(hdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT8(20, hdr.fps);
+    TEST_ASSERT_EQUAL_UINT16(16, hdr.width);
+    TEST_ASSERT_EQUAL_UINT16(6, hdr.height);
+    TEST_ASSERT_EQUAL_UINT16(4, hdr.totalFrames);
+
+    const uint8_t dmdsHdrRaw[16] = {
+        'D', 'M', 'D', 'S', 1, 15, 128, 0, 32, 0, 10, 0, 67, 0, 0, 0
+    };
+    DmdzStreamHeader rawHdr;
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(dmdsHdrRaw, rawHdr));
+    TEST_ASSERT_FALSE(rawHdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT16(128, rawHdr.width);
+
+    const uint8_t badVerRaw[16] = {
+        'D', 'M', 'D', 'Z', 2, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
+    };
+    TEST_ASSERT_FALSE(DmdzStreamDecoder::parseHeader(badVerRaw, hdr));
+
+    uint16_t fb[16 * 6];
+    memset(fb, 0xAA, sizeof(fb));
+    DmdzStreamDecoder dec;
+    dec.init(16, 6);
+
+    auto feedIn3ByteChunks = [&](const uint8_t* payload, size_t n) -> bool {
+        if (!dec.beginFrame(static_cast<uint16_t>(n))) return false;
+        size_t off = 0;
+        while (off < n) {
+            size_t take = (n - off > 3U) ? 3U : (n - off);
+            if (!dec.feed(payload + off, take, fb)) return false;
+            off += take;
+        }
+        return dec.finishFrame();
+    };
+
+    // Frame 0 (Keyframe = 2):
+    // - Row 0 (16 px): LIT(1) 0xF800 + RUN(15) -> 16 x 0xF800
+    // - Row 1 (16 px): DIFF(dr=-1,dg=+1,db=+1 -> x = 0*9 + 2*3 + 2 = 8 -> 0xC8 => r=30,g=1,b=1 = 0xF021) + RUN(15)
+    // - Row 2 (16 px): INDEX(hashPixel(0xF800)) + RUN(15) -> 16 x 0xF800
+    // - Rows 3..5 (48 px): LIT(2) {0x07E0, 0x001F} + RUN(46) -> 0x07E0, 47 x 0x001F
+    const uint8_t redHash = DmdzStreamDecoder::hashPixel(0xF800);
+    const uint8_t f0[] = {
+        DmdzStreamDecoder::kFrameKey,
+        0xE0, 0x00, 0xF8,             // LIT 1: 0xF800
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        static_cast<uint8_t>(0xC0 | 8),  // DIFF (-1,+1,+1) -> 0xF021
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        static_cast<uint8_t>(0x80 | redHash), // INDEX -> 0xF800
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        0xE1, 0xE0, 0x07, 0x1F, 0x00, // LIT 2: 0x07E0, 0x001F
+        static_cast<uint8_t>(0x40 | 45)  // RUN 46
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f0, sizeof(f0)));
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[0]);
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[15]);
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[16]);
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[32]);
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, fb[48]);
+    TEST_ASSERT_EQUAL_UINT16(0x001F, fb[49]);
+    TEST_ASSERT_EQUAL_UINT16(0x001F, fb[95]);
+
+    // Frame 1 (Scroll up dy=+1): rows 0..4 shift up from old rows 1..5 (80 px unchanged via LONG SKIP),
+    // new bottom row 5 (16 px) filled with 0xFFFF.
+    const uint8_t f1[] = {
+        DmdzStreamDecoder::kFrameScroll,
+        1,                               // dy = +1
+        0xF0, 80, 0,                     // LONG SKIP 80
+        0xE0, 0xFF, 0xFF,                // LIT 1: 0xFFFF
+        static_cast<uint8_t>(0x40 | 14)  // RUN 15
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f1, sizeof(f1)));
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[0]);   // old row 1 is now row 0
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[16]);  // old row 2 is now row 1
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, fb[32]);  // old row 3 is now row 2
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, fb[80]);  // new row 5
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, fb[95]);
+
+    // Frame 2 (Scroll down dy=-1): row 0 gets 0x1234 (16 px), rows 1..5 keep shifted rows 0..4 (LONG SKIP 80)
+    const uint8_t f2[] = {
+        DmdzStreamDecoder::kFrameScroll,
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        0xE0, 0x34, 0x12,                // LIT 1: 0x1234
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        0xF0, 80, 0                      // LONG SKIP 80
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f2, sizeof(f2)));
+    TEST_ASSERT_EQUAL_UINT16(0x1234, fb[0]);
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[16]);
+
+    // Frame 3 (Delta with overflow skip -> must reject cleanly without OOB write)
+    const uint8_t badOverflow[] = {
+        DmdzStreamDecoder::kFrameDelta,
+        0xF0, 97, 0 // 97 > 96 pixels!
+    };
+    TEST_ASSERT_FALSE(feedIn3ByteChunks(badOverflow, sizeof(badOverflow)));
+    TEST_ASSERT_TRUE(dec.hasError());
+}
+
+void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
+    EngineRequirements showcaseReqs;
+    showcaseReqs.needsNetwork = true;
+    showcaseReqs.needsTls = false;
+    showcaseReqs.preferredColorDepth = 8;
+    showcaseReqs.internalPersistentBytes = 14000;
+    showcaseReqs.internalContiguousBytes = 8192;
+    showcaseReqs.scalesRgb565FrameWithGeometry = true;
+
+    // 1. Even if user manually set matrix.colorDepth = 4 (with dynamicColorDepth = false),
+    //    Showcase `preferredColorDepth = 8` elevates the target depth to lossless 8-bit on esp32dev!
+    uint8_t bootEval = PipelineSelectionPolicy::evaluate(
+        128, 32,
+        /*colorDepth=*/4,
+        "auto",
+        /*hasPsram=*/false,
+        MemoryBudgetConstraints(/*freeInt=*/72000, /*largest=*/52000, /*freeDma=*/72000),
+        showcaseReqs,
+        /*hasPreallocatedCanvas=*/true
+    ).effectiveColorDepth;
+    TEST_ASSERT_EQUAL_UINT8(8, bootEval);
+
+    // 2. Stage-1 rotation between two Showcase slots at 8-bit (`!panelReleased && currentDepth == 8`):
+    //    with `freeInternal = 25000` B (after `sizeof(Engine)` + 8-bit DMA + descriptors are already deducted),
+    //    `resolveTargetDepth` keeps `8`-bit in place (zero 350 ms panel teardown)!
+    uint8_t rotKeep = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/4,
+        /*dynamicColorDepth=*/false,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/8,
+        /*currentLargestBlock=*/15860,
+        /*currentFreeInternalHeap=*/25000,
+        /*currentFreeDma=*/25000,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, rotKeep);
+
+    // 3. Stage-2 emptied zone (`panelReleased = true`, `freeInternal = 67848` B): resolves to 8-bit!
+    uint8_t stage2Up = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/8,
+        /*dynamicColorDepth=*/true,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/4,
+        /*currentLargestBlock=*/31732,
+        /*currentFreeInternalHeap=*/67848,
+        /*currentFreeDma=*/67848,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, stage2Up);
+
+    // 4. Graceful step-down `{8, 7, 6, 4, 2}`: if extra services consume ~7 KB so emptied zone is 51 KB
+    //    (cannot fit 8-bit's 58 KB threshold, CAN fit 6-bit = 24,576 + 25,264 = 49,840 B), steps to 6-bit
+    //    instead of cliff-dropping straight to 4-bit!
+    uint8_t stage2Graceful = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/8,
+        /*dynamicColorDepth=*/true,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/4,
+        /*currentLargestBlock=*/31732,
+        /*currentFreeInternalHeap=*/51000,
+        /*currentFreeDma=*/51000,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(6, stage2Graceful);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2389,6 +2635,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
     RUN_TEST(test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling);
     RUN_TEST(test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease);
+    RUN_TEST(test_hub75_bcm_calibrated_luts_monotonic_across_depths);
+    RUN_TEST(test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds);
+    RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
 
     return UNITY_END();
 }

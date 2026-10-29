@@ -92,6 +92,8 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "DataSession.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "CompatibilityEvaluator.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "PipelineSelectionPolicy.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "drawing", "Hub75BcmCalibration.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "drawing", "DmdzStreamDecoder.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "ShowcaseDiscovery.cpp"),
         os.path.join(PROJECT_ROOT, "src", "services", "IconService.cpp"),
         os.path.join(PROJECT_ROOT, "test", "native", "test_native_core.cpp"),

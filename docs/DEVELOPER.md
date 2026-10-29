@@ -317,6 +317,8 @@ ArcadeMatrix V4 replaces heuristic memory checks with **deterministic memory mod
    - Must be `0` for all standard engines. Any non-zero value represents transient heap allocations per frame, which are strictly prohibited on the Core 1 hot-path (Invariant 1).
 5. **The Critical Role of `needsTls` in Memory Allocation:**
    - Setting `needsTls = true` informs `PipelineSelectionPolicy` that the engine will execute HTTPS handshakes. On classic ESP32 without PSRAM, this flag instructs the runtime to dynamically downgrade the HUB75 DMA presentation depth from **8-bit to 4-bit**, reclaiming **18 KB of DMA RAM** and exposing **50–64 KB of contiguous DRAM** (`NetworkBudget::TLS_MIN_LARGEST_BLOCK = 16,717 B`). This guarantees 100% reliable TLS handshakes without out-of-memory crashes.
+6. **Engine-Preferred Color Depth (`preferredColorDepth`):**
+   - Media-rich RGB565 streaming engines (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) declare `preferredColorDepth = 8`. `PipelineSelectionPolicy` elevates lower manual depths (e.g. `4`-bit) or `COLOR_DEPTH_AUTO` to **8-bit** whenever live post-boot DMA headroom permits, retains `8 -> 8` across rotations without teardown blackout (`SYSTEM_KEEP_DEPTH_RESERVE`), and restores the configured depth when rotating back to non-override engines.
 
 ---
 

@@ -78,7 +78,8 @@ public:
         const PipelineDescriptor& desc,
         bool hasPsram,
         const MemoryBudgetConstraints& memory,
-        const EngineRequirements& requirements
+        const EngineRequirements& requirements,
+        bool hasPreallocatedCanvas = false
     );
 
     /**
