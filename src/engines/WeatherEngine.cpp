@@ -362,7 +362,7 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     desc_weather.requirements.supportsSingleBuffer = true;
     desc_weather.requirements.internalPersistentBytes = 8000;
     desc_weather.requirements.internalContiguousBytes = 20000;
-    desc_weather.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "system", false, "", "", "", "system:System (General),metric:Celsius (°C),imperial:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
@@ -370,6 +370,7 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
         ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("weather_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc_weather.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc_weather.factory = []() { return std::unique_ptr<IEngine>(new WeatherEngine()); };
     return desc_weather;
 }

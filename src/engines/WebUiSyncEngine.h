@@ -7,6 +7,7 @@
 
 #include "../../include/core/EngineContract.h"
 #include "../core/I18n.h"
+#include "../core/NetworkBudget.h"
 #include "../core/drawing/IDrawingSurface.h"
 #include <atomic>
 
@@ -27,12 +28,16 @@ public:
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     uint32_t nextFrameDueInMs() const override { return 120; }
 
-    static void markRequested() { s_requested.store(true, std::memory_order_release); }
+    static void markRequested() {
+        NetworkBudget::setDmdNetActivity(NetworkBudget::DmdNetActivity::WebUiSync);
+        s_requested.store(true, std::memory_order_release);
+    }
     static bool isRequested() { return s_requested.load(std::memory_order_acquire); }
     static bool isReadyForServing() { return s_readyForServing.load(std::memory_order_acquire); }
     static void resetState() {
         s_readyForServing.store(false, std::memory_order_release);
         s_requested.store(false, std::memory_order_release);
+        NetworkBudget::clearDmdNetActivityIf(NetworkBudget::DmdNetActivity::WebUiSync);
     }
 
 private:

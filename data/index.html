@@ -10291,8 +10291,12 @@ function initNetworkSettings() {
     badge.style.color = '#ffd54f';
     badge.style.borderColor = 'rgba(255, 193, 7, 0.35)';
     try {
-      const qs = `?url=${encodeURIComponent(url)}&enabled=${enabled ? '1' : '0'}${forceProbe ? '&force=1' : ''}`;
-      const res = await API.get(`/api/showcase/status${qs}`);
+      const baseQs = `?url=${encodeURIComponent(url)}&enabled=${enabled ? '1' : '0'}`;
+      let res = await API.get(`/api/showcase/status${baseQs}${forceProbe ? '&force=1' : ''}`);
+      for (let retry = 0; retry < 2 && res && !res.online && res.probing; retry++) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        res = await API.get(`/api/showcase/status${baseQs}`);
+      }
       if (res && res.online) {
         if (res.resolved_url) {
           window.__showcaseResolvedUrl = res.resolved_url;

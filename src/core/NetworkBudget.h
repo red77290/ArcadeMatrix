@@ -42,6 +42,79 @@ static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 
 static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
 static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
 
+/**
+ * @brief Primary mutually-exclusive DMD network/UI activity on memory-constrained boards (`esp32dev`).
+ *
+ * Enforces single-activity discipline on non-PSRAM hardware:
+ * - `Idle`      : Pure Core 1 rendering (e.g. Card scroll / procedural fallback) — 0 active stream/MQTT sockets.
+ * - `Mqtt`      : Scoped MQTT broker transaction (config / retained card claim / events).
+ * - `Stream`    : Active raw TCP `DMDS` `.rgb565.stream` playback — 0 MQTT sockets open.
+ * - `WebUiSync` : Priority WebUI SPA load window (`DisplaySourceId::WEBUI_SYNC`) — engines evicted, 0 background probes.
+ * Punctuated HTTP API requests remain lightweight and non-blocking across all states once the SPA is loaded.
+ */
+enum class DmdNetActivity : uint8_t {
+    Idle = 0,
+    Mqtt = 1,
+    Stream = 2,
+    WebUiSync = 3
+};
+
+inline std::atomic<uint8_t>& dmdNetActivityStorage() {
+    static std::atomic<uint8_t> s_activity{static_cast<uint8_t>(DmdNetActivity::Idle)};
+    return s_activity;
+}
+
+inline DmdNetActivity getDmdNetActivity() {
+    return static_cast<DmdNetActivity>(dmdNetActivityStorage().load(std::memory_order_acquire));
+}
+
+inline void setDmdNetActivity(DmdNetActivity act) {
+    if (act == DmdNetActivity::WebUiSync) {
+        dmdNetActivityStorage().store(static_cast<uint8_t>(act), std::memory_order_release);
+        return;
+    }
+    // Never overwrite an active `WebUiSync` preemption window with lower-priority worker state
+    uint8_t cur = dmdNetActivityStorage().load(std::memory_order_acquire);
+    while (cur != static_cast<uint8_t>(DmdNetActivity::WebUiSync)) {
+        if (dmdNetActivityStorage().compare_exchange_weak(
+                cur,
+                static_cast<uint8_t>(act),
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            break;
+        }
+    }
+}
+
+inline void clearDmdNetActivityIf(DmdNetActivity expected) {
+    uint8_t exp = static_cast<uint8_t>(expected);
+    dmdNetActivityStorage().compare_exchange_strong(
+        exp,
+        static_cast<uint8_t>(DmdNetActivity::Idle),
+        std::memory_order_acq_rel,
+        std::memory_order_acquire
+    );
+}
+
+/**
+ * @class ScopedDmdNetActivity
+ * @brief Zero-heap RAII guard marking an active `Mqtt` or `Stream` turn and restoring `Idle` on exit.
+ */
+class ScopedDmdNetActivity {
+public:
+    explicit ScopedDmdNetActivity(DmdNetActivity act) : m_act(act) {
+        setDmdNetActivity(m_act);
+    }
+    ~ScopedDmdNetActivity() {
+        clearDmdNetActivityIf(m_act);
+    }
+    ScopedDmdNetActivity(const ScopedDmdNetActivity&) = delete;
+    ScopedDmdNetActivity& operator=(const ScopedDmdNetActivity&) = delete;
+
+private:
+    DmdNetActivity m_act;
+};
+
 #ifdef ESP32
 /**
  * @brief Returns the total free internal DRAM in bytes.

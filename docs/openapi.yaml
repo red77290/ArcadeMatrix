@@ -1856,8 +1856,8 @@ paths:
     get:
       tags:
         - Configuration
-      summary: Probe DMD Media Showcase server connectivity and resolve mDNS hostname
-      description: Resolves `.local` mDNS hostnames (default `http://dmdmediashowcase.local:8890`) and verifies connectivity to the companion `dmd_media_showcase` service when enabled or forced.
+      summary: Inspect cached DMD Media Showcase connectivity and schedule background Core 0 probe
+      description: Non-blockingly inspects the Showcase discovery lease cache on `async_tcp` and, on cold cache miss or `force=1`, schedules a single-flight Core 0 background discovery probe (`probing: true`).
       parameters:
         - in: query
           name: url
@@ -1884,9 +1884,10 @@ paths:
                 properties:
                   enabled: { type: boolean, example: true }
                   online: { type: boolean, example: true }
+                  probing: { type: boolean, example: false }
                   server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
                   resolved_url: { type: string, example: "http://192.168.1.42:8890" }
-                  version: { type: string, example: "3.0.0" }
+                  version: { type: string, example: "1.1.4" }
 
   /api/mqtt/broker-target:
     get:

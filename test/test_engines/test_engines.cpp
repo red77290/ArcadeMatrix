@@ -837,6 +837,77 @@ void test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capac
     TEST_ASSERT_TRUE(hasStream);
 }
 
+void test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection() {
+    // 1. Header detection (case-insensitive Uvicorn HTTP/1.1 vs unchunked Content-Length)
+    const char* uvicornChunkedHdr =
+        "HTTP/1.1 200 OK\r\n"
+        "server: uvicorn\r\n"
+        "x-dmd-paced: 1\r\n"
+        "transfer-encoding: chunked\r\n"
+        "content-type: application/octet-stream";
+    const char* unchunkedHdr =
+        "HTTP/1.1 200 OK\r\n"
+        "server: uvicorn\r\n"
+        "x-dmd-paced: 1\r\n"
+        "content-length: 16400\r\n"
+        "content-type: application/octet-stream";
+    TEST_ASSERT_TRUE(MediaShowcaseBase::hasChunkedTransferEncoding(uvicornChunkedHdr));
+    TEST_ASSERT_FALSE(MediaShowcaseBase::hasChunkedTransferEncoding(unchunkedHdr));
+
+    // 2. Uvicorn's exact `2010\r\nDMDS...` wire framing (8208 B = 16 B DMDS header + 8192 B Frame 0,
+    //    followed by `2000;ext=ok\r\n` + 8192 B Frame 1 + `0\r\n\r\n`)
+    std::vector<uint8_t> expectedBody(16U + 8192U * 2U, 0);
+    expectedBody[0] = 'D';
+    expectedBody[1] = 'M';
+    expectedBody[2] = 'D';
+    expectedBody[3] = 'S';
+    expectedBody[4] = 1;
+    expectedBody[5] = 20;
+    expectedBody[6] = 128;
+    expectedBody[7] = 0;
+    expectedBody[8] = 32;
+    expectedBody[9] = 0;
+    expectedBody[10] = 2;
+    expectedBody[11] = 0;
+    for (size_t i = 0; i < 8192U * 2U; ++i) {
+        expectedBody[16U + i] = static_cast<uint8_t>((i * 37U + 11U) & 0xFFU);
+    }
+
+    std::vector<uint8_t> wire;
+    auto appendStr = [&](const char* s) {
+        size_t n = strlen(s);
+        wire.insert(wire.end(), reinterpret_cast<const uint8_t*>(s), reinterpret_cast<const uint8_t*>(s) + n);
+    };
+    appendStr("2010\r\n");
+    wire.insert(wire.end(), expectedBody.begin(), expectedBody.begin() + 8208U);
+    appendStr("\r\n2000;ext=ok\r\n");
+    wire.insert(wire.end(), expectedBody.begin() + 8208U, expectedBody.end());
+    appendStr("\r\n0\r\n\r\n");
+
+    // Feed through HttpChunkedDecoder in 7-byte fragmented network drips into 16 B hdr + two 8192 B frames
+    HttpChunkedDecoder dec;
+    std::vector<uint8_t> decoded(expectedBody.size(), 0);
+    size_t wireOff = 0;
+    auto readDecodedExact = [&](uint8_t* dst, size_t wantLen) -> bool {
+        size_t got = 0;
+        while (got < wantLen && wireOff < wire.size()) {
+            size_t avail = std::min<size_t>(7U, wire.size() - wireOff);
+            size_t consumed = 0;
+            size_t produced = dec.decode(wire.data() + wireOff, avail, consumed, dst + got, wantLen - got);
+            wireOff += consumed;
+            got += produced;
+            if (dec.hasError()) return false;
+        }
+        return (got == wantLen);
+    };
+
+    TEST_ASSERT_TRUE(readDecodedExact(decoded.data(), 16U));
+    TEST_ASSERT_EQUAL_MEMORY("DMDS", decoded.data(), 4U);
+    TEST_ASSERT_TRUE(readDecodedExact(decoded.data() + 16U, 8192U));
+    TEST_ASSERT_TRUE(readDecodedExact(decoded.data() + 16U + 8192U, 8192U));
+    TEST_ASSERT_EQUAL_MEMORY(expectedBody.data(), decoded.data(), expectedBody.size());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -855,6 +926,7 @@ void setup() {
     RUN_TEST(test_media_showcase_live_stream_handoff_and_online_status_no_false_offline);
     RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
     RUN_TEST(test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity);
+    RUN_TEST(test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection);
     UNITY_END();
 }
 

@@ -38,8 +38,32 @@
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../core/AppRuntime.h"
 #include "../engines/WebUiSyncEngine.h"
+#include <fcntl.h>
+#include <errno.h>
+#include <lwip/inet.h>
+#include <lwip/sockets.h>
+#ifdef INADDR_NONE
+#undef INADDR_NONE
+#endif
+
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+// Core 0 HTTP control plane only: optimize 4,400+ lines of ArduinoJson/route lambdas for Flash size
+// while preserving -O2 on Core 1 60 FPS HUB75 DMA rendering TUs.
+#pragma GCC optimize("Os")
+#endif
 
 extern ConfigLoader config;
+
+static void recordPeerCandidateFromRequest(AsyncWebServerRequest* request) {
+    if (request && request->client()) {
+        IPAddress peerIp = request->client()->remoteIP();
+        if (peerIp != IPAddress(0, 0, 0, 0) && peerIp != INADDR_NONE) {
+            char peerStr[20];
+            snprintf(peerStr, sizeof(peerStr), "%u.%u.%u.%u", peerIp[0], peerIp[1], peerIp[2], peerIp[3]);
+            net::ShowcaseDiscovery::recordCandidateIpStr(peerStr);
+        }
+    }
+}
 
 // A config change is applied in memory first and then written to the card. When the write fails (the
 // card is busy with a rescan or upload, or the write itself fails) the change would silently vanish at
@@ -99,7 +123,7 @@ static void appendJsonString(String& out, const char* str) {
 }
 
 static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out, bool includeSchema = true) {
-    out.reserve(out.length() + (includeSchema ? 2048 : 1024));
+    out.reserve(out.length() + (includeSchema ? 2048 : 640));
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* targetPipeline = guard.get().matrix.render_pipeline.c_str();
@@ -452,6 +476,7 @@ void WebServerAPI::begin() {
     // The ETag is content-derived (see scripts/build_webui.py): a commit-derived tag would not
     // change when data/index.html is edited without committing, leaving stale UI in the browser.
     auto serveWebUi = [](AsyncWebServerRequest *request) {
+        recordPeerCandidateFromRequest(request);
         LOGI("WebServer", "Serving WebUI to %s (Free DRAM: %u, MaxAlloc: %u)",
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
              (unsigned)ESP.getFreeHeap(),
@@ -586,14 +611,7 @@ static bool checkAuth(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized: missing or invalid API token\"}");
         return false;
     }
-    if (request && request->client()) {
-        IPAddress peerIp = request->client()->remoteIP();
-        if (peerIp != IPAddress(0, 0, 0, 0) && peerIp != INADDR_NONE) {
-            char peerStr[20];
-            snprintf(peerStr, sizeof(peerStr), "%u.%u.%u.%u", peerIp[0], peerIp[1], peerIp[2], peerIp[3]);
-            net::ShowcaseDiscovery::recordCandidateIpStr(peerStr);
-        }
-    }
+    recordPeerCandidateFromRequest(request);
     return true;
 }
 
@@ -734,43 +752,76 @@ void WebServerAPI::setupRoutes() {
         struct EnginesCatalogStreamContext {
             size_t currentIndex = 0;
             String carry;
+            size_t carryOffset = 0;
             bool sentOpening = false;
-            bool done = false;
+            bool sentClosing = false;
         };
 
         auto ctx = std::make_shared<EnginesCatalogStreamContext>();
 
         AsyncWebServerResponse* response = request->beginChunkedResponse("application/json", [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
-            size_t out = 0;
-            auto emit = [&](const String& piece) -> bool {
-                if (out + piece.length() > maxLen) {
-                    ctx->carry = piece;
-                    return false;
-                }
-                memcpy(buf + out, piece.c_str(), piece.length());
-                out += piece.length();
-                return true;
-            };
-
-            if (ctx->carry.length()) {
-                String c = ctx->carry;
-                ctx->carry = "";
-                if (!emit(c)) return out;
+            (void)index;
+            if (maxLen == 0) {
+                return RESPONSE_TRY_AGAIN;
             }
 
-            if (ctx->done) {
-                return 0;
+            size_t out = 0;
+            auto flushCarry = [&]() -> bool {
+                if (ctx->carryOffset >= ctx->carry.length()) {
+                    ctx->carry = "";
+                    ctx->carryOffset = 0;
+                    return true;
+                }
+                size_t rem = ctx->carry.length() - ctx->carryOffset;
+                size_t space = maxLen - out;
+                size_t toCopy = (rem < space) ? rem : space;
+                if (toCopy > 0) {
+                    memcpy(buf + out, ctx->carry.c_str() + ctx->carryOffset, toCopy);
+                    out += toCopy;
+                    ctx->carryOffset += toCopy;
+                }
+                if (ctx->carryOffset >= ctx->carry.length()) {
+                    ctx->carry = "";
+                    ctx->carryOffset = 0;
+                    return true;
+                }
+                return false;
+            };
+
+            auto emit = [&](const String& piece) -> bool {
+                if (piece.length() == 0) return true;
+                size_t space = maxLen - out;
+                if (piece.length() <= space) {
+                    memcpy(buf + out, piece.c_str(), piece.length());
+                    out += piece.length();
+                    return true;
+                }
+                if (space > 0) {
+                    memcpy(buf + out, piece.c_str(), space);
+                    out += space;
+                }
+                ctx->carry = piece;
+                ctx->carryOffset = space;
+                return false;
+            };
+
+            if (!flushCarry()) {
+                return out;
+            }
+
+            if (ctx->sentClosing) {
+                return out;
             }
 
             if (!ctx->sentOpening) {
-                if (!emit("[")) return out;
                 ctx->sentOpening = true;
+                if (!emit("[")) return out;
             }
 
             size_t count = 0;
             const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
 
-            while (ctx->currentIndex < count) {
+            while (ctx->currentIndex < count && out < maxLen) {
                 String piece;
                 if (ctx->currentIndex > 0) piece += ',';
                 serializeEngineDescriptor(descriptors[ctx->currentIndex], piece, false /* compact catalog */);
@@ -778,12 +829,13 @@ void WebServerAPI::setupRoutes() {
                 if (!emit(piece)) {
                     return out;
                 }
-                if (out > maxLen - 128) break;
+                if (maxLen - out <= 128) break;
             }
 
-            if (ctx->currentIndex >= count) {
-                if (emit("]")) {
-                    ctx->done = true;
+            if (ctx->currentIndex >= count && !ctx->sentClosing && out < maxLen) {
+                ctx->sentClosing = true;
+                if (!emit("]")) {
+                    return out;
                 }
             }
 
@@ -1592,7 +1644,7 @@ void WebServerAPI::setupRoutes() {
     
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 6144);
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 3072);
         JsonObject doc = response->getRoot().as<JsonObject>();
         
         if (doc.isNull()) {
@@ -2858,25 +2910,34 @@ void WebServerAPI::setupRoutes() {
         char resolvedHostBuf[64] = "";
         char verBuf[24] = "";
         bool online = false;
-        net::ShowcaseDiscovery::resolveUrl(
-            rawUrl.c_str(),
-            resolvedUrlBuf,
-            sizeof(resolvedUrlBuf),
-            resolvedHostBuf,
-            sizeof(resolvedHostBuf),
-            port,
-            online,
-            verBuf,
-            sizeof(verBuf),
-            false, // Never block AsyncWebServer on a /24 subnet sweep
-            forceProbe
-        );
-        if (!online && net::ShowcaseDiscovery::isAutoDiscoverableHost(origHost)) {
-            net::ShowcaseDiscovery::triggerBackgroundScan(port);
+        // 100% zero-blocking inspection on `async_tcp`: never run `ESPmDNS` or synchronous TCP probes
+        // inside an AsyncWebServer handler. Active Showcase engines continuously renew the cache lease,
+        // and cold cache misses / `force=1` trigger a single-flight Core 0 background probe.
+        if (!net::ShowcaseDiscovery::peekCachedUrlStatus(
+                rawUrl.c_str(),
+                resolvedUrlBuf,
+                sizeof(resolvedUrlBuf),
+                resolvedHostBuf,
+                sizeof(resolvedHostBuf),
+                port,
+                online,
+                verBuf,
+                sizeof(verBuf))) {
+            doc["online"] = false;
+            doc["probing"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
+        }
+        bool probing = false;
+        if (!online || forceProbe) {
+            probing = net::ShowcaseDiscovery::triggerBackgroundProbe(rawUrl.c_str(), forceProbe);
         }
 
         doc["resolved_url"] = resolvedUrlBuf;
         doc["online"] = online;
+        doc["probing"] = probing;
         doc["version"] = online ? (verBuf[0] != '\0' ? verBuf : "1.1.4") : "";
         sendJsonResponse(request, doc);
     });
@@ -2931,7 +2992,7 @@ void WebServerAPI::setupRoutes() {
         char resolvedHostBuf[64] = "";
         uint16_t port = 8890;
         bool online = false;
-        if (!net::ShowcaseDiscovery::resolveUrl(
+        if (!net::ShowcaseDiscovery::peekCachedUrlStatus(
                 rawUrl.c_str(),
                 resolvedUrlBuf,
                 sizeof(resolvedUrlBuf),
@@ -2941,50 +3002,112 @@ void WebServerAPI::setupRoutes() {
                 online,
                 nullptr,
                 0,
-                false,
-                false)) {
+                86400000U)) {
             request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Showcase server URL\"}");
             return;
         }
         if (net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHostBuf)) {
-            net::ShowcaseDiscovery::triggerBackgroundScan(port);
+            net::ShowcaseDiscovery::triggerBackgroundProbe(rawUrl.c_str(), true);
             request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
             return;
         }
-        String resolvedHost(resolvedHostBuf);
 
-        WiFiClient cli;
-        if (!cli.connect(resolvedHost.c_str(), port, 1200)) {
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        if (inet_aton(resolvedHostBuf, &addr.sin_addr) == 0) {
             request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
             return;
         }
-        cli.setTimeout(1500);
-        cli.printf(
+
+        int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (fd < 0) {
+            request->send(503, "application/json", "{\"status\":\"error\",\"message\":\"Socket table busy\"}");
+            return;
+        }
+        auto closeEvictSock = [&]() {
+            if (fd >= 0) {
+                lwip_close(fd);
+                fd = -1;
+            }
+        };
+
+        int flags = lwip_fcntl(fd, F_GETFL, 0);
+        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (rc < 0 && errno != EINPROGRESS) {
+            closeEvictSock();
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+            return;
+        }
+        if (rc != 0) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(fd, &wfds);
+            struct timeval tv = {0, 350000};
+            int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+            int soErr = -1;
+            socklen_t errLen = sizeof(soErr);
+            if (sel <= 0 || !FD_ISSET(fd, &wfds) || lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) != 0 || soErr != 0) {
+                closeEvictSock();
+                request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+                return;
+            }
+        }
+
+        lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        struct timeval rtv = {0, 450000};
+        lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+        lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
+
+        char reqBuf[160];
+        int reqLen = snprintf(
+            reqBuf,
+            sizeof(reqBuf),
             "POST /api/v1/cache/on-demand/evict HTTP/1.1\r\nHost: %s:%u\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            resolvedHost.c_str(),
-            port
+            resolvedHostBuf,
+            static_cast<unsigned>(port)
         );
-
-        String statusLine = cli.readStringUntil('\n');
-        statusLine.trim();
-        bool httpOk = (statusLine.indexOf(" 200") != -1 || statusLine.indexOf(" 202") != -1);
-        while (cli.connected() || cli.available()) {
-            String hdrLine = cli.readStringUntil('\n');
-            if (hdrLine == "\r" || hdrLine.length() == 0) break;
+        if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) != reqLen) {
+            closeEvictSock();
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase evict send failed\"}");
+            return;
         }
-        String respBody = cli.readString();
-        cli.stop();
-        respBody.trim();
-        int braceStart = respBody.indexOf('{');
-        int braceEnd = respBody.lastIndexOf('}');
-        if (braceStart >= 0 && braceEnd >= braceStart) {
-            respBody = respBody.substring(braceStart, braceEnd + 1);
+
+        char rxBuf[512];
+        size_t rxUsed = 0;
+        uint32_t t0 = millis();
+        while ((millis() - t0) < 500U && rxUsed < sizeof(rxBuf) - 1U) {
+            int r = lwip_recv(fd, rxBuf + rxUsed, sizeof(rxBuf) - 1U - rxUsed, 0);
+            if (r > 0) {
+                rxUsed += static_cast<size_t>(r);
+            } else {
+                break;
+            }
+        }
+        closeEvictSock();
+        rxBuf[rxUsed] = '\0';
+
+        bool httpOk = (strncmp(rxBuf, "HTTP/1.1 200", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.0 200", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.1 202", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.0 202", 12) == 0);
+        const char* bodyStart = strstr(rxBuf, "\r\n\r\n");
+        const char* jsonSlice = bodyStart ? strchr(bodyStart + 4, '{') : strchr(rxBuf, '{');
+        const char* jsonEnd = jsonSlice ? strrchr(jsonSlice, '}') : nullptr;
+        String respBody;
+        if (jsonSlice && jsonEnd && jsonEnd >= jsonSlice) {
+            size_t jLen = static_cast<size_t>((jsonEnd - jsonSlice) + 1);
+            respBody.reserve(jLen + 1);
+            for (size_t i = 0; i < jLen; ++i) respBody += jsonSlice[i];
         }
 
         if (!httpOk) {
             request->send(502, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"error\",\"message\":\"Showcase evict failed\"}");
             return;
         }
+        net::ShowcaseDiscovery::touchVerifiedHost(resolvedHostBuf, port);
         request->send(200, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"evicted\",\"removed_entries\":0,\"freed_bytes\":0}");
     });
     

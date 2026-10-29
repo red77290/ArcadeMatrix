@@ -49,6 +49,7 @@ void WebUiSyncEngine::activate() {
     m_lastLang = I18n::getLang();
     m_dirty = true;
     m_renderedNewFrame = false;
+    NetworkBudget::setDmdNetActivity(NetworkBudget::DmdNetActivity::WebUiSync);
     s_readyForServing.store(true, std::memory_order_release);
 }
 
@@ -57,6 +58,7 @@ void WebUiSyncEngine::deactivate() {
     m_renderedNewFrame = false;
     s_readyForServing.store(false, std::memory_order_release);
     s_requested.store(false, std::memory_order_release);
+    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::DmdNetActivity::WebUiSync);
 }
 
 void WebUiSyncEngine::update(EngineContext* context) {

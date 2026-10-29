@@ -17,6 +17,46 @@ enum class ShowcaseDomainId : uint8_t {
 };
 
 /**
+ * @struct HttpChunkedDecoder
+ * @brief Zero-heap streaming RFC 9112 HTTP/1.1 `Transfer-Encoding: chunked` decoder.
+ *        Strips `<hex>[;ext]\r\n` headers and `\r\n` trailers in bulk `memcpy` slices
+ *        when a server or reverse proxy omits `Content-Length`.
+ */
+struct HttpChunkedDecoder {
+    enum class State : uint8_t {
+        SizeHex = 0,
+        SizeExt = 1,
+        SizeLf = 2,
+        Payload = 3,
+        PayloadCr = 4,
+        PayloadLf = 5,
+        Done = 6,
+        Error = 7
+    };
+
+    State state = State::SizeHex;
+    size_t chunkRem = 0;
+    uint8_t hexDigits = 0;
+
+    void reset() {
+        state = State::SizeHex;
+        chunkRem = 0;
+        hexDigits = 0;
+    }
+
+    bool isDone() const { return state == State::Done; }
+    bool hasError() const { return state == State::Error; }
+
+    size_t decode(
+        const uint8_t* src,
+        size_t srcLen,
+        size_t& outSrcConsumed,
+        uint8_t* dst,
+        size_t dstCap
+    );
+};
+
+/**
  * @class MediaShowcaseBase
  * @brief Shared V3.0 base implementation for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
  *        RetroGamesEngine, MovieShowcaseEngine, SeriesShowcaseEngine, and AnimeShowcaseEngine.
@@ -148,6 +188,11 @@ public:
     static bool shouldReportNetworkOffline(uint8_t consecutiveFailures) {
         return consecutiveFailures >= 3U;
     }
+
+    /**
+     * @brief Case-insensitive check for `Transfer-Encoding: ...chunked...` in raw HTTP headers.
+     */
+    static bool hasChunkedTransferEncoding(const char* rawHeaders);
 
     static constexpr size_t MAX_SYSTEMS_FILTER_LEN = 560;
     static constexpr size_t MAX_FILTER_LEN = 192;

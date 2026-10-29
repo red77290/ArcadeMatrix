@@ -2164,6 +2164,119 @@ void test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling(v
     TEST_ASSERT_EQUAL_UINT8(8, psram256x64);
 }
 
+#include "core/NetworkBudget.h"
+
+void test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease(void) {
+    // 1. Exclusive DMD single-activity state machine (`Idle`, `Mqtt`, `Stream`, `WebUiSync`)
+    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::getDmdNetActivity());
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    {
+        NetworkBudget::ScopedDmdNetActivity mqttTurn(NetworkBudget::DmdNetActivity::Mqtt);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Mqtt),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+    }
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    {
+        NetworkBudget::ScopedDmdNetActivity streamTurn(NetworkBudget::DmdNetActivity::Stream);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Stream),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+        // Priority WebUI load (`WebUiSync`) preempts active worker state and cannot be overwritten
+        NetworkBudget::setDmdNetActivity(NetworkBudget::DmdNetActivity::WebUiSync);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+        {
+            NetworkBudget::ScopedDmdNetActivity blockedMqtt(NetworkBudget::DmdNetActivity::Mqtt);
+            TEST_ASSERT_EQUAL_UINT8(
+                static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+                static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+            );
+        }
+    }
+    // `streamTurn` destructor must NOT clear `WebUiSync` while WebUI is still active
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::DmdNetActivity::WebUiSync);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    // 2. Non-blocking `peekCachedUrlStatus` & continuous `touchVerifiedHost` lease renewal past 90s
+    net::ShowcaseDiscovery::resetCacheForTests();
+    char resolvedUrl[112] = "";
+    char resolvedHost[64] = "";
+    char ver[24] = "";
+    uint16_t port = 0;
+    bool online = true;
+
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_FALSE(online);
+    TEST_ASSERT_EQUAL_STRING("http://dmdmediashowcase.local:8890", resolvedUrl);
+
+    // Simulate active MQTT/Stream turn verifying Docker host `192.168.1.22:8890`
+    net::ShowcaseDiscovery::touchVerifiedHost("192.168.1.22", 8890);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.22", resolvedHost);
+    TEST_ASSERT_EQUAL_STRING("http://192.168.1.22:8890", resolvedUrl);
+
+    // Advance 100s (past old 90s TTL where `ESPmDNS` previously froze `async_tcp`) and renew lease
+    advanceVirtualMillis(100000);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+
+    net::ShowcaseDiscovery::touchVerifiedHost("192.168.1.22", 8890);
+    advanceVirtualMillis(120000); // t = 220s total, 120s since renewal -> still online with 0 sockets!
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+
+    // Without renewal for > 180s, cache expires cleanly without blocking
+    advanceVirtualMillis(70000);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_FALSE(online);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2250,6 +2363,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_transition_prefetch_contract);
     RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
     RUN_TEST(test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling);
+    RUN_TEST(test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease);
 
     return UNITY_END();
 }
