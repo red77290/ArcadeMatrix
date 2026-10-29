@@ -115,6 +115,61 @@ struct ShowcaseConfig {
     String mqtt_custom_url = "";
 };
 
+inline String normalizeMdnsEndpointUrl(const String& rawInput, bool migrateShowcaseLegacy = false) {
+    String s = rawInput;
+    s.trim();
+    while (s.length() > 1 && s.endsWith("/")) {
+        s = s.substring(0, s.length() - 1);
+    }
+    if (s.length() == 0) {
+        return s;
+    }
+    if (migrateShowcaseLegacy && (
+        s.equalsIgnoreCase("http://192.168.1.50:8000") ||
+        s.equalsIgnoreCase("http://127.0.0.1:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase.local:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase:8890") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase"))) {
+        return String("http://dmdmediashowcase.local:8890");
+    }
+
+    String schemePrefix = "";
+    String rest = s;
+    int schemeIdx = s.indexOf("://");
+    if (schemeIdx > 0) {
+        schemePrefix = s.substring(0, schemeIdx + 3);
+        rest = s.substring(schemeIdx + 3);
+    }
+
+    String auth = rest;
+    String pathSuffix = "";
+    int slashIdx = rest.indexOf('/');
+    if (slashIdx >= 0) {
+        auth = rest.substring(0, slashIdx);
+        pathSuffix = rest.substring(slashIdx);
+    }
+
+    String host = auth;
+    String portSuffix = "";
+    int colonIdx = auth.lastIndexOf(':');
+    int closeBracket = auth.lastIndexOf(']');
+    if (colonIdx > 0 && colonIdx > closeBracket) {
+        host = auth.substring(0, colonIdx);
+        portSuffix = auth.substring(colonIdx);
+    }
+
+    if (host.length() > 0 &&
+        host.indexOf('.') < 0 &&
+        host.indexOf(':') < 0 &&
+        !host.equalsIgnoreCase("localhost") &&
+        !host.equalsIgnoreCase("auto")) {
+        host += ".local";
+        return schemePrefix + host + portSuffix + pathSuffix;
+    }
+    return s;
+}
+
 struct SystemConfig {
     String timezone;
     bool format24h;

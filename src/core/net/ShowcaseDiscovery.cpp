@@ -13,6 +13,7 @@
 #include <freertos/task.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <lwip/inet.h>
 #include <lwip/sockets.h>
 extern ConfigLoader config;
 #endif
@@ -155,6 +156,19 @@ void extractJsonVersionField(const char* body, char* outVer, size_t verCap) {
     outVer[len] = '\0';
 }
 
+bool isUsableIpv4(const IPAddress& addr) {
+    uint32_t raw = static_cast<uint32_t>(addr);
+    return raw != 0U && raw != 0xFFFFFFFFU;
+}
+
+bool isUnreachableDockerBridgeIp(const IPAddress& cand) {
+    if (cand[0] != 172 || cand[1] < 16 || cand[1] > 31) {
+        return false;
+    }
+    IPAddress selfIp = WiFi.localIP();
+    return !(selfIp[0] == 172 && selfIp[1] >= 16 && selfIp[1] <= 31);
+}
+
 bool verifyShowcaseHealthHttp(
     const char* host,
     uint16_t port,
@@ -163,40 +177,98 @@ bool verifyShowcaseHealthHttp(
     size_t verCap
 ) {
     if (!host || host[0] == '\0' || port == 0) return false;
-    if (ESP.getFreeHeap() < 14336U) return false;
+    if (ESP.getFreeHeap() < 6144U) return false;
 
-    WiFiClient cli;
-    if (!cli.connect(host, port, connectTimeoutMs)) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+
+    if (inet_aton(host, &addr.sin_addr) == 0) {
+        if (ShowcaseDiscovery::isAutoDiscoverableHost(host) || ESP.getFreeHeap() < 10240U) {
+            return false;
+        }
+        IPAddress resolved;
+        if (!WiFi.hostByName(host, resolved) || !isUsableIpv4(resolved) || isUnreachableDockerBridgeIp(resolved)) {
+            return false;
+        }
+        addr.sin_addr.s_addr = static_cast<uint32_t>(resolved);
+    }
+
+    int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
         return false;
     }
-    cli.setTimeout(600);
-    cli.printf(
+
+    auto closeAbort = [&]() {
+        struct linger lin = {1, 0};
+        lwip_setsockopt(fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+        lwip_close(fd);
+    };
+
+    int flags = lwip_fcntl(fd, F_GETFL, 0);
+    lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (rc < 0 && errno != EINPROGRESS) {
+        closeAbort();
+        return false;
+    }
+    if (rc != 0) {
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd, &wfds);
+        struct timeval tv;
+        uint32_t boundedMs = connectTimeoutMs > 0 ? connectTimeoutMs : 350U;
+        tv.tv_sec = static_cast<time_t>(boundedMs / 1000U);
+        tv.tv_usec = static_cast<suseconds_t>((boundedMs % 1000U) * 1000U);
+        int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+        if (sel <= 0 || !FD_ISSET(fd, &wfds)) {
+            closeAbort();
+            return false;
+        }
+        int soErr = -1;
+        socklen_t errLen = sizeof(soErr);
+        if (lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) != 0 || soErr != 0) {
+            closeAbort();
+            return false;
+        }
+    }
+
+    lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    struct timeval rtv = {0, 500000};
+    lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+    lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
+
+    char reqBuf[128];
+    int reqLen = snprintf(
+        reqBuf,
+        sizeof(reqBuf),
         "GET /api/v1/health HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
         host,
-        port
+        static_cast<unsigned>(port)
     );
+    if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) <= 0) {
+        closeAbort();
+        return false;
+    }
 
-    char rxBuf[512];
+    char rxBuf[384];
     size_t total = 0;
     uint32_t t0 = millis();
-    while ((millis() - t0) < 650U && total < sizeof(rxBuf) - 1U) {
-        int avail = cli.available();
-        if (avail > 0) {
-            size_t want = sizeof(rxBuf) - 1U - total;
-            if (static_cast<size_t>(avail) < want) want = static_cast<size_t>(avail);
-            size_t r = cli.readBytes(rxBuf + total, want);
-            total += r;
+    while ((millis() - t0) < 600U && total < sizeof(rxBuf) - 1U) {
+        int r = lwip_recv(fd, rxBuf + total, sizeof(rxBuf) - 1U - total, 0);
+        if (r > 0) {
+            total += static_cast<size_t>(r);
             rxBuf[total] = '\0';
             if (strstr(rxBuf, "dmd-media-showcase") != nullptr && strstr(rxBuf, "\"version\"") != nullptr) {
                 break;
             }
-        } else if (!cli.connected()) {
-            break;
         } else {
-            vTaskDelay(pdMS_TO_TICKS(5));
+            break;
         }
     }
-    cli.stop();
+    closeAbort();
     rxBuf[total] = '\0';
 
     bool isShowcase = (strstr(rxBuf, "dmd-media-showcase") != nullptr) ||
@@ -211,11 +283,6 @@ bool verifyShowcaseHealthHttp(
         }
     }
     return true;
-}
-
-bool isUsableIpv4(const IPAddress& addr) {
-    uint32_t raw = static_cast<uint32_t>(addr);
-    return raw != 0U && raw != 0xFFFFFFFFU;
 }
 
 bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
@@ -235,7 +302,7 @@ bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap
     }
 
     IPAddress ip = MDNS.queryHost(mdnsBase, 350);
-    if (isUsableIpv4(ip)) {
+    if (isUsableIpv4(ip) && !isUnreachableDockerBridgeIp(ip)) {
         char cand[20];
         snprintf(cand, sizeof(cand), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
         if (verifyShowcaseHealthHttp(cand, port, 400, outVer, verCap)) {
@@ -249,7 +316,7 @@ bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap
     int n = MDNS.queryService("dmd-showcase", "tcp");
     for (int i = 0; i < n; ++i) {
         IPAddress sip = MDNS.IP(i);
-        if (isUsableIpv4(sip)) {
+        if (isUsableIpv4(sip) && !isUnreachableDockerBridgeIp(sip)) {
             char cand[20];
             snprintf(cand, sizeof(cand), "%u.%u.%u.%u", sip[0], sip[1], sip[2], sip[3]);
             uint16_t sPort = MDNS.port(i) > 0 ? MDNS.port(i) : port;
@@ -519,9 +586,16 @@ bool ShowcaseDiscovery::isAutoDiscoverableHost(const char* host) {
     if (len > 6 && strcasecmp(host + len - 6, ".local") == 0) {
         return true;
     }
-    return (strcasecmp(host, "dmdmediashowcase") == 0 ||
-            strcasecmp(host, "dmd-media-showcase") == 0 ||
-            strcasecmp(host, "auto") == 0);
+    if (strcasecmp(host, "dmdmediashowcase") == 0 ||
+        strcasecmp(host, "dmd-media-showcase") == 0 ||
+        strcasecmp(host, "auto") == 0) {
+        return true;
+    }
+    // Single-label LAN hostnames without dots (excluding localhost) require `.local` mDNS / LAN discovery
+    if (strchr(host, '.') == nullptr && strchr(host, ':') == nullptr && strcasecmp(host, "localhost") != 0) {
+        return true;
+    }
+    return false;
 }
 
 bool ShowcaseDiscovery::parseEndpoint(
@@ -566,8 +640,9 @@ bool ShowcaseDiscovery::parseEndpoint(
     auth[copyLen] = '\0';
 
     outPort = defaultPort;
+    char* closeBracket = strrchr(auth, ']');
     char* colon = strrchr(auth, ':');
-    if (colon) {
+    if (colon && (!closeBracket || colon > closeBracket)) {
         *colon = '\0';
         int parsed = atoi(colon + 1);
         if (parsed > 0 && parsed <= 65535) {
@@ -575,7 +650,15 @@ bool ShowcaseDiscovery::parseEndpoint(
         }
     }
     if (auth[0] == '\0') return false;
-    copySafe(outHost, hostCap, auth);
+    // Normalize single-label LAN hostnames (e.g. `dmdmediashowcase` -> `dmdmediashowcase.local`)
+    if (strchr(auth, '.') == nullptr &&
+        strchr(auth, ':') == nullptr &&
+        strcasecmp(auth, "localhost") != 0 &&
+        strcasecmp(auth, "auto") != 0) {
+        snprintf(outHost, hostCap, "%s.local", auth);
+    } else {
+        copySafe(outHost, hostCap, auth);
+    }
     return true;
 }
 
@@ -602,6 +685,20 @@ bool ShowcaseDiscovery::resolveHostInPlace(
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
+    // Re-verify last-known-good cached IP first when 90s TTL expires (or retain it under low heap)
+    char prevIp[24] = "";
+    if (readCache(probePort, 86400000U, prevIp, sizeof(prevIp), ver, sizeof(ver))) {
+        if (ESP.getFreeHeap() < 8192U) {
+            copySafe(hostBuf, hostCap, prevIp);
+            return true;
+        }
+        if (verifyShowcaseHealthHttp(prevIp, probePort, 280, ver, sizeof(ver))) {
+            writeCache(prevIp, probePort, ver);
+            copySafe(hostBuf, hostCap, prevIp);
+            return true;
+        }
+    }
+
     if (tryMdnsLookup(hostBuf, probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
         tryCandidatePeers(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
         (allowSubnetScan && scanLocalSubnet24(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)))) {
@@ -684,11 +781,18 @@ bool ShowcaseDiscovery::resolveUrl(
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (forceRefresh) {
-        // Re-verify previously cached IP first before sweeping
-        char prevIp[24] = "";
-        if (readCache(outPort, 3600000U, prevIp, sizeof(prevIp), verBuf, sizeof(verBuf)) &&
-            verifyShowcaseHealthHttp(prevIp, outPort, 350, verBuf, sizeof(verBuf))) {
+    char prevIp[24] = "";
+    if (readCache(outPort, 86400000U, prevIp, sizeof(prevIp), verBuf, sizeof(verBuf))) {
+        if (!forceRefresh && ESP.getFreeHeap() < 8192U) {
+            copySafe(outHost, hostCap, prevIp);
+            if (outResolvedUrl && urlCap > 0) {
+                snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
+            }
+            outOnline = true;
+            if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
+            return true;
+        }
+        if (verifyShowcaseHealthHttp(prevIp, outPort, 320, verBuf, sizeof(verBuf))) {
             writeCache(prevIp, outPort, verBuf);
             copySafe(outHost, hostCap, prevIp);
             if (outResolvedUrl && urlCap > 0) {
@@ -698,6 +802,8 @@ bool ShowcaseDiscovery::resolveUrl(
             if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
             return true;
         }
+    }
+    if (forceRefresh) {
         s_lastSubnetScanMs.store(0, std::memory_order_release);
     }
 

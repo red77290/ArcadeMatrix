@@ -13,12 +13,15 @@ Validates:
 8. ESP32 WebUI i18n integrity: duplicate-free EN/FR/ES parity in data/index.html, every markup key defined, no RPi key residue.
 """
 
+import glob
 import os
 import re
 import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 RPI_ROOT = os.path.abspath(os.path.join(REPO_ROOT, "..", "ArcadeMatrix_RPi"))
+sys.path.insert(0, os.path.dirname(__file__))
+from extract_engine_catalog import extract_engine_catalog  # noqa: E402
 
 def fail(msg):
     print(f"❌ FAIL: {msg}")
@@ -113,46 +116,166 @@ def test_i18n_parity():
 
     pass_step(f"Total keys per dictionary: {len(en_keys)} (EN=FR=ES parity 100%, 0 duplicates, {len(rpi_used)} refs verified)")
 
+def extract_js_kv(js_content, lang):
+    """Extract key -> value map for a language dictionary object."""
+    match = re.search(r"^\s{2}%s:\s*\{" % lang, js_content, re.M)
+    if not match:
+        fail(f"Could not extract dictionary for language '{lang}'")
+    start = match.end()
+    depth, i = 1, start
+    while i < len(js_content) and depth:
+        if js_content[i] == "{":
+            depth += 1
+        elif js_content[i] == "}":
+            depth -= 1
+        i += 1
+    out = {}
+    for line in js_content[start:i - 1].splitlines():
+        line = line.strip()
+        if not line or line.startswith("//"):
+            continue
+        km = re.match(r"^([a-zA-Z0-9_]+)\s*:\s*[\"'](.*)[\"'],?$", line)
+        if km:
+            out[km.group(1)] = km.group(2)
+    return out
+
+
+def extract_rpi_engines_and_fields():
+    """Dynamically extract all EngineMetadata IDs and ConfigField definitions from RPi Rust sources."""
+    engines = set()
+    fields = {}
+    for rs in sorted(glob.glob(os.path.join(RPI_ROOT, "src", "**", "*.rs"), recursive=True)):
+        with open(rs, "r", encoding="utf-8") as rf:
+            src = rf.read()
+        for em in re.finditer(r"EngineMetadata\s*\{([^}]+)\}", src):
+            idm = re.search(r'\bid:\s*"([^"]+)"', em.group(1))
+            if idm:
+                engines.add(idm.group(1).lower())
+        idx = 0
+        while True:
+            pos = src.find("ConfigField", idx)
+            if pos == -1:
+                break
+            bstart = src.find("{", pos)
+            if bstart == -1 or bstart - pos > 30:
+                idx = pos + 11
+                continue
+            depth, j = 1, bstart + 1
+            while j < len(src) and depth:
+                if src[j] == "{":
+                    depth += 1
+                elif src[j] == "}":
+                    depth -= 1
+                j += 1
+            blk = src[bstart + 1:j - 1]
+            idx = j
+            fid_m = re.search(r'\bid:\s*"([^"]+)"', blk)
+            fdesc_m = re.search(r'\bdescription:\s*"((?:[^"\\]|\\.)*)"', blk)
+            if fid_m:
+                fid = fid_m.group(1)
+                desc = fdesc_m.group(1) if fdesc_m else ""
+                fields.setdefault(fid, desc)
+    return sorted(engines), fields
+
+
 def test_engine_and_field_translations():
-    print("🔍 [2/9] Testing Engine & Field I18n coverage...")
+    print("🔍 [2/9] Testing Dynamic Engine Catalog & ConfigField Schema I18n coverage (ESP32 & RPi)...")
+    # 1. ESP32 C++ Catalog & ConfigField verification (always executed)
+    esp_catalog = extract_engine_catalog(os.path.join(REPO_ROOT, "src", "engines"))
+    esp_content, esp_dicts = extract_esp32_dicts()
+    esp_en_kv = extract_js_kv(esp_content, "en")
+    esp_fr_kv = extract_js_kv(esp_content, "fr")
+    esp_es_kv = extract_js_kv(esp_content, "es")
+    esp_en_keys = set(esp_dicts["en"])
+
+    if "display engine plugin for ArcadeMatrix" in esp_content:
+        fail("ESP32 data/index.html still contains hardcoded 'display engine plugin for ArcadeMatrix' fallback!")
+    if "window.renderDynamicDisplay = renderDynamicDisplay;" not in esp_content:
+        fail("ESP32 data/index.html must expose window.renderDynamicDisplay for live language switching!")
+
+    esp_field_count = 0
+    for eng in esp_catalog:
+        eid = eng["metadata"]["id"].lower()
+        for k_prefix in ("engine_", "engine_desc_"):
+            key = f"{k_prefix}{eid}"
+            if key not in esp_en_keys:
+                fail(f"ESP32 engine '{eid}' lacks mandatory translation key '{key}' in data/index.html")
+        desc_key = f"engine_desc_{eid}"
+        if esp_fr_kv.get(desc_key) == esp_en_kv.get(desc_key) or esp_es_kv.get(desc_key) == esp_en_kv.get(desc_key):
+            fail(f"ESP32 '{desc_key}' is untranslated (identical to EN) in FR or ES!")
+
+        raw_schema = eng.get("schema", [])
+        fields_list = raw_schema if isinstance(raw_schema, list) else raw_schema.get("fields", [])
+        for f in fields_list:
+            fid = f["id"]
+            esp_field_count += 1
+            if f"field_{fid}" not in esp_en_keys:
+                fail(f"ESP32 ConfigField '{eid}.{fid}' lacks 'field_{fid}' in data/index.html")
+            if f.get("description") and f"field_desc_{fid}" not in esp_en_keys:
+                fail(f"ESP32 ConfigField '{eid}.{fid}' lacks 'field_desc_{fid}' in data/index.html")
+
+    pass_step(f"ESP32 schema coverage 100%: {len(esp_catalog)} engines (names + descriptions) & {esp_field_count} field defs localized.")
+
+    # 2. RPi Rust Catalog & ConfigField verification (when RPi repo is present alongside ESP32)
     i18n_path = os.path.join(RPI_ROOT, "api", "www", "js", "i18n.js")
     dyn_path = os.path.join(RPI_ROOT, "api", "www", "js", "dynamic_engines.js")
     if not os.path.exists(i18n_path) or not os.path.exists(dyn_path):
         print("  ℹ Note: RPi files not present (running in standalone ESP32 mode, skipping RPi dynamic engines check)")
         return
-    
+
     with open(i18n_path, "r", encoding="utf-8") as f:
         i18n_content = f.read()
     with open(dyn_path, "r", encoding="utf-8") as f:
         dyn_content = f.read()
 
-    en_keys = extract_js_dict(i18n_content, "en")
+    if "display engine plugin for ArcadeMatrix" in dyn_content or "display engine plugin for ArcadeMatrix" in i18n_content:
+        fail("RPi WebUI still contains hardcoded 'display engine plugin for ArcadeMatrix' fallback!")
+    if "window.renderDynamicDisplay = renderDynamicDisplay;" not in dyn_content:
+        fail("RPi dynamic_engines.js must expose window.renderDynamicDisplay for live language switching!")
 
-    KNOWN_ENGINES = [
+    en_keys = extract_js_dict(i18n_content, "en")
+    rpi_en_kv = extract_js_kv(i18n_content, "en")
+    rpi_fr_kv = extract_js_kv(i18n_content, "fr")
+    rpi_es_kv = extract_js_kv(i18n_content, "es")
+
+    rpi_engines, rpi_fields = extract_rpi_engines_and_fields()
+    known_aliases = [
         "clock", "date", "weather", "gifs", "crypto", "stock",
         "visualizer", "decibel", "decibelmeter", "temp", "message",
-        "cast", "spotify", "sysinfo", "music", "music_player",
-        "dashboard", "gnews", "marquee", "retro_games",
-        "movie_showcase", "series_showcase", "anime_showcase"
+        "cast", "google_cast", "spotify", "sysinfo", "system_info", "music", "music_player",
+        "dashboard", "gnews", "marquee", "mqttdata", "retro_games",
+        "movie_showcase", "series_showcase", "anime_showcase",
     ]
+    for eng in sorted(set(rpi_engines) | set(known_aliases)):
+        for k_prefix in ("engine_", "engine_desc_"):
+            eng_key = f"{k_prefix}{eng}"
+            if eng_key not in en_keys:
+                fail(f"RPi engine '{eng}' lacks translation key '{eng_key}' in i18n.js")
+        desc_key = f"engine_desc_{eng}"
+        if rpi_fr_kv.get(desc_key) == rpi_en_kv.get(desc_key) or rpi_es_kv.get(desc_key) == rpi_en_kv.get(desc_key):
+            fail(f"RPi '{desc_key}' is untranslated (identical to EN) in FR or ES!")
 
-    for eng in KNOWN_ENGINES:
-        eng_key = f"engine_{eng}"
-        if eng_key not in en_keys:
-            fail(f"Engine '{eng}' lacks translation key '{eng_key}' in i18n.js")
-    pass_step(f"All {len(KNOWN_ENGINES)} engines have matching 'engine_<id>' translations in all dictionaries.")
+    for fid, fdesc in sorted(rpi_fields.items()):
+        if f"field_{fid}" not in en_keys:
+            fail(f"RPi ConfigField '{fid}' lacks 'field_{fid}' in i18n.js")
+        if fdesc and f"field_desc_{fid}" not in en_keys:
+            fail(f"RPi ConfigField '{fid}' lacks 'field_desc_{fid}' in i18n.js")
 
-    # Check universal options
+    pass_step(f"RPi schema coverage 100%: {len(rpi_engines)} Rust engines + aliases (names + descriptions) & {len(rpi_fields)} ConfigFields localized.")
+
+    # Check universal options on both ESP32 and RPi
     universal_keys = [
-        "opt_system_default", "opt_enabled", "opt_disabled",
+        "opt_system_default", "opt_enabled", "opt_disabled", "engine_desc_fallback",
         "opt_date_dmy", "opt_date_mdy", "opt_date_ymd", "opt_date_short_day", "opt_date_full",
         "fit_mode_fit", "fit_mode_stretch", "fit_mode_center",
         "opt_unit_c", "opt_unit_f", "opt_lang_en", "opt_lang_fr", "opt_lang_es"
     ]
     for uk in universal_keys:
         if uk not in en_keys:
-            fail(f"Universal option key '{uk}' is missing from i18n dictionaries!")
-    pass_step(f"All {len(universal_keys)} universal option keys verified.")
+            fail(f"Universal option key '{uk}' is missing from RPi i18n dictionaries!")
+        if uk not in esp_en_keys:
+            fail(f"Universal option key '{uk}' is missing from ESP32 i18n dictionaries!")
+    pass_step(f"All {len(universal_keys)} universal option keys verified across ESP32 and RPi.")
 
 def test_issue24_modal_creation_safety():
     print("🔍 [3/9] Testing Issue #24 regression: primaryField safe modal creation...")

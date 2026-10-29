@@ -429,10 +429,14 @@ bool FrontendSyncEngine::parseShowcaseHealthBroker(
     char hostBuf[96] = "";
     if (!isLoopbackOrEmptyHost(rawHost)) {
         copySafeCStr(hostBuf, sizeof(hostBuf), rawHost);
-        net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890)) {
+            return false;
+        }
     } else if (fallbackHost && !isLoopbackOrEmptyHost(fallbackHost)) {
         copySafeCStr(hostBuf, sizeof(hostBuf), fallbackHost);
-        net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890)) {
+            return false;
+        }
     } else {
         return false;
     }
