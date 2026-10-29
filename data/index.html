@@ -1582,19 +1582,23 @@ select.input option {
           <div class="card glass shadow">
             <h3 data-i18n="hw_matrix_title">Matrix Hardware Configuration</h3>
             <p class="text-muted" data-i18n="hw_matrix_desc">ESP32 HUB75 DMA driver parameters. Changing physical dimensions, driver chip, or timings requires saving and panel restart.</p>
+            <div id="hw-safe-mode-banner" style="display: none; margin-top: 0.75rem; margin-bottom: 0.75rem; padding: 0.85rem 1rem; border-radius: 10px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.5); color: #fde68a;">
+              <div style="font-weight: 700; margin-bottom: 0.25rem;" data-i18n="hw_safe_mode_title">⚠️ Safe Hardware Fallback Active</div>
+              <div id="hw-safe-mode-detail" style="font-size: 0.88rem; line-height: 1.4;"></div>
+            </div>
             
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
                 <label><span data-i18n="hw_rows_label">Rows (Height)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rows">?</span></label>
-                <input type="number" id="hw-rows" class="input" value="64">
+                <input type="number" id="hw-rows" class="input" value="32" min="16" max="128">
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_cols_label">Cols (Width)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_cols">?</span></label>
-                <input type="number" id="hw-cols" class="input" value="256">
+                <input type="number" id="hw-cols" class="input" value="64" min="16" max="256">
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_chain_label">Chain Length</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
-                <input type="number" id="hw-chain" class="input" value="1">
+                <input type="number" id="hw-chain" class="input" value="1" min="1" max="8">
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_parallel_label">Parallel Chains</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
@@ -2105,6 +2109,7 @@ select.input option {
                   <label><span data-i18n="showcase_transport_mode">Transport Protocol</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_transport_mode">?</span></label>
                   <select id="hw-showcase-transport-mode" class="input">
                     <option value="mqtt_udp" data-i18n="showcase_opt_mqtt_udp">MQTT + UDP Real-Time (Recommended)</option>
+                    <option value="mqtt_tcp" data-i18n="showcase_opt_mqtt_tcp">MQTT + TCP Stream (Docker/VM Safe)</option>
                     <option value="http_poll" data-i18n="showcase_opt_http_poll">HTTP Polling Fallback</option>
                   </select>
                 </div>
@@ -2742,7 +2747,11 @@ const translations = {
     showcase_test_btn: "🔄 Test",
     showcase_transport_mode: "Transport Protocol",
     showcase_opt_mqtt_udp: "MQTT + UDP Real-Time (Recommended)",
+    showcase_opt_mqtt_tcp: "MQTT + TCP Stream (Docker/VM Safe)",
     showcase_opt_http_poll: "HTTP Polling Fallback",
+    hw_safe_mode_title: "⚠️ Safe Hardware Fallback Active",
+    hw_safe_mode_desc: "The previous matrix configuration failed HUB75 DMA initialization and reverted in memory to a safe profile so you can adjust and save valid parameters:",
+    hw_geom_exceeded: "Requested total resolution exceeds this board's hardware limit",
     showcase_use_broker: "Use Showcase Embedded MQTT Broker",
     showcase_broker_source: "External MQTT Broker Source",
     showcase_opt_global_broker: "Global ArcadeMatrix MQTT Broker",
@@ -3812,7 +3821,11 @@ const translations = {
     showcase_test_btn: "🔄 Tester",
     showcase_transport_mode: "Protocole de Transport",
     showcase_opt_mqtt_udp: "MQTT + UDP Temps Réel (Recommandé)",
+    showcase_opt_mqtt_tcp: "MQTT + Flux TCP (Compatible Docker/VM)",
     showcase_opt_http_poll: "Fallback HTTP Polling",
+    hw_safe_mode_title: "⚠️ Mode de Récupération Matérielle Actif",
+    hw_safe_mode_desc: "La configuration précédente a dépassé les capacités HUB75 DMA et un profil sûr temporaire a été chargé pour vous permettre de corriger et sauvegarder vos réglages :",
+    hw_geom_exceeded: "La résolution totale demandée dépasse la limite matérielle de cette carte",
     showcase_use_broker: "Utiliser le Broker MQTT Showcase Intégré",
     showcase_broker_source: "Source Broker MQTT Externe",
     showcase_opt_global_broker: "Broker MQTT Global ArcadeMatrix",
@@ -4882,7 +4895,11 @@ const translations = {
     showcase_test_btn: "🔄 Probar",
     showcase_transport_mode: "Protocolo de Transporte",
     showcase_opt_mqtt_udp: "MQTT + UDP Tiempo Real (Recomendado)",
+    showcase_opt_mqtt_tcp: "MQTT + Flujo TCP (Compatible Docker/VM)",
     showcase_opt_http_poll: "Alternativa HTTP Polling",
+    hw_safe_mode_title: "⚠️ Modo Seguro de Hardware Activo",
+    hw_safe_mode_desc: "La configuración anterior superó los límites HUB75 DMA y se cargó un perfil seguro temporal para que pueda ajustar y guardar parámetros válidos:",
+    hw_geom_exceeded: "La resolución total solicitada supera el límite de hardware de esta placa",
     showcase_use_broker: "Usar Broker MQTT Showcase Integrado",
     showcase_broker_source: "Fuente Broker MQTT Externo",
     showcase_opt_global_broker: "Broker MQTT Global ArcadeMatrix",
@@ -10430,7 +10447,18 @@ async function initHardwareCapabilities() {
 async function initSettings() {
   // Load current settings (canonical nested model straight from config.json).
   try {
-    const cfg = await API.get('/api/system');
+    let cfg = null;
+    try {
+      cfg = await API.get('/api/system');
+    } catch (_fullErr) {
+      // Fallback to low-heap sectioned fetches if monolithic /api/system hits transient 503 heap guard
+      cfg = {};
+      for (const sec of ['matrix', 'system', 'wifi', 'mqtt', 'data_mqtt', 'showcase', 'hardware']) {
+        try {
+          cfg[sec] = await API.get('/api/system?section=' + sec);
+        } catch (_) {}
+      }
+    }
     window.__sysConfig = cfg; // keep the full config to merge on save
     const sys = cfg.system || {};
     const matrix = cfg.matrix || {};
@@ -10606,9 +10634,21 @@ async function initSettings() {
     }
 
     // ESP32 Matrix Hardware & Timings (pure ESP32 HUB75 DMA configuration)
-    setVal('hw-rows', matrix.height || 64);
-    setVal('hw-cols', matrix.width || 256);
+    setVal('hw-rows', matrix.height || 32);
+    setVal('hw-cols', matrix.width || 64);
     setVal('hw-chain', matrix.chain_length || 1);
+    const safeBanner = document.getElementById('hw-safe-mode-banner');
+    const safeDetail = document.getElementById('hw-safe-mode-detail');
+    if (safeBanner && safeDetail) {
+      if (matrix.safe_mode) {
+        const prefix = t('hw_safe_mode_desc', 'The previous matrix configuration failed HUB75 DMA initialization and reverted in memory to a safe profile:');
+        const reason = matrix.safe_mode_reason ? ` (${matrix.safe_mode_reason})` : '';
+        safeDetail.textContent = prefix + reason;
+        safeBanner.style.display = 'block';
+      } else {
+        safeBanner.style.display = 'none';
+      }
+    }
     setVal('hw-parallel', 1);
     setVal('hw-driver-chip', matrix.driver_chip || 'SHIFTREG');
     setVal('hw-rgb', matrix.rgb_sequence || 'RGB');
@@ -10920,11 +10960,20 @@ async function initSettings() {
     btnSaveHw.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.matrix) ? { ...window.__sysConfig.matrix } : {};
       const numOr = (id, d) => { const v = parseInt(document.getElementById(id)?.value); return isNaN(v) ? d : v; };
+      const reqRows = numOr('hw-rows', base.height || 32);
+      const reqCols = numOr('hw-cols', base.width || 64);
+      const reqChain = numOr('hw-chain', base.chain_length || 1);
+      const maxW = base.max_width || 0;
+      const maxH = base.max_height || 0;
+      if ((maxW > 0 && reqCols * reqChain > maxW) || (maxH > 0 && reqRows > maxH)) {
+        window.showToast(`${t('hw_geom_exceeded', 'Requested total resolution exceeds hardware limit')} (${reqCols * reqChain}x${reqRows} > ${maxW}x${maxH})`, 'error');
+        return;
+      }
       const matrix = {
         ...base,
-        height: numOr('hw-rows', 64),
-        width: numOr('hw-cols', 256),
-        chain_length: numOr('hw-chain', 1),
+        height: reqRows,
+        width: reqCols,
+        chain_length: reqChain,
         driver_chip: document.getElementById('hw-driver-chip')?.value || 'SHIFTREG',
         rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
         row_address_mode: numOr('hw-row-addr-type', 0),

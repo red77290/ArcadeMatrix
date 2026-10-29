@@ -208,12 +208,17 @@ paths:
                       pwm_bits: { type: integer, example: 0, description: "Alias for color_depth" }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
                       clk_phase: { type: boolean, example: false }
-                      latch_blanking: { type: integer, example: 4 }
+                      latch_blanking: { type: integer, example: 4, minimum: 1, maximum: 8 }
                       render_pipeline: { type: string, example: "auto", enum: [auto, canvas_single, canvas_double, direct_double, direct_single] }
                       rotation_offset: { type: integer, example: 0 }
                       auto_rotate: { type: boolean, example: true }
                       rotation_transition: { type: string, example: "vortex" }
                       rotation_transition_duration_ms: { type: integer, example: 400 }
+                      max_width: { type: integer, example: 128, description: "Maximum total panel width supported by the active hardware profile" }
+                      max_height: { type: integer, example: 64, description: "Maximum panel height supported by the active hardware profile" }
+                      safe_mode: { type: boolean, example: false, description: "True when boot-time HUB75 DMA recovery downgraded or recovered geometry/depth in RAM" }
+                      headless_mode: { type: boolean, example: false, description: "True when all HUB75 DMA allocations failed and WebUI is running in headless recovery mode" }
+                      safe_mode_reason: { type: string, example: "", description: "Diagnostic code explaining why boot-time matrix safe fallback triggered" }
                   mqtt:
                     type: object
                     properties:
@@ -264,7 +269,7 @@ paths:
                     properties:
                       enabled: { type: boolean, example: false }
                       server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
-                      transport_mode: { type: string, example: "mqtt_udp", enum: [mqtt_udp, http_poll] }
+                      transport_mode: { type: string, example: "mqtt_udp", enum: [mqtt_udp, mqtt_tcp, http_poll] }
                       use_showcase_broker: { type: boolean, example: true }
                       mqtt_broker_source: { type: string, example: "global", enum: [global, custom] }
                       mqtt_custom_url: { type: string, example: "mqtt://192.168.1.200:1883" }
@@ -272,7 +277,7 @@ paths:
       tags:
         - Configuration
       summary: Update system, matrix, or mqtt settings
-      description: Partial update. Saves to SD card. Triggers automatic reboot if matrix or MQTT state changed.
+      description: Partial domain-scoped update. Saves only modified configuration domains to SD card. Rejects geometries exceeding hardware profile limits with HTTP 400. Triggers automatic reboot if matrix or MQTT state changed.
       requestBody:
         required: true
         content:
@@ -289,6 +294,8 @@ paths:
                 properties:
                   status: { type: string, example: "success" }
                   lang: { type: string, example: "fr" }
+        '400':
+          description: Requested matrix geometry exceeds hardware profile limits
 
   /api/stats:
     get:

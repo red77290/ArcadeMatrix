@@ -36,6 +36,7 @@
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
 #include "../core/net/ShowcaseDiscovery.h"
+#include "../core/AppRuntime.h"
 
 extern ConfigLoader config;
 
@@ -2178,7 +2179,7 @@ void WebServerAPI::setupRoutes() {
         });
         extern MatrixEngine matrixEngine;
         matrixEngine.setBrightness((uint8_t)b);
-        config.saveToSD("/config.json");
+        config.saveDomainsToSD(CONFIG_DOMAIN_HARDWARE, "/config.json");
 
         SpiRamJsonDocument resp(256);
         resp["status"] = "success";
@@ -2327,6 +2328,20 @@ void WebServerAPI::setupRoutes() {
             mat["matrix_power"] = snap.matrix.matrix_power;
             mat["brightness"] = snap.matrix.powerLimitPercent;
             mat["power_limit_percent"] = snap.matrix.powerLimitPercent;
+            const auto& dispCaps = BoardProfile::current().display();
+            mat["max_width"] = dispCaps.maxWidth;
+            mat["max_height"] = dispCaps.maxHeight;
+            const auto& rec = app.getMatrixRecoveryStatus();
+            mat["safe_mode"] = rec.safeModeActive;
+            mat["headless_mode"] = rec.headlessMode;
+            mat["safe_mode_reason"] = rec.reason;
+            if (rec.safeModeActive) {
+                mat["rejected_width"] = rec.rejectedWidth;
+                mat["rejected_height"] = rec.rejectedHeight;
+                mat["rejected_chain_length"] = rec.rejectedChain;
+                mat["rejected_color_depth"] = rec.rejectedColorDepth;
+                mat["rejected_latch_blanking"] = rec.rejectedLatchBlanking;
+            }
         }
 
         if (section.isEmpty() || section == "mqtt") {
@@ -2420,10 +2435,34 @@ void WebServerAPI::setupRoutes() {
         }
         JsonObject doc = json.as<JsonObject>();
         extern ConfigLoader config;
+        if (doc.containsKey("matrix") && doc["matrix"].is<JsonObject>()) {
+            JsonObject matCheck = doc["matrix"].as<JsonObject>();
+            ConfigSnapshotGuard snapGuard = config.acquireSnapshot();
+            int candW = !matCheck["width"].isNull() ? matCheck["width"].as<int>() : snapGuard->matrix.width;
+            int candH = !matCheck["height"].isNull() ? matCheck["height"].as<int>() : snapGuard->matrix.height;
+            int candC = !matCheck["chain_length"].isNull() ? matCheck["chain_length"].as<int>() : snapGuard->matrix.chainLength;
+            const auto& dispCaps = BoardProfile::current().display();
+            uint32_t totalW = (candW > 0 && candC > 0) ? (static_cast<uint32_t>(candW) * static_cast<uint32_t>(candC)) : 0U;
+            uint32_t totalH = (candH > 0) ? static_cast<uint32_t>(candH) : 0U;
+            if (candW < 16 || candH < 16 || candC < 1 || totalW > dispCaps.maxWidth || totalH > dispCaps.maxHeight) {
+                char errBuf[192];
+                snprintf(
+                    errBuf,
+                    sizeof(errBuf),
+                    "{\"error\":\"Requested matrix geometry (%dx%d Chain %d = %ux%u) exceeds board hardware limit (%ux%u)\"}",
+                    candW, candH, candC, (unsigned)totalW, (unsigned)totalH,
+                    (unsigned)dispCaps.maxWidth, (unsigned)dispCaps.maxHeight
+                );
+                request->send(400, "application/json", errBuf);
+                return;
+            }
+        }
+
         bool changed = false;
         bool willReboot = false;
         if (doc.containsKey("reboot") && doc["reboot"].as<bool>()) willReboot = true;
         bool langChanged = false;
+        uint8_t domainMask = 0;
 
         config.mutate([&](ConfigLoader& cfg) {
             JsonObject sys = doc.containsKey("system") ? doc["system"].as<JsonObject>() : doc;
@@ -2433,44 +2472,54 @@ void WebServerAPI::setupRoutes() {
                     cfg.system.lang = newLang;
                     changed = true;
                     langChanged = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 }
             }
             if (!sys["timezone"].isNull()) {
                 cfg.system.timezone = sys["timezone"].as<String>();
                 configTzTime(getPosixTimezone(cfg.system.timezone).c_str(), "pool.ntp.org");
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["format_24h"].isNull()) {
                 cfg.system.format24h = sys["format_24h"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["unit"].isNull()) {
                 cfg.system.unit = sys["unit"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["temp_unit"].isNull()) {
                 cfg.system.unit = sys["temp_unit"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["temp_offset"].isNull()) {
                 cfg.system.temp_offset = sys["temp_offset"].as<float>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["night_mode_enabled"].isNull()) {
                 cfg.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["turn_off_at"].isNull()) {
                 cfg.system.turn_off_at = sys["turn_off_at"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["wake_up_at"].isNull()) {
                 cfg.system.wake_up_at = sys["wake_up_at"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["night_brightness"].isNull()) {
                 cfg.system.night_brightness = sys["night_brightness"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["brightness_limit"].isNull() || !sys["brightness"].isNull() || !sys["day_brightness"].isNull()) {
                 int b = !sys["brightness_limit"].isNull() ? sys["brightness_limit"].as<int>() : (!sys["brightness"].isNull() ? sys["brightness"].as<int>() : sys["day_brightness"].as<int>());
@@ -2480,31 +2529,38 @@ void WebServerAPI::setupRoutes() {
                 extern MatrixEngine matrixEngine;
                 matrixEngine.setBrightness(b);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
             if (!sys["idle_fighter_enabled"].isNull()) {
                 cfg.system.idle_fighter_enabled = sys["idle_fighter_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["idle_fighter_interval"].isNull()) {
                 cfg.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["idle_fighter_speed"].isNull()) {
                 cfg.system.idle_fighter_speed = sys["idle_fighter_speed"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["api_auth_enabled"].isNull()) {
                 cfg.system.api_auth_enabled = sys["api_auth_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["api_token"].isNull()) {
                 String newTok = sys["api_token"].as<String>();
                 if (newTok.length() > 0) {
                     cfg.system.api_token = newTok;
                     changed = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 } else if (!cfg.system.api_auth_enabled && cfg.system.api_token.length() > 0) {
                     cfg.system.api_token = "";
                     changed = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 }
             }
 
@@ -2523,35 +2579,42 @@ void WebServerAPI::setupRoutes() {
                 cfg.matrix.rotation_offset = parseRotationVal(rootRot);
                 displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["transition_effect"].isNull()) {
                 cfg.matrix.rotation_transition = doc["transition_effect"].as<String>();
                 displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             } else if (!doc["rotation_transition"].isNull()) {
                 cfg.matrix.rotation_transition = doc["rotation_transition"].as<String>();
                 displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["transition_duration_ms"].isNull()) {
                 cfg.matrix.rotation_transition_duration_ms = doc["transition_duration_ms"].as<int>();
                 displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             } else if (!doc["rotation_transition_duration_ms"].isNull()) {
                 cfg.matrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
                 displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["slot_transition"].isNull()) {
                 cfg.matrix.slot_transition = doc["slot_transition"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
             if (!doc["slot_transition_duration_ms"].isNull()) {
                 cfg.matrix.slot_transition_duration_ms = doc["slot_transition_duration_ms"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (doc.containsKey("matrix")) {
@@ -2569,8 +2632,8 @@ void WebServerAPI::setupRoutes() {
                 if (!mat["limit_refresh_rate_hz"].isNull()) { cfg.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>(); willReboot = true; }
                 if (!mat["clk_phase"].isNull()) { cfg.matrix.clkPhase = mat["clk_phase"].as<bool>(); willReboot = true; }
                 else if (!mat["clkPhase"].isNull()) { cfg.matrix.clkPhase = mat["clkPhase"].as<bool>(); willReboot = true; }
-                if (!mat["latch_blanking"].isNull()) { cfg.matrix.latchBlanking = mat["latch_blanking"].as<int>(); willReboot = true; }
-                else if (!mat["latchBlanking"].isNull()) { cfg.matrix.latchBlanking = mat["latchBlanking"].as<int>(); willReboot = true; }
+                if (!mat["latch_blanking"].isNull()) { cfg.matrix.latchBlanking = constrain(mat["latch_blanking"].as<int>(), 1, 8); willReboot = true; }
+                else if (!mat["latchBlanking"].isNull()) { cfg.matrix.latchBlanking = constrain(mat["latchBlanking"].as<int>(), 1, 8); willReboot = true; }
                 if (!mat["render_pipeline"].isNull()) { cfg.matrix.render_pipeline = mat["render_pipeline"].as<String>(); willReboot = true; }
                 else if (!mat["renderPipeline"].isNull()) { cfg.matrix.render_pipeline = mat["renderPipeline"].as<String>(); willReboot = true; }
                 else if ((!mat["force_single_buffer"].isNull() && mat["force_single_buffer"].as<bool>()) ||
@@ -2607,6 +2670,7 @@ void WebServerAPI::setupRoutes() {
                     cfg.matrix.slot_transition_duration_ms = mat["slot_transition_duration_ms"].as<int>();
                 }
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (doc.containsKey("mqtt")) {
@@ -2644,6 +2708,7 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["video_mode"].isNull()) cfg.mqtt.video_mode = mq["video_mode"].as<String>();
                 if (!mq["color_boost"].isNull()) cfg.mqtt.color_boost = mq["color_boost"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
                 }
@@ -2657,6 +2722,7 @@ void WebServerAPI::setupRoutes() {
                 if (!dm["user"].isNull()) cfg.dataMqtt.user = dm["user"].as<String>();
                 if (!dm["pass"].isNull()) cfg.dataMqtt.pass = dm["pass"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
             }
 
             // DMD Media Showcase server & MQTT
@@ -2669,6 +2735,7 @@ void WebServerAPI::setupRoutes() {
                 if (!sc["mqtt_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
                 if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(sc["mqtt_custom_url"].as<String>(), false);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
             }
             if (changed) {
                 ConfigSanitizer::sanitize(cfg);
@@ -2678,8 +2745,13 @@ void WebServerAPI::setupRoutes() {
         bool saved = true;
         if (changed) {
             CompatibilityEvaluator::notifyHardwareCapabilityChanged();
-            saved = config.saveToSD("/config.json");
-            if (!saved) willReboot = false;   // a reboot now would discard the change
+            uint8_t effectiveMask = (domainMask != 0) ? domainMask : CONFIG_DOMAIN_ALL;
+            saved = config.saveDomainsToSD(effectiveMask, "/config.json");
+            if (!saved) {
+                willReboot = false;   // a reboot now would discard the change
+            } else if ((effectiveMask & CONFIG_DOMAIN_HARDWARE) != 0 && !willReboot) {
+                app.clearMatrixRecoveryStatus();
+            }
         }
 
         if ((changed || langChanged) && rotationManager && !willReboot) {
@@ -3783,7 +3855,7 @@ void WebServerAPI::setupRoutes() {
             cfg.wifi.password = newPass;
             tz = cfg.system.timezone;
         });
-        bool saved = config.saveToSD("/config.json");
+        bool saved = config.saveDomainsToSD(CONFIG_DOMAIN_NETWORK, "/config.json");
         if (!saved) {
             sendConfigSaveFailed(request);
             return;

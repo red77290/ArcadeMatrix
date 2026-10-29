@@ -20,6 +20,17 @@
 #include "drawing/IDrawingSurface.h"
 #include <memory>
 
+struct MatrixRecoveryStatus {
+    bool safeModeActive = false;
+    bool headlessMode = false;
+    int rejectedWidth = 0;
+    int rejectedHeight = 0;
+    int rejectedChain = 0;
+    int rejectedColorDepth = 0;
+    int rejectedLatchBlanking = 0;
+    char reason[128] = "";
+};
+
 class AppRuntime {
 public:
     AppRuntime();
@@ -31,6 +42,8 @@ public:
     inline ConfigLoader& getConfig();
     inline DisplayRuntime& getDisplayRuntime() { return m_displayRuntime; }
     inline IDrawingSurface* getDrawingSurface() { return m_drawingSurface.get(); }
+    inline const MatrixRecoveryStatus& getMatrixRecoveryStatus() const { return m_matrixRecovery; }
+    inline void clearMatrixRecoveryStatus() { m_matrixRecovery = MatrixRecoveryStatus{}; }
 
 private:
     DisplayArbiter m_displayArbiter;
@@ -70,6 +83,7 @@ private:
     ProducerSyncState m_syncGif;
     ProducerSyncState m_syncVis;
     ProducerSyncState m_syncInGameShowcase;
+    MatrixRecoveryStatus m_matrixRecovery;
 
     bool handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);

@@ -129,13 +129,14 @@ public:
     static void copySafeCsvTokens(char* dst, size_t cap, const char* src);
 
     /**
-     * @brief Caps advertised `video_fps` to 15 FPS on non-PSRAM boards (`ESP32_STD`) to keep
-     *        Wi-Fi/LwIP UDP chunk rate <= 120 pkt/s, while preserving full 25..60 FPS on PSRAM (`ESP32-S3`).
+     * @brief Caps advertised `video_fps` to 25 FPS on non-PSRAM boards (`ESP32_STD`) to keep
+     *        Wi-Fi/LwIP UDP chunk rate <= 150 pkt/s (6x 1408-byte chunks/frame), while preserving
+     *        full 25..60 FPS on PSRAM (`ESP32-S3`).
      */
     static uint8_t resolveEffectiveVideoFps(uint8_t requestedFps, bool hasPsram) {
         uint8_t clamped = requestedFps < 8U ? 8U : (requestedFps > 60U ? 60U : requestedFps);
-        if (!hasPsram && clamped > 15U) {
-            return 15U;
+        if (!hasPsram && clamped > 25U) {
+            return 25U;
         }
         return clamped;
     }
@@ -159,7 +160,7 @@ protected:
     static constexpr size_t MAX_SYNOPSIS_LEN = 256;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 64;
-    static constexpr size_t IO_SCRATCH_BYTES = 1408;
+    static constexpr size_t IO_SCRATCH_BYTES = 1472;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
     enum class Phase : uint8_t {
@@ -181,7 +182,7 @@ protected:
         char videoType[16] = "any";
         uint8_t snapshotPanoramaCount = 0;
         uint8_t videoMaxDurationS = 8;
-        uint8_t videoFps = 15;
+        uint8_t videoFps = 20;
         bool enabled = true;
         bool useShowcaseBroker = true;
         bool showPoster = true;
@@ -219,18 +220,21 @@ protected:
 
     // Session & Handoff state between Core 0 worker and Core 1 render loop
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
-    std::atomic<uint32_t> m_seq{0};      // Seqlock for CardSnapshot metadata
-    std::atomic<uint32_t> m_frameSeq{0}; // Tear-free frame seq: ODD while Core 0 writes m_frame565, EVEN when complete
+    std::atomic<uint32_t> m_seq{0};              // Seqlock for CardSnapshot metadata
+    std::atomic<uint32_t> m_frameSeq{0};         // Tear-free frame seq: ODD while Core 0 writes m_frame565, EVEN when complete
+    std::atomic<uint32_t> m_consumedFrameSeq{0}; // Last EVEN frame seq blitted by Core 1 (prevents frame overwrite before blit)
+    std::atomic<uint32_t> m_presentedStreamFrames{0};
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
-    char* m_ioScratch = nullptr;     // Preallocated 1408 B SRAM scratch for MQTT TX/RX, HTTP headers & UDP DMDF chunks
+    char* m_ioScratch = nullptr;     // Preallocated 1472 B SRAM scratch for MQTT TX/RX, HTTP headers & 1408B UDP DMDF chunks
     char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     uint32_t m_mqttConnSeq = 0;
     uint32_t m_lastPublishedCfgGen = 0;
     uint8_t m_consecutiveNetFailures = 0;
+    uint8_t m_udpBlockedSkipCounter = 0;
     bool m_udpBlockedHint = false;
 
     std::atomic<bool> m_wantActive{false};
