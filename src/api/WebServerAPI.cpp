@@ -487,8 +487,8 @@ void WebServerAPI::begin() {
         // via DisplaySourceId::WEBUI_SYNC and temporarily drops HUB75 DMA depth to 2-bit so the
         // 109 KB compressed SPA and initial /api/* bootstrap complete without 503 Low Memory errors.
         if (!hardwareHAL.capabilities().hasPsram) {
-            app.requestWebUiSyncWindow(4500);
-            NetworkBudget::markBulkTransferActive(4500);
+            app.requestWebUiSyncWindow(6500);
+            NetworkBudget::markBulkTransferActive(6500);
             if (app.canEngageWebUiSync() && !WebUiSyncEngine::isReadyForServing()) {
                 static const char kWebUiStagingHtml[] PROGMEM =
                     "<!doctype html><html><head><meta charset='utf-8'>"
@@ -743,7 +743,25 @@ void WebServerAPI::setupRoutes() {
 #if defined(ESP32)
         if (!hardwareHAL.capabilities().hasPsram) {
             uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-            if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
+            uint32_t freeHeap = ESP.getFreeHeap();
+            if (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing()) {
+                app.requestWebUiSyncWindow(3000);
+                NetworkBudget::markBulkTransferActive(3000);
+            } else if (largest < 10240U || freeHeap < 24576U) {
+                // AsyncChunkedResponse::_ack requires a contiguous malloc(tcp_sndbuf + headers) (~6 KB)
+                // after allocating the response & stream context. If called cold while an 8-bit engine
+                // holds internal SRAM, briefly engage WEBUI_SYNC and ask the client to retry in 500ms.
+                app.requestWebUiSyncWindow(3500);
+                NetworkBudget::markBulkTransferActive(3500);
+                if (app.canEngageWebUiSync() && !WebUiSyncEngine::isReadyForServing()) {
+                    LOGI("WebServer", "Deferring cold /api/engines to engage WEBUI_SYNC (free=%u, largest=%u)",
+                         (unsigned)freeHeap, (unsigned)largest);
+                    AsyncWebServerResponse* r = request->beginResponse(503, "application/json", "{\"busy\":true}");
+                    r->addHeader("Retry-After", "1");
+                    request->send(r);
+                    return;
+                }
+            } else if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
                 NetworkBudget::markBulkTransferActive(2500);
             }
         }
@@ -752,12 +770,15 @@ void WebServerAPI::setupRoutes() {
         struct EnginesCatalogStreamContext {
             size_t currentIndex = 0;
             String carry;
+            String scratch;
             size_t carryOffset = 0;
             bool sentOpening = false;
             bool sentClosing = false;
         };
 
         auto ctx = std::make_shared<EnginesCatalogStreamContext>();
+        ctx->carry.reserve(768);
+        ctx->scratch.reserve(768);
 
         AsyncWebServerResponse* response = request->beginChunkedResponse("application/json", [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
             (void)index;
@@ -768,7 +789,7 @@ void WebServerAPI::setupRoutes() {
             size_t out = 0;
             auto flushCarry = [&]() -> bool {
                 if (ctx->carryOffset >= ctx->carry.length()) {
-                    ctx->carry = "";
+                    ctx->carry.remove(0);
                     ctx->carryOffset = 0;
                     return true;
                 }
@@ -781,7 +802,7 @@ void WebServerAPI::setupRoutes() {
                     ctx->carryOffset += toCopy;
                 }
                 if (ctx->carryOffset >= ctx->carry.length()) {
-                    ctx->carry = "";
+                    ctx->carry.remove(0);
                     ctx->carryOffset = 0;
                     return true;
                 }
@@ -822,11 +843,11 @@ void WebServerAPI::setupRoutes() {
             const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
 
             while (ctx->currentIndex < count && out < maxLen) {
-                String piece;
-                if (ctx->currentIndex > 0) piece += ',';
-                serializeEngineDescriptor(descriptors[ctx->currentIndex], piece, false /* compact catalog */);
+                ctx->scratch.remove(0);
+                if (ctx->currentIndex > 0) ctx->scratch += ',';
+                serializeEngineDescriptor(descriptors[ctx->currentIndex], ctx->scratch, false /* compact catalog */);
                 ctx->currentIndex++;
-                if (!emit(piece)) {
+                if (!emit(ctx->scratch)) {
                     return out;
                 }
                 if (maxLen - out <= 128) break;
@@ -891,6 +912,13 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
+#if defined(ESP32)
+        if (!hardwareHAL.capabilities().hasPsram &&
+            (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+            app.requestWebUiSyncWindow(2500);
+            NetworkBudget::markBulkTransferActive(2500);
+        }
+#endif
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
@@ -1163,6 +1191,13 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/rotation — Return the current rotation list
     server.on("/api/rotation", HTTP_GET, [](AsyncWebServerRequest *request){
+#if defined(ESP32)
+        if (!hardwareHAL.capabilities().hasPsram &&
+            (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+            app.requestWebUiSyncWindow(2500);
+            NetworkBudget::markBulkTransferActive(2500);
+        }
+#endif
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
