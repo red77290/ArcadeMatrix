@@ -1,4 +1,5 @@
 #include "FrontendSyncEngine.h"
+#include "WebUiSyncEngine.h"
 #include <ArduinoJson.h>
 #include <cstring>
 #include <cstdlib>
@@ -710,6 +711,24 @@ bool FrontendSyncEngine::loop() {
         if (internalBroker) {
             internalBroker->loop();
         } else {
+#if defined(ESP32)
+            // Single-activity discipline on non-PSRAM `esp32dev`: never hold a background FrontendSync
+            // MQTT client socket open simultaneously with `WebUiSync` or an active `MediaShowcaseBase`
+            // MQTT/Stream turn while idle (no game playing).
+            if (!hardwareHAL.capabilities().hasPsram && !isGamePlaying) {
+                auto act = NetworkBudget::getDmdNetActivity();
+                if (WebUiSyncEngine::isRequested() ||
+                    WebUiSyncEngine::isReadyForServing() ||
+                    act != NetworkBudget::DmdNetActivity::Idle) {
+                    if (mqttClient.connected()) {
+                        mqttClient.disconnect();
+                        espClient.stop();
+                        lastReconnectAttempt = millis() == 0 ? 1UL : millis();
+                    }
+                    return true;
+                }
+            }
+#endif
             if (!mqttClient.connected()) {
                 unsigned long now = millis();
                 unsigned long retryInterval = (lastReconnectAttempt == 0) ? 0UL : 10000UL;
@@ -960,6 +979,7 @@ bool FrontendSyncEngine::streamReadyItemOnce(
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!resolvedServerUrl || !itemId || itemId[0] == '\0') return false;
+    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
     if (!allocateStreamBuffers(expectedW, expectedH)) {
         LOGW("RetroFrontend", "Insufficient memory for %ux%u In-Game Showcase stream; keeping marquee.", expectedW, expectedH);
         return false;
@@ -1106,48 +1126,99 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
 
         // 1. Periodic / config-triggered Showcase MQTT broker discovery
         uint32_t nowMs = millis();
+        bool hasPsram = hardwareHAL.capabilities().hasPsram;
         bool needProbe = (curCfgGen != lastCheckedCfgGen) ||
                          (lastHealthProbeMs == 0) ||
-                         ((nowMs - lastHealthProbeMs) >= (currentShowcaseOnline ? 12000U : 5000U));
+                         ((nowMs - lastHealthProbeMs) >= (currentShowcaseOnline ? (hasPsram ? 12000U : 30000U) : 5000U));
         if (needProbe) {
-            lastCheckedCfgGen = curCfgGen;
-            lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
-
-            if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
-                WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8) {
-                char baseServerUrl[112] = "";
-                char resolvedShowcaseHost[96] = "";
-                bool healthOk = false;
-                String brokerHost;
-                uint16_t brokerPort = 1883;
-
-                if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
-                    net::SecureHttpOptions hOpts;
-                    hOpts.ownerId = net::OWNER_INGAME_SYNC;
-                    hOpts.requestTimeoutMs = 1200;
-                    hOpts.keepAlive = false;
-                    auto hResp = net::SecureHttpClient::get(String(baseServerUrl) + "/api/v1/health", hOpts);
-                    if (hResp.ok()) {
-                        String body = hResp.body();
-                        healthOk = parseShowcaseHealthBroker(body.c_str(), resolvedShowcaseHost, brokerHost, brokerPort);
-                    }
-                }
-
-                if (healthOk) {
-                    consecutiveHealthFailures = 0;
-                    currentShowcaseOnline = true;
-                    writeSharedBrokerState(true, brokerHost.c_str(), brokerPort, true);
-                } else {
-                    if (consecutiveHealthFailures < 10) consecutiveHealthFailures++;
-                    if (!currentShowcaseOnline || consecutiveHealthFailures >= 2) {
-                        currentShowcaseOnline = false;
-                        writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+            if (!hasPsram &&
+                (WebUiSyncEngine::isRequested() ||
+                 WebUiSyncEngine::isReadyForServing() ||
+                 NetworkBudget::isBulkTransferActive() ||
+                 NetworkBudget::getDmdNetActivity() != NetworkBudget::DmdNetActivity::Idle)) {
+                // Fast zero-socket cache reuse when `MediaShowcaseBase` already verified the Showcase host
+                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker && strlen(wcfg.showcaseUrl) >= 8) {
+                    char cachedUrl[112] = "";
+                    char cachedHost[64] = "";
+                    uint16_t cachedPort = 8890;
+                    bool cachedOnline = false;
+                    if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                            wcfg.showcaseUrl,
+                            cachedUrl,
+                            sizeof(cachedUrl),
+                            cachedHost,
+                            sizeof(cachedHost),
+                            cachedPort,
+                            cachedOnline,
+                            nullptr,
+                            0) &&
+                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+                        consecutiveHealthFailures = 0;
+                        currentShowcaseOnline = true;
+                        lastCheckedCfgGen = curCfgGen;
+                        lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+                        writeSharedBrokerState(true, cachedHost, 1883, true);
                     }
                 }
             } else {
-                consecutiveHealthFailures = 0;
-                currentShowcaseOnline = false;
-                writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                lastCheckedCfgGen = curCfgGen;
+                lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+
+                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
+                    WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8) {
+                    char baseServerUrl[112] = "";
+                    char resolvedShowcaseHost[96] = "";
+                    uint16_t cachedPort = 8890;
+                    bool cachedOnline = false;
+                    bool healthOk = false;
+                    String brokerHost;
+                    uint16_t brokerPort = 1883;
+
+                    // Zero-socket fast path when `MediaShowcaseBase` already holds a fresh verified lease
+                    if (!hasPsram &&
+                        net::ShowcaseDiscovery::peekCachedUrlStatus(
+                            wcfg.showcaseUrl,
+                            baseServerUrl,
+                            sizeof(baseServerUrl),
+                            resolvedShowcaseHost,
+                            sizeof(resolvedShowcaseHost),
+                            cachedPort,
+                            cachedOnline,
+                            nullptr,
+                            0,
+                            60000U) &&
+                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedShowcaseHost)) {
+                        brokerHost = String(resolvedShowcaseHost);
+                        brokerPort = 1883;
+                        healthOk = true;
+                    } else if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
+                        net::SecureHttpOptions hOpts;
+                        hOpts.ownerId = net::OWNER_INGAME_SYNC;
+                        hOpts.requestTimeoutMs = 1200;
+                        hOpts.keepAlive = false;
+                        auto hResp = net::SecureHttpClient::get(String(baseServerUrl) + "/api/v1/health", hOpts);
+                        if (hResp.ok()) {
+                            String body = hResp.body();
+                            healthOk = parseShowcaseHealthBroker(body.c_str(), resolvedShowcaseHost, brokerHost, brokerPort);
+                        }
+                    }
+
+                    if (healthOk) {
+                        consecutiveHealthFailures = 0;
+                        currentShowcaseOnline = true;
+                        writeSharedBrokerState(true, brokerHost.c_str(), brokerPort, true);
+                    } else {
+                        if (consecutiveHealthFailures < 10) consecutiveHealthFailures++;
+                        if (!currentShowcaseOnline || consecutiveHealthFailures >= 2) {
+                            currentShowcaseOnline = false;
+                            writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                        }
+                    }
+                } else {
+                    consecutiveHealthFailures = 0;
+                    currentShowcaseOnline = false;
+                    writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                }
             }
         }
 

@@ -1187,7 +1187,7 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalContiguousBytes = 16000;
     desc.requirements.psramBytes = 0;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "GNews.io API key (comma-separated for multi-key pool)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("category", ConfigType::ENUM, "Category", "News topic category", "technology", false, "", "", "", "general,world,nation,business,technology,entertainment,sports,science,health", "", true, "", ValidationPolicy::FallbackDefault),
         ConfigField("keywords", ConfigType::STRING, "Keywords", "Custom search query or filter tags", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
@@ -1213,6 +1213,7 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_beacon", ConfigType::BOOLEAN, "Show Live Beacon", "Display live pulsing broadcast dot", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_progress_dots", ConfigType::BOOLEAN, "Show Progress Dots", "Display headline index dots", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
 
     desc.factory = []() { return std::unique_ptr<IEngine>(new GNewsEngine()); };
     return desc;

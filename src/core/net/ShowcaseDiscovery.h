@@ -114,6 +114,43 @@ public:
      *        for `dmd-media-showcase` on `showcaseHttpPort` without blocking the HTTP server thread.
      */
     static void triggerBackgroundScan(uint16_t showcaseHttpPort = 8890);
+
+    /**
+     * @brief Renews the positive discovery cache lease (`resolvedAtMs = millis()`) whenever an active
+     *        Showcase MQTT or TCP stream session succeeds against `ipStr`, preventing cache TTL expiry
+     *        during continuous playback without extra `/api/v1/health` sockets.
+     */
+    static void touchVerifiedHost(const char* ipStr, uint16_t showcaseHttpPort = 8890);
+
+    /**
+     * @brief 100% non-blocking (`0 ms`, `0 sockets`, `0 mDNS`) cache inspection for `AsyncWebServer`
+     *        handlers (`async_tcp`). Populates `outResolvedUrl` / `outHost` / `outPort` and sets
+     *        `outOnline = true` if a fresh verified cache entry exists within `maxAgeMs`.
+     */
+    static bool peekCachedUrlStatus(
+        const char* rawUrl,
+        char* outResolvedUrl,
+        size_t urlCap,
+        char* outHost,
+        size_t hostCap,
+        uint16_t& outPort,
+        bool& outOnline,
+        char* outVersion,
+        size_t verCap,
+        uint32_t maxAgeMs = 180000U
+    );
+
+    /**
+     * @brief Schedules a single-flight Core 0 health/discovery probe for `rawUrl` without blocking
+     *        `async_tcp`. Respects single-activity network budget on non-PSRAM `esp32dev`.
+     * @return true if a background probe task is running or was just scheduled.
+     */
+    static bool triggerBackgroundProbe(const char* rawUrl, bool forceRefresh = false);
+
+    /**
+     * @brief Clears cached discovery and candidate peer state (intended for deterministic unit tests).
+     */
+    static void resetCacheForTests();
 };
 
 } // namespace net

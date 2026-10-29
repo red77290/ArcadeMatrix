@@ -1256,7 +1256,7 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     desc_crypto.requirements.internalPersistentBytes = 2048;
     desc_crypto.requirements.internalContiguousBytes = 8192;
     desc_crypto.requirements.psramBytes = 0;
-    desc_crypto.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols (e.g. BTC, ETH) or CoinGecko IDs (e.g. zelcash, ergo)", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1267,6 +1267,7 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
         ConfigField("crypto_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("crypto_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc_crypto.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc_crypto.factory = []() { return std::unique_ptr<IEngine>(new CryptoEngine()); };
     return desc_crypto;
 }

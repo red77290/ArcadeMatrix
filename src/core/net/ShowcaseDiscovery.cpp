@@ -1,5 +1,6 @@
 #include "ShowcaseDiscovery.h"
 #include "../Logger.h"
+#include "../NetworkBudget.h"
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -7,6 +8,7 @@
 
 #if defined(ESP32) && !defined(UNIT_TEST)
 #include "../ConfigLoader.h"
+#include "../../hal/HardwareHAL.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <freertos/FreeRTOS.h>
@@ -101,11 +103,6 @@ bool readCache(uint16_t expectedPort, uint32_t maxAgeMs, char* outIp, size_t ipC
     return false;
 }
 
-#if defined(ESP32) && !defined(UNIT_TEST)
-std::atomic<bool> s_bgScanBusy{false};
-std::atomic<bool> s_scanMutexFlag{false};
-std::atomic<uint32_t> s_lastSubnetScanMs{0};
-
 void writeCache(const char* ip, uint16_t port, const char* version) {
     s_cache.seq.fetch_add(1, std::memory_order_acq_rel);
     copySafe(s_cache.ip, sizeof(s_cache.ip), ip);
@@ -115,6 +112,14 @@ void writeCache(const char* ip, uint16_t port, const char* version) {
     s_cache.valid = (ip != nullptr && ip[0] != '\0');
     s_cache.seq.fetch_add(1, std::memory_order_release);
 }
+
+#if defined(ESP32) && !defined(UNIT_TEST)
+std::atomic<bool> s_bgScanBusy{false};
+std::atomic<bool> s_scanMutexFlag{false};
+std::atomic<bool> s_mdnsBusy{false};
+std::atomic<uint32_t> s_lastSubnetScanMs{0};
+char s_bgProbeUrl[96] = "";
+bool s_bgProbeForce = false;
 
 void snapshotCandidates(char outIps[6][20], uint8_t& outCount) {
     outCount = 0;
@@ -287,6 +292,13 @@ bool verifyShowcaseHealthHttp(
 
 bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
     if (WiFi.status() != WL_CONNECTED) return false;
+    bool expectedBusy = false;
+    if (!s_mdnsBusy.compare_exchange_strong(expectedBusy, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+    struct MdnsGuard {
+        ~MdnsGuard() { s_mdnsBusy.store(false, std::memory_order_release); }
+    } mdnsGuard;
 
     char mdnsBase[64] = "dmdmediashowcase";
     if (rawHost && rawHost[0] != '\0') {
@@ -495,11 +507,38 @@ bool scanLocalSubnet24(uint16_t port, char* outIp, size_t ipCap, char* outVer, s
 void bgScanTaskEntry(void* arg) {
     uint16_t port = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(arg));
     if (port == 0) port = 8890;
-    char ip[24] = "";
-    char ver[24] = "";
-    if (!tryMdnsLookup("dmdmediashowcase.local", port, ip, sizeof(ip), ver, sizeof(ver))) {
+    char probeUrl[96] = "";
+    copySafe(probeUrl, sizeof(probeUrl), s_bgProbeUrl);
+    bool force = s_bgProbeForce;
+    s_bgProbeUrl[0] = '\0';
+    s_bgProbeForce = false;
+
+    if (probeUrl[0] != '\0') {
+        char resolvedUrl[112] = "";
+        char resolvedHost[64] = "";
+        char ver[24] = "";
+        uint16_t resolvedPort = port;
+        bool online = false;
+        ShowcaseDiscovery::resolveUrl(
+            probeUrl,
+            resolvedUrl,
+            sizeof(resolvedUrl),
+            resolvedHost,
+            sizeof(resolvedHost),
+            resolvedPort,
+            online,
+            ver,
+            sizeof(ver),
+            true,
+            force
+        );
+    } else {
+        char ip[24] = "";
+        char ver[24] = "";
         if (!tryCandidatePeers(port, ip, sizeof(ip), ver, sizeof(ver))) {
-            scanLocalSubnet24(port, ip, sizeof(ip), ver, sizeof(ver));
+            if (!tryMdnsLookup("dmdmediashowcase.local", port, ip, sizeof(ip), ver, sizeof(ver))) {
+                scanLocalSubnet24(port, ip, sizeof(ip), ver, sizeof(ver));
+            }
         }
     }
     s_bgScanBusy.store(false, std::memory_order_release);
@@ -679,13 +718,13 @@ bool ShowcaseDiscovery::resolveHostInPlace(
     char cachedIp[24] = "";
     char ver[24] = "";
     uint16_t probePort = showcaseHttpPort > 0 ? showcaseHttpPort : 8890;
-    if (readCache(probePort, 90000U, cachedIp, sizeof(cachedIp), ver, sizeof(ver))) {
+    if (readCache(probePort, 180000U, cachedIp, sizeof(cachedIp), ver, sizeof(ver))) {
         copySafe(hostBuf, hostCap, cachedIp);
         return true;
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
-    // Re-verify last-known-good cached IP first when 90s TTL expires (or retain it under low heap)
+    // Re-verify last-known-good cached IP first when 180s TTL expires (or retain it under low heap)
     char prevIp[24] = "";
     if (readCache(probePort, 86400000U, prevIp, sizeof(prevIp), ver, sizeof(ver))) {
         if (ESP.getFreeHeap() < 8192U) {
@@ -699,8 +738,9 @@ bool ShowcaseDiscovery::resolveHostInPlace(
         }
     }
 
-    if (tryMdnsLookup(hostBuf, probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
-        tryCandidatePeers(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
+    // Probe recorded LAN peers (Docker/Rancher host on macOS/Windows) BEFORE 3.5s mDNS lookup
+    if (tryCandidatePeers(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
+        tryMdnsLookup(hostBuf, probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
         (allowSubnetScan && scanLocalSubnet24(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)))) {
         copySafe(hostBuf, hostCap, cachedIp);
         return true;
@@ -744,7 +784,7 @@ bool ShowcaseDiscovery::resolveUrl(
 #if defined(ESP32) && !defined(UNIT_TEST)
         if (!forceRefresh) {
             char cachedIp[24] = "";
-            if (readCache(outPort, 15000U, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf)) &&
+            if (readCache(outPort, 180000U, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf)) &&
                 strcmp(cachedIp, outHost) == 0) {
                 outOnline = true;
                 if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
@@ -770,7 +810,7 @@ bool ShowcaseDiscovery::resolveUrl(
     }
 
     char discoveredIp[24] = "";
-    if (!forceRefresh && readCache(outPort, 90000U, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf))) {
+    if (!forceRefresh && readCache(outPort, 180000U, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf))) {
         copySafe(outHost, hostCap, discoveredIp);
         if (outResolvedUrl && urlCap > 0) {
             snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
@@ -807,8 +847,9 @@ bool ShowcaseDiscovery::resolveUrl(
         s_lastSubnetScanMs.store(0, std::memory_order_release);
     }
 
-    if (tryMdnsLookup(outHost, outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
-        tryCandidatePeers(outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
+    // Probe recorded LAN peers (Docker/Rancher host on macOS/Windows) BEFORE 3.5s mDNS lookup
+    if (tryCandidatePeers(outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
+        tryMdnsLookup(outHost, outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
         (allowSubnetScan && scanLocalSubnet24(outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)))) {
         copySafe(outHost, hostCap, discoveredIp);
         outOnline = true;
@@ -822,28 +863,150 @@ bool ShowcaseDiscovery::resolveUrl(
     return true;
 }
 
-void ShowcaseDiscovery::triggerBackgroundScan(uint16_t showcaseHttpPort) {
+void ShowcaseDiscovery::touchVerifiedHost(const char* ipStr, uint16_t showcaseHttpPort) {
+    if (!isValidCandidateIpv4(ipStr)) return;
+    uint16_t port = showcaseHttpPort > 0 ? showcaseHttpPort : 8890;
+    recordCandidateIpStr(ipStr);
+
+    char existingIp[24] = "";
+    char existingVer[24] = "";
+    const char* verToKeep = "1.1.4";
+    if (readCache(port, 86400000U, existingIp, sizeof(existingIp), existingVer, sizeof(existingVer)) &&
+        strcmp(existingIp, ipStr) == 0 && existingVer[0] != '\0') {
+        verToKeep = existingVer;
+    }
+    writeCache(ipStr, port, verToKeep);
+}
+
+bool ShowcaseDiscovery::peekCachedUrlStatus(
+    const char* rawUrl,
+    char* outResolvedUrl,
+    size_t urlCap,
+    char* outHost,
+    size_t hostCap,
+    uint16_t& outPort,
+    bool& outOnline,
+    char* outVersion,
+    size_t verCap,
+    uint32_t maxAgeMs
+) {
+    outOnline = false;
+    if (outVersion && verCap > 0) outVersion[0] = '\0';
+    if (outResolvedUrl && urlCap > 0) outResolvedUrl[0] = '\0';
+
+    char scheme[12] = "http";
+    if (!parseEndpoint(rawUrl, 8890, scheme, sizeof(scheme), outHost, hostCap, outPort)) {
+        return false;
+    }
+
+    char cachedIp[24] = "";
+    char verBuf[24] = "";
+    if (!isAutoDiscoverableHost(outHost)) {
+        if (isValidCandidateIpv4(outHost)) {
+            recordCandidateIpStr(outHost);
+        }
+        if (outResolvedUrl && urlCap > 0) {
+            snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
+        }
+        if (readCache(outPort, maxAgeMs, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf)) &&
+            strcmp(cachedIp, outHost) == 0) {
+            outOnline = true;
+            if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
+        }
+        return true;
+    }
+
+    if (readCache(outPort, maxAgeMs, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf))) {
+        copySafe(outHost, hostCap, cachedIp);
+        outOnline = true;
+        if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
+    }
+    if (outResolvedUrl && urlCap > 0) {
+        snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
+    }
+    return true;
+}
+
+bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRefresh) {
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (WiFi.status() != WL_CONNECTED || ESP.getFreeHeap() < 20480U) return;
+    if (!rawUrl || rawUrl[0] == '\0' || WiFi.status() != WL_CONNECTED) return false;
+    char scheme[12] = "http";
+    char host[64] = "";
+    uint16_t port = 8890;
+    if (!parseEndpoint(rawUrl, 8890, scheme, sizeof(scheme), host, sizeof(host), port)) {
+        return false;
+    }
+
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    if (!hasPsram) {
+        auto act = NetworkBudget::getDmdNetActivity();
+        if (NetworkBudget::isBulkTransferActive() || act == NetworkBudget::DmdNetActivity::WebUiSync) {
+            return false;
+        }
+        if (!forceRefresh && act != NetworkBudget::DmdNetActivity::Idle) {
+            return false;
+        }
+        if (ESP.getFreeHeap() < 14336U || ESP.getMaxAllocHeap() < 4608U) {
+            return false;
+        }
+    } else if (ESP.getFreeHeap() < 16384U) {
+        return false;
+    }
+
+    if (s_bgScanBusy.load(std::memory_order_acquire)) {
+        return true;
+    }
     bool expected = false;
     if (!s_bgScanBusy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-        return;
+        return true;
     }
+    copySafe(s_bgProbeUrl, sizeof(s_bgProbeUrl), rawUrl);
+    s_bgProbeForce = forceRefresh;
+    uint32_t stackBytes = hasPsram ? 4096U : 3584U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         bgScanTaskEntry,
         "ShowcaseDisc",
-        4096,
-        reinterpret_cast<void*>(static_cast<uintptr_t>(showcaseHttpPort > 0 ? showcaseHttpPort : 8890)),
+        stackBytes,
+        reinterpret_cast<void*>(static_cast<uintptr_t>(port > 0 ? port : 8890)),
         1,
         nullptr,
         0 // Core 0 only
     );
     if (ok != pdPASS) {
+        s_bgProbeUrl[0] = '\0';
+        s_bgProbeForce = false;
         s_bgScanBusy.store(false, std::memory_order_release);
+        return false;
     }
+    return true;
 #else
-    (void)showcaseHttpPort;
+    (void)rawUrl;
+    (void)forceRefresh;
+    return false;
 #endif
+}
+
+void ShowcaseDiscovery::resetCacheForTests() {
+    s_cache.seq.fetch_add(1, std::memory_order_acq_rel);
+    s_cache.ip[0] = '\0';
+    s_cache.version[0] = '\0';
+    s_cache.port = 0;
+    s_cache.resolvedAtMs = 0;
+    s_cache.valid = false;
+    s_cache.seq.fetch_add(1, std::memory_order_release);
+
+    s_candidates.seq.fetch_add(1, std::memory_order_acq_rel);
+    for (uint8_t i = 0; i < 6; ++i) {
+        s_candidates.ips[i][0] = '\0';
+    }
+    s_candidates.count = 0;
+    s_candidates.seq.fetch_add(1, std::memory_order_release);
+}
+
+void ShowcaseDiscovery::triggerBackgroundScan(uint16_t showcaseHttpPort) {
+    char defaultUrl[64];
+    snprintf(defaultUrl, sizeof(defaultUrl), "http://dmdmediashowcase.local:%u", static_cast<unsigned>(showcaseHttpPort > 0 ? showcaseHttpPort : 8890));
+    (void)triggerBackgroundProbe(defaultUrl, false);
 }
 
 } // namespace net

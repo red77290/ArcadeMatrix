@@ -1,9 +1,11 @@
 #include "MediaShowcaseEngines.h"
+#include "WebUiSyncEngine.h"
 #include "fonts/ArcadeFonts.h"
 #include "../core/drawing/IDrawingSurface.h"
 #include "../core/ConfigLoader.h"
 #include "../core/I18n.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include "../core/net/SecureHttpClient.h"
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
@@ -1060,32 +1062,40 @@ bool MediaShowcaseBase::allocateBuffers() {
     m_hasPsram = hardwareHAL.capabilities().hasPsram;
     if (m_hasPsram) {
         // ESP32-S3 with PSRAM: place large poster, HD RGB565 frame (up to 256x64 = 32 KB),
-        // and 32 KB MQTT/HTTP receive buffer in SPIRAM while keeping 1,280 B I/O scratch in fast SRAM.
+        // and 32 KB MQTT/HTTP receive buffer in SPIRAM while keeping 1,472 B I/O scratch in fast SRAM.
         m_poster565 = static_cast<uint16_t*>(heap_caps_malloc(posterBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_psramMqttRx = static_cast<char*>(heap_caps_malloc(PSRAM_MQTT_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    }
-    if (!m_poster565) {
-        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
-    }
-    m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
-    if (!m_frame565) {
-        if (m_hasPsram) {
-            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-        } else if (frameBytes > 0 && frameBytes <= 16384U &&
-                   ESP.getFreeHeap() >= (frameBytes + 12288U) &&
-                   ESP.getMaxAllocHeap() >= frameBytes) {
-            // Classic ESP32 (`128x32` @ full 8-bit HUB75 DMA or `128x64` @ 4-bit HUB75 DMA): Showcase uses
-            // zero TLS (plain LAN MQTT/TCP/HTTP) and preallocates all buffers once at activate(), so >= 12 KB
-            // post-frame free SRAM safely sustains LwIP, MQTT, TCP DMDS streaming, and AsyncWebServer.
+        if (!m_poster565) {
+            m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+        }
+        m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
+        if (!m_frame565) {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
+    } else {
+        // Classic ESP32 (`esp32dev`): allocate LARGEST contiguous block (`m_frame565` = 8,192 B on 128x32)
+        // FIRST so smaller `m_poster565` (2,048 B) and `m_ioScratch` (1,472 B) allocations never fragment
+        // the largest free internal DRAM block.
+        if (frameBytes > 0 && frameBytes <= 16384U &&
+            ESP.getFreeHeap() >= (frameBytes + 10240U) &&
+            ESP.getMaxAllocHeap() >= frameBytes) {
+            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+        }
+        if (!m_frame565) {
+            LOGW("Showcase", "Frame buffer deferred (%u B): free=%u maxAlloc=%u",
+                 static_cast<unsigned>(frameBytes),
+                 static_cast<unsigned>(ESP.getFreeHeap()),
+                 static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        }
+        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+        m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     }
 #else
     m_hasPsram = true;
+    m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
     m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
-    m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
     m_psramMqttRx = static_cast<char*>(malloc(PSRAM_MQTT_RX_BYTES));
 #endif
 
@@ -1108,14 +1118,10 @@ bool MediaShowcaseBase::allocateBuffers() {
 }
 
 void MediaShowcaseBase::freeBuffers() {
-    // Free in LIFO order so adjacent internal heap blocks coalesce cleanly on ESP32_STD
+    // Free in LIFO order matching largest-first allocation so adjacent internal heap blocks coalesce cleanly
     if (m_psramMqttRx) {
         free(m_psramMqttRx);
         m_psramMqttRx = nullptr;
-    }
-    if (m_frame565) {
-        free(m_frame565);
-        m_frame565 = nullptr;
     }
     if (m_ioScratch) {
         free(m_ioScratch);
@@ -1124,6 +1130,10 @@ void MediaShowcaseBase::freeBuffers() {
     if (m_poster565) {
         free(m_poster565);
         m_poster565 = nullptr;
+    }
+    if (m_frame565) {
+        free(m_frame565);
+        m_frame565 = nullptr;
     }
     m_posterCapBytes = 0;
     m_framePixels = 0;
@@ -1396,7 +1406,7 @@ void MediaShowcaseBase::startWorkerTask() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return;
     m_taskAlive.store(true, std::memory_order_release);
-    uint32_t stackBytes = m_hasPsram ? 8192U : 6656U;
+    uint32_t stackBytes = m_hasPsram ? 8192U : 5376U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
@@ -1438,6 +1448,15 @@ void MediaShowcaseBase::workerTaskEntry(void* arg) {
 
 void MediaShowcaseBase::runWorkerLoop() {
     while (m_wantActive.load(std::memory_order_acquire)) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+        if (!m_hasPsram &&
+            (WebUiSyncEngine::isRequested() ||
+             WebUiSyncEngine::isReadyForServing() ||
+             NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::WebUiSync)) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
+        }
+#endif
         uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
         const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
         const char* domain = domainSlug();
@@ -1470,14 +1489,15 @@ void MediaShowcaseBase::runWorkerLoop() {
             char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
             bool handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
             if (handled && httpFallbackItemId[0] != '\0') {
-                // Flat-stack HTTP TCP DMDS stream executed AFTER `runMqttUdpTurn()` freed its stack frame
-                // and MQTT TCP socket. Uses `?purge=true&paced=1&drop_late=1` for real-time pacing.
+                // Flat-stack raw TCP DMDS stream executed AFTER `runMqttUdpTurn()` freed its stack frame
+                // and closed its MQTT TCP socket. Uses `?purge=true&paced=1` (omitting `drop_late=1`) so
+                // Uvicorn sends `Content-Length` + raw unchunked binary `DMDS` paced monotonically.
                 if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
                     char fallbackPath[256];
                     snprintf(
                         fallbackPath,
                         sizeof(fallbackPath),
-                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&drop_late=1&client_id=%s",
+                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&client_id=%s",
                         domain,
                         httpFallbackItemId,
                         m_sessionId
@@ -1660,6 +1680,20 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
         return false;
     }
+    uint16_t showcaseHttpPort = 8890;
+    {
+        char dummyScheme[12] = "";
+        char dummyHost[64] = "";
+        (void)net::ShowcaseDiscovery::parseEndpoint(
+            cfg.serverUrl,
+            8890,
+            dummyScheme,
+            sizeof(dummyScheme),
+            dummyHost,
+            sizeof(dummyHost),
+            showcaseHttpPort
+        );
+    }
 
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
@@ -1693,9 +1727,10 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
     // =========================================================================
     // STEP A: Scoped Pre-Stream MQTT Session (Connect -> Retained Read -> Claim Card -> DISCONNECT)
-    // Closes and destroys `mqttCli` BEFORE Card scroll and UDP streaming so 0 TCP sockets remain open!
+    // Closes and destroys `mqttCli` BEFORE Card scroll and TCP streaming so 0 TCP sockets remain open!
     // =========================================================================
     {
+        NetworkBudget::ScopedDmdNetActivity mqttAct(NetworkBudget::DmdNetActivity::Mqtt);
         WiFiClient mqttCli;
         if (!connectMqttBrokerSession(mqttCli, mqttHost, mqttPort, m_sessionId, m_mqttConnSeq, m_wantActive, 1500, 1000)) {
             if (!m_wantActive.load(std::memory_order_acquire)) {
@@ -1704,6 +1739,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             return false;
         }
         m_consecutiveNetFailures = 0;
+        if (cfg.useShowcaseBroker) {
+            net::ShowcaseDiscovery::touchVerifiedHost(mqttHost, showcaseHttpPort);
+        }
 
         // Only publish retained `config` on boot, config mutation, or post-offline recovery
         if (m_lastPublishedCfgGen != startGen) {
@@ -1967,12 +2005,22 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     // =========================================================================
     if (m_wantActive.load(std::memory_order_acquire) &&
         m_cfgGen.load(std::memory_order_acquire) == startGen &&
-        itemHasStream &&
-        m_frame565) {
-        if (outHttpFallbackItemId && fallbackItemCap > 0) {
-            copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+        itemHasStream) {
+        if (!m_frame565 && !m_hasPsram) {
+            size_t frameBytes = m_framePixels * sizeof(uint16_t);
+            if (frameBytes > 0 && frameBytes <= 16384U &&
+                ESP.getFreeHeap() >= (frameBytes + 8192U) &&
+                ESP.getMaxAllocHeap() >= frameBytes) {
+                m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+                if (m_frame565) {
+                    memset(m_frame565, 0, frameBytes);
+                }
+            }
         }
-        return true;
+        if (m_frame565 && outHttpFallbackItemId && fallbackItemCap > 0) {
+            copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+            return true;
+        }
     }
 
     finishTurnItem();
@@ -2011,9 +2059,9 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     };
 
     char baseServerUrl[112] = "";
+    char resolvedHost[64] = "";
+    uint16_t resolvedPort = 8890;
     {
-        char resolvedHost[64] = "";
-        uint16_t resolvedPort = 8890;
         bool resolvedOnline = false;
         if (!net::ShowcaseDiscovery::resolveUrl(
                 cfg.serverUrl,
@@ -2121,6 +2169,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
             return;
         }
         m_consecutiveNetFailures = 0;
+        net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
 
         // Zero-copy in-place parse when Content-Length fits in `m_psramMqttRx` (S3) or `m_frame565` (ESP32_STD)
         char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
@@ -2231,11 +2280,143 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     }
 
     // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!m_frame565 && !m_hasPsram && unifiedStreamPath[0] != '\0') {
+        size_t frameBytes = m_framePixels * sizeof(uint16_t);
+        if (frameBytes > 0 && frameBytes <= 16384U &&
+            ESP.getFreeHeap() >= (frameBytes + 8192U) &&
+            ESP.getMaxAllocHeap() >= frameBytes) {
+            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+            if (m_frame565) {
+                memset(m_frame565, 0, frameBytes);
+            }
+        }
+    }
+#endif
     if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && m_frame565 && unifiedStreamPath[0] != '\0') {
         streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
     }
 
     finishTurnItem();
+}
+
+size_t HttpChunkedDecoder::decode(
+    const uint8_t* src,
+    size_t srcLen,
+    size_t& outSrcConsumed,
+    uint8_t* dst,
+    size_t dstCap
+) {
+    outSrcConsumed = 0;
+    if (!src || srcLen == 0 || !dst || dstCap == 0) {
+        return 0;
+    }
+
+    size_t written = 0;
+    while (outSrcConsumed < srcLen && written < dstCap && state != State::Done && state != State::Error) {
+        if (state == State::Payload) {
+            size_t avail = srcLen - outSrcConsumed;
+            size_t space = dstCap - written;
+            size_t take = (avail < chunkRem) ? avail : chunkRem;
+            if (take > space) take = space;
+            memcpy(dst + written, src + outSrcConsumed, take);
+            written += take;
+            outSrcConsumed += take;
+            chunkRem -= take;
+            if (chunkRem == 0) {
+                state = State::PayloadCr;
+            }
+            continue;
+        }
+
+        uint8_t b = src[outSrcConsumed++];
+        switch (state) {
+            case State::SizeHex: {
+                if (hexDigits == 0 && (b == ' ' || b == '\t')) {
+                    break;
+                }
+                int nib = -1;
+                if (b >= '0' && b <= '9') nib = static_cast<int>(b - '0');
+                else if (b >= 'a' && b <= 'f') nib = static_cast<int>(b - 'a' + 10);
+                else if (b >= 'A' && b <= 'F') nib = static_cast<int>(b - 'A' + 10);
+
+                if (nib >= 0) {
+                    if (hexDigits >= 8U) {
+                        state = State::Error;
+                        break;
+                    }
+                    chunkRem = (chunkRem << 4) | static_cast<size_t>(nib);
+                    ++hexDigits;
+                } else if (b == ';' && hexDigits > 0U) {
+                    state = State::SizeExt;
+                } else if (b == '\r' && hexDigits > 0U) {
+                    state = State::SizeLf;
+                } else if (b == '\n' && hexDigits > 0U) {
+                    state = (chunkRem == 0U) ? State::Done : State::Payload;
+                } else {
+                    state = State::Error;
+                }
+                break;
+            }
+            case State::SizeExt: {
+                if (b == '\r') {
+                    state = State::SizeLf;
+                } else if (b == '\n') {
+                    state = (chunkRem == 0U) ? State::Done : State::Payload;
+                }
+                break;
+            }
+            case State::SizeLf: {
+                if (b == '\n') {
+                    state = (chunkRem == 0U) ? State::Done : State::Payload;
+                } else {
+                    state = State::Error;
+                }
+                break;
+            }
+            case State::PayloadCr: {
+                if (b == '\r') {
+                    state = State::PayloadLf;
+                } else if (b == '\n') {
+                    chunkRem = 0;
+                    hexDigits = 0;
+                    state = State::SizeHex;
+                } else {
+                    state = State::Error;
+                }
+                break;
+            }
+            case State::PayloadLf: {
+                if (b == '\n') {
+                    chunkRem = 0;
+                    hexDigits = 0;
+                    state = State::SizeHex;
+                } else {
+                    state = State::Error;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    return written;
+}
+
+bool MediaShowcaseBase::hasChunkedTransferEncoding(const char* rawHeaders) {
+    if (!rawHeaders) return false;
+    for (const char* p = rawHeaders; *p != '\0'; ++p) {
+        if ((*p == 'T' || *p == 't') && strncasecmp(p, "transfer-encoding:", 18) == 0) {
+            const char* lineEnd = strpbrk(p + 18, "\r\n");
+            size_t lineLen = lineEnd ? static_cast<size_t>(lineEnd - (p + 18)) : strlen(p + 18);
+            for (size_t i = 0; i + 7 <= lineLen; ++i) {
+                if (strncasecmp(p + 18 + i, "chunked", 7) == 0) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
@@ -2244,10 +2425,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
+    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
+
     // Zero-Heap ZeDMD-Grade Raw LwIP TCP Streamer:
     // Bypasses `SecureHttpClient` / `HTTPClient` / `WiFiClient` (~10 KB DRAM saved on ESP32_STD)
-    // and pairs with Showcase `?paced=1` (`X-DMD-Paced: 1`) so `TCP_WND` stays 100% open with
-    // zero client-side sleep and zero `TCP ZeroWindow` stalls!
+    // and pairs with Showcase `?paced=1` (`X-DMD-Paced: 1`, `Content-Length` raw binary `DMDS`) so
+    // `TCP_WND` stays 100% open with zero client-side sleep and zero `TCP ZeroWindow` stalls!
     char resolvedHost[64] = "";
     uint16_t resolvedPort = 8890;
     const char* rawPath = streamPath;
@@ -2282,16 +2465,15 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
+    // Request `paced=1` WITHOUT `drop_late=1` so Uvicorn serves an exact `Content-Length` raw binary
+    // `DMDS` body instead of wrapping chunks in `Transfer-Encoding: chunked` (`2010\r\nDMDS...`).
     char reqPath[288];
     bool hasQ = (strchr(rawPath, '?') != nullptr);
     bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
-    bool hasDropLate = (strstr(rawPath, "drop_late=") != nullptr);
-    if (hasPaced && hasDropLate) {
+    if (hasPaced) {
         copySafeStr(reqPath, sizeof(reqPath), rawPath);
-    } else if (hasPaced && !hasDropLate) {
-        snprintf(reqPath, sizeof(reqPath), "%s&drop_late=1", rawPath);
     } else {
-        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1&drop_late=1", rawPath, hasQ ? "&" : "?");
+        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1", rawPath, hasQ ? "&" : "?");
     }
 
     struct sockaddr_in addr;
@@ -2363,13 +2545,11 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
     lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
 
-    // Use HTTP/1.0 (`Connection: close`) so Uvicorn never wraps `drop_late=1` responses (where
-    // `Content-Length` is intentionally omitted) in HTTP/1.1 `Transfer-Encoding: chunked`.
     char reqBuf[384];
     int reqLen = snprintf(
         reqBuf,
         sizeof(reqBuf),
-        "GET %s HTTP/1.0\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
+        "GET %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
         reqPath,
         resolvedHost,
         static_cast<unsigned>(resolvedPort)
@@ -2379,7 +2559,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return false;
     }
 
-    // Read HTTP response header into `m_ioScratch` (`1408` bytes preallocated)
+    // Read HTTP response header into `m_ioScratch` (`1,472` bytes preallocated)
     size_t scratchUsed = 0;
     size_t bodyStart = 0;
     bool foundHeaderEnd = false;
@@ -2412,6 +2592,8 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return false;
     }
 
+    net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
+
     bool serverPaced = false;
     for (const char* p = m_ioScratch; *p != '\0'; ++p) {
         if ((*p == 'X' || *p == 'x') && strncasecmp(p, "x-dmd-paced:", 12) == 0) {
@@ -2423,27 +2605,78 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             break;
         }
     }
+    const bool isChunked = hasChunkedTransferEncoding(m_ioScratch);
+    HttpChunkedDecoder chunkDec;
 
     size_t preBufferedOff = bodyStart;
     size_t preBufferedEnd = scratchUsed;
 
-    auto readExactRawTcp = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
-        size_t got = 0;
-        if (preBufferedOff < preBufferedEnd) {
-            size_t avail = preBufferedEnd - preBufferedOff;
-            size_t take = (avail < wantLen) ? avail : wantLen;
-            memcpy(dst, m_ioScratch + preBufferedOff, take);
-            preBufferedOff += take;
-            got += take;
+    auto readExactStreamBody = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
+        if (!isChunked) {
+            size_t got = 0;
+            if (preBufferedOff < preBufferedEnd) {
+                size_t avail = preBufferedEnd - preBufferedOff;
+                size_t take = (avail < wantLen) ? avail : wantLen;
+                memcpy(dst, m_ioScratch + preBufferedOff, take);
+                preBufferedOff += take;
+                got += take;
+            }
+            uint32_t lastProg = millis();
+            while (got < wantLen) {
+                if (!m_wantActive.load(std::memory_order_acquire)) {
+                    return false;
+                }
+                int r = lwip_recv(fd, dst + got, wantLen - got, 0);
+                if (r > 0) {
+                    got += static_cast<size_t>(r);
+                    lastProg = millis();
+                } else if (r == 0) {
+                    return false;
+                } else {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        return false;
+                    }
+                    if ((millis() - lastProg) >= maxIdleMs) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
+
+        // Chunked fallback path (`Transfer-Encoding: chunked`): decode via `m_ioScratch` with 0 heap allocs
+        size_t got = 0;
         uint32_t lastProg = millis();
         while (got < wantLen) {
             if (!m_wantActive.load(std::memory_order_acquire)) {
                 return false;
             }
-            int r = lwip_recv(fd, dst + got, wantLen - got, 0);
+            if (preBufferedOff < preBufferedEnd) {
+                size_t consumed = 0;
+                size_t produced = chunkDec.decode(
+                    reinterpret_cast<const uint8_t*>(m_ioScratch + preBufferedOff),
+                    preBufferedEnd - preBufferedOff,
+                    consumed,
+                    dst + got,
+                    wantLen - got
+                );
+                preBufferedOff += consumed;
+                got += produced;
+                if (chunkDec.hasError()) {
+                    return false;
+                }
+                if (got >= wantLen) {
+                    return true;
+                }
+                if (chunkDec.isDone()) {
+                    return false;
+                }
+            }
+            preBufferedOff = 0;
+            preBufferedEnd = 0;
+            int r = lwip_recv(fd, m_ioScratch, IO_SCRATCH_BYTES, 0);
             if (r > 0) {
-                got += static_cast<size_t>(r);
+                preBufferedEnd = static_cast<size_t>(r);
                 lastProg = millis();
             } else if (r == 0) {
                 return false;
@@ -2459,8 +2692,14 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return true;
     };
 
-    uint8_t hdr[16];
-    if (!readExactRawTcp(hdr, sizeof(hdr), 3500U) || memcmp(hdr, "DMDS", 4) != 0) {
+    uint8_t hdr[16] = {0};
+    if (!readExactStreamBody(hdr, sizeof(hdr), 3500U) || memcmp(hdr, "DMDS", 4) != 0) {
+        LOGW(
+            "Showcase",
+            "TCP stream bad DMDS magic (chunked=%u): %02x %02x %02x %02x %02x %02x",
+            isChunked ? 1U : 0U,
+            hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5]
+        );
         closeStreamSocket(true);
         return false;
     }
@@ -2474,6 +2713,9 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
     size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
     if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
+        LOGW("Showcase", "TCP stream geometry mismatch: %ux%u (%u frames) vs panel %ux%u",
+             static_cast<unsigned>(w), static_cast<unsigned>(h), static_cast<unsigned>(totalFrames),
+             static_cast<unsigned>(m_width), static_cast<unsigned>(m_height));
         closeStreamSocket(true);
         return false;
     }
@@ -2489,10 +2731,17 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         if (!m_wantActive.load(std::memory_order_acquire) || m_cfgGen.load(std::memory_order_acquire) != startGen) break;
         if ((millis() - streamStartMs) >= maxAllowedMs) break;
 
-        // 1. Wait for the next frame's bytes to arrive in LwIP's kernel buffer WHILE `m_frameSeq`
-        //    remains EVEN! This keeps the previous frame 100% unlocked for Core 1 during the ~48 ms
-        //    inter-frame network interval instead of holding `m_frameSeq` ODD and starving Core 1.
-        if (preBufferedOff >= preBufferedEnd) {
+        // 1. Wait for the next frame's payload bytes to arrive WHILE `m_frameSeq` remains EVEN!
+        //    This keeps Frame `f - 1` 100% unlocked for Core 1 during the ~40-50 ms inter-frame interval.
+        uint8_t firstFrameByte = 0;
+        bool hasFirstFrameByte = false;
+        if (isChunked) {
+            // Advance past any trailing `\r\n<hex>\r\n` chunk framing before locking `m_frame565`
+            if (!readExactStreamBody(&firstFrameByte, 1U, 3500U)) {
+                break;
+            }
+            hasFirstFrameByte = true;
+        } else if (preBufferedOff >= preBufferedEnd) {
             uint32_t waitT0 = millis();
             bool socketReadable = false;
             while (m_wantActive.load(std::memory_order_acquire) &&
@@ -2532,7 +2781,14 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
             m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
         }
-        bool okFrame = readExactRawTcp(reinterpret_cast<uint8_t*>(m_frame565), frameBytes, 3500U);
+        uint8_t* frameDst = reinterpret_cast<uint8_t*>(m_frame565);
+        bool okFrame = false;
+        if (hasFirstFrameByte) {
+            frameDst[0] = firstFrameByte;
+            okFrame = (frameBytes == 1U) || readExactStreamBody(frameDst + 1U, frameBytes - 1U, 3500U);
+        } else {
+            okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
+        }
         if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
             m_frameSeq.fetch_add(1, std::memory_order_release);
         }
@@ -2550,8 +2806,6 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
 
         if (serverPaced) {
-            // Showcase paces frames monotonically on the server (`X-DMD-Paced: 1`), so draining
-            // `lwip_recv` immediately keeps `TCP_WND` wide open with ZERO `TCP ZeroWindow` stalls!
             if ((f & 0x03U) == 0U) {
                 taskYIELD();
             }
@@ -2572,16 +2826,17 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    // Drop EOF / early abort cleanly (`drop_late=1` may intentionally send fewer than `totalFrames` before EOF)
     closeStreamSocket(false);
     if (framesRead > 0U) {
+        net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
         uint32_t durMs = std::max<uint32_t>(1U, millis() - streamStartMs);
         uint32_t pres = m_presentedStreamFrames.load(std::memory_order_acquire);
         LOGI(
             "Showcase",
-            "TCP stream done: path=%s rxFrames=%u presented=%u durMs=%u effFps=%.1f",
+            "TCP stream done: path=%s rxFrames=%u/%u presented=%u durMs=%u effFps=%.1f",
             reqPath,
             static_cast<unsigned>(framesRead),
+            static_cast<unsigned>(totalFrames),
             static_cast<unsigned>(pres),
             static_cast<unsigned>(durMs),
             (static_cast<float>(pres) * 1000.0f) / static_cast<float>(durMs)

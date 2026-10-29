@@ -200,7 +200,7 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsTls = true;
     desc.requirements.internalContiguousBytes = 8192;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("clock_mode", ConfigType::ENUM, "Clock Style", "Display as Digital or Analog Hands", "1", false, "", "", "", "0:Digital Modern,1:Pixel-Art Watch Dial,2:Minimal", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("theme", ConfigType::ENUM, "Color Theme", "Color palette for dashboard widgets", "0", false, "", "", "", "0:Cyberpunk Neon,1:Arcade Amber HUD,2:Minimalist Luxury,3:Matrix Phosphor", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_clock", ConfigType::BOOLEAN, "Show Clock", "Display main time widget", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -224,6 +224,7 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
 
     desc.factory = []() { return std::unique_ptr<IEngine>(new DashboardEngine()); };
     return desc;
