@@ -349,7 +349,7 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         JsonObjectConst sc = doc["showcase"];
         if (sc.containsKey("enabled")) showcase.enabled = sc["enabled"].as<bool>();
         showcase.server_url = normalizeMdnsEndpointUrl(String(sc["server_url"] | showcase.server_url), true);
-        showcase.transport_mode = sc["transport_mode"] | showcase.transport_mode;
+        showcase.transport_mode = normalizeShowcaseTransportMode(String(sc["transport_mode"] | showcase.transport_mode));
         if (sc.containsKey("use_showcase_broker")) showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
         showcase.mqtt_broker_source = sc["mqtt_broker_source"] | showcase.mqtt_broker_source;
         showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String(sc["mqtt_custom_url"] | showcase.mqtt_custom_url), false);
@@ -431,7 +431,7 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
                 if (!sUrl.isEmpty() && sUrl != "http://192.168.1.50:8000" && sUrl != "http://127.0.0.1:8080") {
                     showcase.enabled = true;
                     showcase.server_url = sUrl;
-                    showcase.transport_mode = inst.config.getString("transport_mode", "mqtt_udp");
+                    showcase.transport_mode = normalizeShowcaseTransportMode(inst.config.getString("transport_mode", "mqtt_tcp"));
                     showcase.use_showcase_broker = inst.config.getBool("use_showcase_broker", true);
                     showcase.mqtt_broker_source = inst.config.getString("mqtt_broker_source", "showcase_builtin");
                     showcase.mqtt_custom_url = inst.config.getString("mqtt_custom_url", "");

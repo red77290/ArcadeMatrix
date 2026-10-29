@@ -109,11 +109,21 @@ struct DataMqttConfig {
 struct ShowcaseConfig {
     bool enabled = false;
     String server_url = "http://dmdmediashowcase.local:8890";
-    String transport_mode = "mqtt_udp";
+    String transport_mode = "mqtt_tcp";
     bool use_showcase_broker = true;
     String mqtt_broker_source = "global";
     String mqtt_custom_url = "";
 };
+
+inline String normalizeShowcaseTransportMode(const String& rawMode) {
+    String m = rawMode;
+    m.trim();
+    m.toLowerCase();
+    if (m == "http_poll") {
+        return "http_poll";
+    }
+    return "mqtt_tcp";
+}
 
 inline String normalizeMdnsEndpointUrl(const String& rawInput, bool migrateShowcaseLegacy = false) {
     String s = rawInput;

@@ -75,7 +75,8 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
     const CompatibilityContext& ctx)
 {
     CompatibilityVerdict verdict;
-    const auto& req = desc.requirements;
+    const EngineRequirements req = desc.requirements.scaledForGeometry(
+        ctx.width, ctx.height, ctx.hardware.hasPsram);
 
     verdict.status = CompatibilityStatus::Compatible;
     verdict.primaryReason = CompatibilityReason::None;
@@ -182,7 +183,7 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
         ctx.requestedPipeline,
         ctx.hardware.hasPsram,
         ctx.memory,
-        desc.requirements
+        req
     );
 
     if (!policyRes.valid) {

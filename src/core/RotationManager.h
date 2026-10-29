@@ -93,6 +93,12 @@ public:
 
     // Count currently instantiated active engines (for monitoring & tests)
     size_t getActiveEngineCount() const;
+
+    /**
+     * @brief Retire and destroy all instantiated rotation engines on Core 1 to reclaim internal SRAM
+     *        during priority `WEBUI_SYNC` single-page bundle loads on non-PSRAM ESP32 boards.
+     */
+    void evictAllActiveEnginesForMemory();
     
     // Backwards compatible overloads
     inline IEngine* getActiveEngine(const char* instanceId) { return getOrCreateEngine(instanceId); }

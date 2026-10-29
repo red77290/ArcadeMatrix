@@ -295,11 +295,12 @@ Soporte nativo de inglés, francés y español:
 ## 12. El Árbitro de Pantalla y Runtime de Pantalla (`DisplayArbiter`, `DisplayRuntime`)
 
 ArcadeMatrix separa estrictamente la decisión de arbitraje de la ejecución del ciclo de vida de los motores:
-1. **Alertas de Emergencia / OTA** (Prioridad 100).
-2. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
-3. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
-4. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
-5. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
+1. **Carga Inicial de WebUI en ESP32 sin PSRAM (`WEBUI_SYNC`)** (Prioridad 110, `TIMED` 4.5s).
+2. **Alertas de Emergencia / OTA** (Prioridad 100).
+3. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
+4. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
+5. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
+6. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
 
 - **Cola de Comandos SPSC Lock-Free:** El Núcleo 0 envía peticiones asíncronas mediante `submitRequest()` y `cancelRequest()` hacia un búfer circular sin bloqueos (`LockFreeSPSCQueue<ArbiterCommand, 16>`), serializadas entre productores mediante `producerMutex` en el Núcleo 0.
 - **Consumidor Único en Núcleo 1:** `DisplayArbiter::evaluate()` drena los comandos y resuelve prioridades en $O(1)$ con **CERO mutex** y **CERO asignaciones dinámicas**.

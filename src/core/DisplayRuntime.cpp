@@ -289,6 +289,11 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         }
         m_preemptionDepth = 0;
     }
+    if (decision.sourceId == DisplaySourceId::WEBUI_SYNC &&
+        !hardwareHAL.capabilities().hasPsram &&
+        m_rotationManager) {
+        m_rotationManager->evictAllActiveEnginesForMemory();
+    }
     if (targetEngine && !sameEngine) {
         if (!isInternalRotationSwitch) {
             maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
@@ -408,6 +413,11 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         const EngineDescriptor* desc = EngineRegistry::getDescriptor(descId);
         if (desc) {
             reqs = desc->requirements;
+        } else if (strcmp(descId, "ingame_showcase") == 0) {
+            reqs.needsNetwork = true;
+            reqs.internalPersistentBytes = 16000;
+            reqs.internalContiguousBytes = 8192;
+            reqs.scalesRgb565FrameWithGeometry = true;
         }
     }
 
@@ -439,9 +449,14 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     bool hasCanvas = (m_surface != nullptr);
 
     // Stage 1: cheap estimate with the current panel still allocated.
-    uint8_t stage1Target = PipelineSelectionPolicy::resolveTargetDepth(
-        matrixCfg.colorDepth, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
-        hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas);
+    // During priority WEBUI_SYNC on non-PSRAM boards, temporarily drop HUB75 DMA to 2 bits (8 KB)
+    // to reclaim ~24-28 KB of contiguous SRAM while serving the 109 KB SPA + bootstrap API calls.
+    const bool forceMinimalWebUiSyncDepth = (!hasPsram && sourceId == DisplaySourceId::WEBUI_SYNC);
+    uint8_t stage1Target = forceMinimalWebUiSyncDepth
+        ? 2
+        : PipelineSelectionPolicy::resolveTargetDepth(
+              matrixCfg.colorDepth, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+              hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas);
 
     LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, free=%u, largestBlock=%u, tls=%d)",
          descId ? descId : "unknown", currentDepth, stage1Target, matrixCfg.colorDepth, (unsigned)freeInternal, (unsigned)largestBlock, reqs.needsTls);
@@ -464,10 +479,12 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         MemTrace::dumpSurvivors("teardown");  // memtrace env only: who pins the emptied zone
         // Invariant: Stage 2 re-evaluates admission on the emptied zone but must never escalate
         // depth beyond stage1Target (which was already bounded by running baseline and engine requirements).
-        targetDepth = PipelineSelectionPolicy::resolveTargetDepth(
-            stage1Target, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
-            hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas,
-            /*panelReleased=*/true);
+        targetDepth = forceMinimalWebUiSyncDepth
+            ? 2
+            : PipelineSelectionPolicy::resolveTargetDepth(
+                  stage1Target, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+                  hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas,
+                  /*panelReleased=*/true);
         LOGI("DisplayRuntime", "Teardown-then-measure for '%s': cur=%u -> target=%u (free=%u, largestBlock=%u)",
              descId ? descId : "unknown", currentDepth, targetDepth, (unsigned)freeInternal, (unsigned)largestBlock);
 

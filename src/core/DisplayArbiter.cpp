@@ -20,6 +20,9 @@ DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
     if (name.equalsIgnoreCase("ALERT")) {
         return DisplaySourceId::ALERT;
     }
+    if (name.equalsIgnoreCase("WEBUI_SYNC")) {
+        return DisplaySourceId::WEBUI_SYNC;
+    }
     return DisplaySourceId::ROTATION;
 }
 

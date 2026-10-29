@@ -672,7 +672,6 @@ void replaceTokenInBuffer(char* buf, size_t maxLen, const char* from, const char
     char* pos = strstr(buf, from);
     if (!pos) return;
     size_t fromLen = strlen(from);
-    size_t toLen = strlen(to);
     char tmp[128];
     size_t prefixLen = (size_t)(pos - buf);
     if (prefixLen >= sizeof(tmp)) prefixLen = sizeof(tmp) - 1;
@@ -791,5 +790,13 @@ const char* I18n::getShowcaseOfflineLabel(Lang l) {
 
 const char* I18n::getShowcaseUnconfiguredLabel(Lang l) {
     return (l == Lang::FR) ? "CONFIGURER URL SERVEUR" : (l == Lang::ES) ? "CONFIGURAR URL SERVIDOR" : "CONFIGURE SERVER URL";
+}
+
+const char* I18n::getWebUiLoadingTitleLabel(Lang l) {
+    return (l == Lang::FR) ? "CHARGEMENT" : (l == Lang::ES) ? "CARGANDO" : "LOADING";
+}
+
+const char* I18n::getWebUiLoadingSubLabel(Lang l) {
+    return (l == Lang::FR) ? "INTERFACE WEB..." : (l == Lang::ES) ? "INTERFAZ WEB..." : "WEB INTERFACE...";
 }
 

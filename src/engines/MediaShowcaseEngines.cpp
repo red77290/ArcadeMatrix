@@ -902,70 +902,6 @@ bool connectMqttBrokerSession(
     }
     return true;
 }
-
-// Ephemeral (< 20 ms LAN) MQTT publish session that opens a TCP socket, publishes a single
-// control event (`start_stream` or `stop_stream`), sends DISCONNECT, and closes the socket
-// immediately so ZERO TCP sockets coexist with high-rate UDP `DMDF` streaming on ESP32_STD.
-// Strictly refuses to allocate/connect when `wantActive` is false (Invariant 15).
-bool publishFlashMqttEvent(
-    const char* mqttHost,
-    uint16_t mqttPort,
-    const char* sessionId,
-    uint32_t& ioConnSeq,
-    const char* topic,
-    const char* jsonPayload,
-    char* ioScratch,
-    size_t scratchCap,
-    const std::atomic<bool>& wantActive
-) {
-    if (!wantActive.load(std::memory_order_acquire) || !topic || !jsonPayload) {
-        return false;
-    }
-    WiFiClient flashCli;
-    if (!connectMqttBrokerSession(flashCli, mqttHost, mqttPort, sessionId, ioConnSeq, wantActive, 1000, 600)) {
-        return false;
-    }
-    bool ok = sendMqttPublishPacket(flashCli, topic, jsonPayload, false, wantActive, ioScratch, scratchCap);
-    sendMqttDisconnectAndStop(flashCli, wantActive);
-    return ok;
-}
-
-int openNonBlockingUdpSocket(uint16_t localPort, bool hasPsram) {
-    int fd = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (fd < 0) return -1;
-
-    int reuse = 1;
-    lwip_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#ifdef SO_RCVBUF
-    int rcvBuf = hasPsram ? 65536 : 8192;
-    lwip_setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvBuf, sizeof(rcvBuf));
-#else
-    (void)hasPsram;
-#endif
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(localPort);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (lwip_bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-        lwip_close(fd);
-        return -1;
-    }
-
-    int flags = lwip_fcntl(fd, F_GETFL, 0);
-    if (flags >= 0) {
-        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-    return fd;
-}
-
-void closeUdpSocket(int& fd) {
-    if (fd >= 0) {
-        lwip_close(fd);
-        fd = -1;
-    }
-}
 #endif
 
 } // namespace
@@ -1136,12 +1072,12 @@ bool MediaShowcaseBase::allocateBuffers() {
     if (!m_frame565) {
         if (m_hasPsram) {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-        } else if (frameBytes > 0 && frameBytes <= 8192U &&
+        } else if (frameBytes > 0 && frameBytes <= 16384U &&
                    ESP.getFreeHeap() >= (frameBytes + 12288U) &&
                    ESP.getMaxAllocHeap() >= frameBytes) {
-            // Classic ESP32 (`128x32` @ full 8-bit HUB75 DMA): Showcase uses zero TLS (plain LAN
-            // MQTT/UDP/HTTP) and preallocates all buffers once at activate(), so >= 12 KB post-frame
-            // free SRAM safely sustains LwIP, MQTT, UDP DMDF streaming, and AsyncWebServer.
+            // Classic ESP32 (`128x32` @ full 8-bit HUB75 DMA or `128x64` @ 4-bit HUB75 DMA): Showcase uses
+            // zero TLS (plain LAN MQTT/TCP/HTTP) and preallocates all buffers once at activate(), so >= 12 KB
+            // post-frame free SRAM safely sustains LwIP, MQTT, TCP DMDS streaming, and AsyncWebServer.
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
     }
@@ -1279,7 +1215,8 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         srv = normalizeMdnsEndpointUrl(srv, true);
         copySafeStr(slot.serverUrl, sizeof(slot.serverUrl), srv.c_str());
 
-        String tMode = sc.transport_mode.isEmpty() ? config->getString("transport_mode", "mqtt_udp") : sc.transport_mode;
+        String rawMode = sc.transport_mode.isEmpty() ? config->getString("transport_mode", "mqtt_tcp") : sc.transport_mode;
+        String tMode = normalizeShowcaseTransportMode(rawMode);
         copySafeStr(slot.transportMode, sizeof(slot.transportMode), tMode.c_str());
 
         slot.useShowcaseBroker = sc.server_url.isEmpty() ? config->getBool("use_showcase_broker", true) : sc.use_showcase_broker;
@@ -1342,8 +1279,6 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
     m_lastPublishedCfgGen = 0;
     m_consecutiveNetFailures = 0;
-    m_udpBlockedSkipCounter = 0;
-    m_udpBlockedHint = false;
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
     if (m_wantActive.load(std::memory_order_acquire)) {
         m_skipTurnImmediately.store(false, std::memory_order_release);
@@ -1535,22 +1470,23 @@ void MediaShowcaseBase::runWorkerLoop() {
             char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
             bool handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
             if (handled && httpFallbackItemId[0] != '\0') {
-                // Flat-stack HTTP DMDS stream executed AFTER `runMqttUdpTurn()` freed its stack frame,
-                // MQTT TCP socket, and UDP socket. Uses `?purge=true&paced=1&drop_late=1` for real-time pacing.
+                // Flat-stack HTTP TCP DMDS stream executed AFTER `runMqttUdpTurn()` freed its stack frame
+                // and MQTT TCP socket. Uses `?purge=true&paced=1&drop_late=1` for real-time pacing.
                 if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                    char fallbackPath[176];
+                    char fallbackPath[256];
                     snprintf(
                         fallbackPath,
                         sizeof(fallbackPath),
-                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&drop_late=1",
+                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&drop_late=1&client_id=%s",
                         domain,
-                        httpFallbackItemId
+                        httpFallbackItemId,
+                        m_sessionId
                     );
                     streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
                 }
                 finishTurnItem();
             } else if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                // Stay strictly on `mqtt_udp` instead of cross-protocol ping-ponging into HTTP `/config`.
+                // Stay strictly on `mqtt_tcp` instead of cross-protocol ping-ponging into HTTP `/config`.
                 // Require 3 consecutive transport failures before displaying `NetworkOffline` (2).
                 if (m_consecutiveNetFailures < 10U) {
                     ++m_consecutiveNetFailures;
@@ -1750,8 +1686,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     bool sawServerOnline = false;
     char itemIdBuf[MAX_ITEM_ID_LEN] = "";
     bool itemHasStream = false;
-    uint32_t maxCfgStreamMs = configuredMaxStreamMs(cfg);
-    uint32_t streamMaxMs = maxCfgStreamMs + 4000U;
+    uint32_t streamMaxMs = configuredMaxStreamMs(cfg) + 4000U;
 
     // Ensure Phase::Card is active before reusing `m_frame565` as the zero-malloc MQTT RX buffer on ESP32_STD
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
@@ -1788,7 +1723,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
             appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
             appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"transport\":\"mqtt_tcp\",\"width\":");
             appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
             appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
             appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
@@ -1988,13 +1923,13 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         }
 
         // Unsubscribe from `readyTopic` BEFORE `start_card`, claim the item, and IMMEDIATELY
-        // close the MQTT TCP socket so 0 sockets remain open during Card scroll and UDP streaming!
+        // close the MQTT TCP socket so 0 sockets remain open during Card scroll and TCP streaming!
         sendMqttUnsubscribePacket(mqttCli, 3, readyTopic, m_wantActive);
-        char startCardCmd[176];
+        char startCardCmd[256];
         snprintf(
             startCardCmd,
             sizeof(startCardCmd),
-            "{\"action\":\"start_card\",\"item_id\":\"%s\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+            "{\"action\":\"start_card\",\"item_id\":\"%s\",\"transport\":\"mqtt_tcp\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
             itemIdBuf,
             localIpBuf,
             localIpBuf
@@ -2003,10 +1938,6 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         sendMqttDisconnectAndStop(mqttCli, m_wantActive);
     }
 
-    uint32_t naturalStreamMs = (streamMaxMs > 4000U) ? (streamMaxMs - 4000U) : 2000U;
-    if (streamMaxMs > maxCfgStreamMs + 4500U) {
-        streamMaxMs = maxCfgStreamMs + 4500U;
-    }
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
 
     // =========================================================================
@@ -2032,344 +1963,16 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     }
 
     // =========================================================================
-    // STEP C: Pure UDP Stream (`0` TCP sockets open!) + Ephemeral Flash MQTT Start/Stop
-    //         (or instant zero-latency handoff when `mqtt_tcp` or `m_udpBlockedHint` is active)
+    // STEP C: Zero-Heap TCP Stream Handoff (`DMDS` `.rgb565.stream`)
     // =========================================================================
     if (m_wantActive.load(std::memory_order_acquire) &&
         m_cfgGen.load(std::memory_order_acquire) == startGen &&
         itemHasStream &&
         m_frame565) {
-        if (strcasecmp(cfg.transportMode, "mqtt_tcp") == 0) {
-            if (outHttpFallbackItemId && fallbackItemCap > 0) {
-                copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-            }
-            return true;
+        if (outHttpFallbackItemId && fallbackItemCap > 0) {
+            copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
         }
-        if (m_udpBlockedHint) {
-            ++m_udpBlockedSkipCounter;
-            if ((m_udpBlockedSkipCounter % 10U) != 0U) {
-                if (outHttpFallbackItemId && fallbackItemCap > 0) {
-                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-                }
-                return true;
-            }
-        }
-
-        int udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
-        if (udpFd < 0) {
-            if (outHttpFallbackItemId && fallbackItemCap > 0) {
-                copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-            }
-            return true;
-        }
-
-        constexpr size_t kUdpPktCap = 1440U;
-        memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-        while (lwip_recvfrom(udpFd, m_ioScratch, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr) > 0) {}
-
-        // Punch a client-initiated UDP return pinhole (`DMDH|<session>|<lan_ip>` -> `<showcase_ip>:5569`)
-        // so Docker / Rancher Desktop VM bridges forward `DMDF` datagrams back to `localUdpPort`.
-        constexpr uint16_t kShowcaseUdpPunchPort = 5569U;
-        struct sockaddr_in punchAddr;
-        memset(&punchAddr, 0, sizeof(punchAddr));
-        punchAddr.sin_family = AF_INET;
-        punchAddr.sin_port = htons(kShowcaseUdpPunchPort);
-        bool hasPunchTarget = false;
-        {
-            char showcaseHost[64] = "";
-            uint16_t showcasePort = 8890;
-            if (parseHostAndPort(cfg.serverUrl, 8890, showcaseHost, sizeof(showcaseHost), showcasePort) &&
-                net::ShowcaseDiscovery::resolveHostInPlace(showcaseHost, sizeof(showcaseHost), showcasePort, false) &&
-                inet_aton(showcaseHost, &punchAddr.sin_addr) != 0) {
-                hasPunchTarget = true;
-            } else if (inet_aton(mqttHost, &punchAddr.sin_addr) != 0) {
-                hasPunchTarget = true;
-            }
-        }
-        char helloPkt[96];
-        int helloLen = snprintf(helloPkt, sizeof(helloPkt), "DMDH|%s|%s", m_sessionId, localIpBuf);
-        auto sendUdpPunch = [&]() {
-            if (hasPunchTarget && helloLen > 0) {
-                lwip_sendto(
-                    udpFd,
-                    helloPkt,
-                    static_cast<size_t>(helloLen),
-                    0,
-                    reinterpret_cast<const struct sockaddr*>(&punchAddr),
-                    sizeof(punchAddr)
-                );
-            }
-        };
-
-        sendUdpPunch();
-        if (m_udpBlockedHint) {
-            // Periodic 65ms re-probe (every 10th item) when container NAT previously blocked UDP:
-            // upgrades back to UDP immediately if `:5569/udp` responds with `DMDA`, otherwise
-            // switches straight to zero-heap TCP streaming without a 1.2s delay or extra MQTT calls!
-            bool gotPunchAck = false;
-            if (hasPunchTarget) {
-                fd_set pfds;
-                FD_ZERO(&pfds);
-                FD_SET(udpFd, &pfds);
-                struct timeval ptv = {0, 65000};
-                if (lwip_select(udpFd + 1, &pfds, nullptr, nullptr, &ptv) > 0 && FD_ISSET(udpFd, &pfds)) {
-                    while (true) {
-                        int pLen = lwip_recvfrom(udpFd, m_ioScratch, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr);
-                        if (pLen <= 0) break;
-                        if (pLen >= 4 && (memcmp(m_ioScratch, "DMDA", 4) == 0 || memcmp(m_ioScratch, "DMDF", 4) == 0)) {
-                            gotPunchAck = true;
-                        }
-                    }
-                }
-            }
-            if (gotPunchAck) {
-                m_udpBlockedHint = false;
-                m_udpBlockedSkipCounter = 0;
-            } else {
-                closeUdpSocket(udpFd);
-                if (m_wantActive.load(std::memory_order_acquire) && outHttpFallbackItemId && fallbackItemCap > 0) {
-                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-                }
-                return true;
-            }
-        }
-
-        // Flash MQTT `start_stream`: connects, publishes, and closes TCP BEFORE UDP frames flow!
-        {
-            char startStreamCmd[192];
-            snprintf(
-                startStreamCmd,
-                sizeof(startStreamCmd),
-                "{\"action\":\"start_stream\",\"item_id\":\"%s\",\"udp_port\":%u,\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
-                itemIdBuf,
-                static_cast<unsigned>(localUdpPort),
-                localIpBuf,
-                localIpBuf
-            );
-            if (!publishFlashMqttEvent(
-                    mqttHost,
-                    mqttPort,
-                    m_sessionId,
-                    m_mqttConnSeq,
-                    eventsTopic,
-                    startStreamCmd,
-                    m_ioScratch,
-                    IO_SCRATCH_BYTES,
-                    m_wantActive)) {
-                closeUdpSocket(udpFd);
-                if (m_wantActive.load(std::memory_order_acquire) && outHttpFallbackItemId && fallbackItemCap > 0) {
-                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-                }
-                return true;
-            }
-        }
-        sendUdpPunch();
-
-        m_presentedStreamFrames.store(0, std::memory_order_release);
-        uint32_t streamT0 = millis();
-        uint32_t firstUdpPktMs = 0;
-        uint32_t lastUdpPktMs = 0;
-        uint32_t frameChunkStartMs = 0;
-        uint32_t udpFramesCompleted = 0;
-        bool resentPunch = false;
-        uint16_t curFrameSeq = 0xFFFF;
-        uint64_t chunkMask = 0;
-        size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
-        constexpr uint32_t kUdpInitialGraceMs = 1200U;
-        uint8_t* udpBuf = reinterpret_cast<uint8_t*>(m_ioScratch);
-        bool stoppedEarlyByClient = false;
-        bool initialGraceTimeout = false;
-
-        auto markFrameWriteBegin = [&]() {
-            if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-                m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
-                frameChunkStartMs = millis();
-            }
-        };
-        auto markFrameWriteComplete = [&]() {
-            if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-                m_frameSeq.fetch_add(1, std::memory_order_release);
-            }
-            ++udpFramesCompleted;
-            if (!m_liveCard.hasVideoFrame) {
-                m_seq.fetch_add(1, std::memory_order_acq_rel);
-                m_liveCard.hasVideoFrame = true;
-                m_seq.fetch_add(1, std::memory_order_release);
-            }
-            if (m_phase.load(std::memory_order_relaxed) != static_cast<uint8_t>(Phase::LiveStream)) {
-                m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-            }
-        };
-
-        while (m_wantActive.load(std::memory_order_acquire) &&
-               m_cfgGen.load(std::memory_order_acquire) == startGen &&
-               (millis() - streamT0) < streamMaxMs) {
-            if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
-                stoppedEarlyByClient = (maxCfgStreamMs + 500U < naturalStreamMs);
-                break;
-            }
-            if (firstUdpPktMs == 0U && !resentPunch && (millis() - streamT0) >= 250U) {
-                resentPunch = true;
-                sendUdpPunch();
-            }
-
-            fd_set rfds;
-            FD_ZERO(&rfds);
-            FD_SET(udpFd, &rfds);
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 4000;
-
-            int sel = lwip_select(udpFd + 1, &rfds, nullptr, nullptr, &tv);
-            if (sel > 0 && FD_ISSET(udpFd, &rfds)) {
-                while (m_wantActive.load(std::memory_order_acquire)) {
-                    int rLen = lwip_recvfrom(udpFd, udpBuf, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr);
-                    if (rLen <= 0) break;
-                    if (rLen >= 4 && memcmp(udpBuf, "DMDA", 4) == 0) {
-                        m_udpBlockedHint = false;
-                        m_udpBlockedSkipCounter = 0;
-                        continue;
-                    }
-                    if (rLen > 10 && memcmp(udpBuf, "DMDF", 4) == 0) {
-                        m_udpBlockedHint = false;
-                        m_udpBlockedSkipCounter = 0;
-                        uint16_t seq = static_cast<uint16_t>(udpBuf[4] | (udpBuf[5] << 8));
-                        uint8_t chunkIdx = udpBuf[6];
-                        uint8_t totalChunks = udpBuf[7] > 0 ? udpBuf[7] : 1;
-                        uint16_t byteOff = static_cast<uint16_t>(udpBuf[8] | (udpBuf[9] << 8));
-                        size_t payloadBytes = static_cast<size_t>(rLen - 10);
-
-                        if (seq != curFrameSeq) {
-                            if (chunkMask != 0) {
-                                markFrameWriteComplete();
-                            } else if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-                                m_frameSeq.fetch_add(1, std::memory_order_release);
-                            }
-                            curFrameSeq = seq;
-                            chunkMask = 0;
-                        }
-                        if (chunkIdx < totalChunks && totalChunks <= 64 && (static_cast<size_t>(byteOff) + payloadBytes) <= maxBufBytes) {
-                            if (chunkMask == 0) {
-                                markFrameWriteBegin();
-                            }
-                            memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpBuf + 10, payloadBytes);
-                            chunkMask |= (1ULL << chunkIdx);
-                            uint64_t expectedMask = (totalChunks == 64) ? ~0ULL : ((1ULL << totalChunks) - 1ULL);
-                            if (chunkMask == expectedMask) {
-                                chunkMask = 0;
-                                markFrameWriteComplete();
-                            }
-                            uint32_t pktNow = millis();
-                            if (firstUdpPktMs == 0U) firstUdpPktMs = pktNow;
-                            lastUdpPktMs = pktNow;
-                        }
-                    }
-                }
-            }
-
-            uint32_t nowMs = millis();
-            if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U &&
-                (nowMs - frameChunkStartMs) >= 6U) {
-                // Never hold `m_frameSeq` ODD across Wi-Fi packet loss: commit partial frame cleanly
-                // (WLED DDP style) so Core 1 never stalls waiting for a lost final UDP chunk!
-                if (chunkMask != 0) {
-                    chunkMask = 0;
-                    markFrameWriteComplete();
-                } else {
-                    m_frameSeq.fetch_add(1, std::memory_order_release);
-                }
-            }
-
-            if (firstUdpPktMs > 0U) {
-                uint32_t elapsedStreamMs = nowMs - firstUdpPktMs;
-                uint32_t silenceMs = nowMs - lastUdpPktMs;
-                if (elapsedStreamMs + 600U >= naturalStreamMs && silenceMs >= 450U) {
-                    break; // Natural UDP transmitter completion
-                }
-                if (silenceMs > 2800U) {
-                    stoppedEarlyByClient = true;
-                    break;
-                }
-            } else if ((nowMs - streamT0) > kUdpInitialGraceMs) {
-                initialGraceTimeout = true;
-                break;
-            }
-        }
-
-        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-            m_frameSeq.fetch_add(1, std::memory_order_release);
-        }
-        if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
-            stoppedEarlyByClient = true;
-        }
-
-        // Always close UDP socket FIRST to free LwIP pbufs before any post-stream action!
-        closeUdpSocket(udpFd);
-
-        if (udpFramesCompleted > 0U && firstUdpPktMs > 0U) {
-            uint32_t durMs = std::max<uint32_t>(1U, millis() - firstUdpPktMs);
-            uint32_t pres = m_presentedStreamFrames.load(std::memory_order_acquire);
-            LOGI(
-                "Showcase",
-                "[%s] UDP stream done: item=%s rxFrames=%u presented=%u durMs=%u effFps=%.1f",
-                domain,
-                itemIdBuf,
-                static_cast<unsigned>(udpFramesCompleted),
-                static_cast<unsigned>(pres),
-                static_cast<unsigned>(durMs),
-                (static_cast<float>(pres) * 1000.0f) / static_cast<float>(durMs)
-            );
-        }
-
-        if (initialGraceTimeout) {
-            m_udpBlockedHint = true;
-            m_udpBlockedSkipCounter = 0;
-            // Container-to-LAN UDP blocked by VM NAT: stop server UDP transmitter while explicitly
-            // preserving `.rgb565.stream` (`"purge":false,"reason":"tcp_fallback"`) so the immediate
-            // zero-heap TCP fallback fetches `200 OK` instead of `404 Not Found`!
-            if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                char stopCmd[168];
-                snprintf(
-                    stopCmd,
-                    sizeof(stopCmd),
-                    "{\"action\":\"stop_stream\",\"item_id\":\"%s\",\"purge\":false,\"reason\":\"tcp_fallback\"}",
-                    itemIdBuf
-                );
-                publishFlashMqttEvent(
-                    mqttHost,
-                    mqttPort,
-                    m_sessionId,
-                    m_mqttConnSeq,
-                    eventsTopic,
-                    stopCmd,
-                    m_ioScratch,
-                    IO_SCRATCH_BYTES,
-                    m_wantActive
-                );
-                if (outHttpFallbackItemId && fallbackItemCap > 0) {
-                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-                }
-            }
-            return true;
-        }
-
-        // Only open a post-stream flash MQTT socket when `m_wantActive` is true (Invariant 15)
-        // and the client intentionally cut a longer stream short (`maxCfgStreamMs` or live config edit).
-        if (stoppedEarlyByClient && m_wantActive.load(std::memory_order_acquire) && itemIdBuf[0] != '\0') {
-            char stopCmd[128];
-            snprintf(stopCmd, sizeof(stopCmd), "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
-            publishFlashMqttEvent(
-                mqttHost,
-                mqttPort,
-                m_sessionId,
-                m_mqttConnSeq,
-                eventsTopic,
-                stopCmd,
-                m_ioScratch,
-                IO_SCRATCH_BYTES,
-                m_wantActive
-            );
-        }
+        return true;
     }
 
     finishTurnItem();
@@ -2504,8 +2107,8 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 
     // 2. Poll single Consume-Once item (`GET /api/v1/{domain}/next?client_id=...`)
     // Scoped so `nextResp` closes its TCP socket and frees its stack frame before poster/stream steps.
-    char unifiedStreamPath[144] = "";
-    char posterPathBuf[144] = "";
+    char unifiedStreamPath[224] = "";
+    char posterPathBuf[224] = "";
     CardSnapshot nextCard;
     bool parsedReady = false;
     bool serverWarming = false;
@@ -2524,37 +2127,41 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
         size_t respBytes = nextResp.contentLength();
 
+        auto extractNextRoot = [&](JsonObjectConst rootObj) {
+            const char* status = rootObj["status"] | "warming";
+            JsonObjectConst item = rootObj["item"].as<JsonObjectConst>();
+            if (strcmp(status, "ready") == 0 && !item.isNull()) {
+                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
+                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
+                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
+                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
+                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
+                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
+                nextCard.posterW = pw;
+                nextCard.posterH = ph;
+                nextCard.hasData = true;
+                JsonObjectConst assetsObj = item["assets"].as<JsonObjectConst>();
+                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
+                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                const char* posterB64 = item["poster_rgb565_b64"] | "";
+                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
+                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+                        nextCard.hasPoster = true;
+                    }
+                }
+                parsedReady = true;
+            } else {
+                serverWarming = true;
+            }
+        };
+
         if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap &&
             readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive)) {
             rxBuf[respBytes] = '\0';
             StaticJsonDocument<JSON_OBJECT_SIZE(44)> nextDoc;
             if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
-                const char* status = nextDoc["status"] | "warming";
-                JsonObject item = nextDoc["item"].as<JsonObject>();
-                if (strcmp(status, "ready") == 0 && !item.isNull()) {
-                    copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-                    copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-                    copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
-                    copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-                    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-                    nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-                    nextCard.posterW = pw;
-                    nextCard.posterH = ph;
-                    nextCard.hasData = true;
-                    JsonObject assetsObj = item["assets"].as<JsonObject>();
-                    copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
-                    copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
-                    const char* posterB64 = item["poster_rgb565_b64"] | "";
-                    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
-                        if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-                            nextCard.hasPoster = true;
-                        }
-                    }
-                    parsedReady = true;
-                } else {
-                    serverWarming = true;
-                }
+                extractNextRoot(nextDoc.as<JsonObjectConst>());
             }
             if (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
                 memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
@@ -2562,32 +2169,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         } else {
             DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
             if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
-                const char* status = nextDoc["status"] | "warming";
-                JsonObject item = nextDoc["item"].as<JsonObject>();
-                if (strcmp(status, "ready") == 0 && !item.isNull()) {
-                    copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-                    copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-                    copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
-                    copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-                    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-                    nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-                    nextCard.posterW = pw;
-                    nextCard.posterH = ph;
-                    nextCard.hasData = true;
-                    JsonObject assetsObj = item["assets"].as<JsonObject>();
-                    copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
-                    copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
-                    const char* posterB64 = item["poster_rgb565_b64"] | "";
-                    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
-                        if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-                            nextCard.hasPoster = true;
-                        }
-                    }
-                    parsedReady = true;
-                } else {
-                    serverWarming = true;
-                }
+                extractNextRoot(nextDoc.as<JsonObjectConst>());
             }
         }
     }
@@ -2606,7 +2188,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 
     size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
     if (cfg.showPoster && !nextCard.hasPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterPathBuf[0] != '\0') {
-        char posterUrl[224];
+        char posterUrl[288];
         if (strncmp(posterPathBuf, "http", 4) == 0) {
             copySafeStr(posterUrl, sizeof(posterUrl), posterPathBuf);
         } else {
@@ -2700,7 +2282,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    char reqPath[192];
+    char reqPath[288];
     bool hasQ = (strchr(rawPath, '?') != nullptr);
     bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
     bool hasDropLate = (strstr(rawPath, "drop_late=") != nullptr);
@@ -2783,7 +2365,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
 
     // Use HTTP/1.0 (`Connection: close`) so Uvicorn never wraps `drop_late=1` responses (where
     // `Content-Length` is intentionally omitted) in HTTP/1.1 `Transfer-Encoding: chunked`.
-    char reqBuf[288];
+    char reqBuf[384];
     int reqLen = snprintf(
         reqBuf,
         sizeof(reqBuf),
@@ -2825,6 +2407,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
 
     if (!foundHeaderEnd ||
         (strncmp(m_ioScratch, "HTTP/1.1 200", 12) != 0 && strncmp(m_ioScratch, "HTTP/1.0 200", 12) != 0)) {
+        LOGW("Showcase", "TCP stream HTTP rejected: path=%s status=%.40s", reqPath, m_ioScratch);
         closeStreamSocket(true);
         return false;
     }
@@ -3008,7 +2591,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
 #else
     net::SecureHttpResponse sResp;
     {
-        char fullUrl[256];
+        char fullUrl[320];
         if (strncmp(streamPath, "http", 4) == 0) {
             copySafeStr(fullUrl, sizeof(fullUrl), streamPath);
         } else {
@@ -3616,8 +3199,9 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalPersistentBytes = 16000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
+    desc.requirements.scalesRgb565FrameWithGeometry = true;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width cover/jacket from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Marquee / Banner Panorama", "Scroll the arcade marquee or title banner from top to bottom after the jacket", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -3634,6 +3218,7 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
         ConfigField("genres", ConfigType::LIST, "Game Genres", "Select one or more genres dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc.factory = []() { return std::unique_ptr<IEngine>(new RetroGamesEngine()); };
     return desc;
 }
@@ -3656,8 +3241,9 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalPersistentBytes = 16000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
+    desc.requirements.scalesRgb565FrameWithGeometry = true;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width movie poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the movie backdrop banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -3674,6 +3260,7 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (trailer,scene,any)", "any", false, "", "", "", "any,trailer,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc.factory = []() { return std::unique_ptr<IEngine>(new MovieShowcaseEngine()); };
     return desc;
 }
@@ -3696,8 +3283,9 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalPersistentBytes = 16000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
+    desc.requirements.scalesRgb565FrameWithGeometry = true;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width series poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the series banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -3714,6 +3302,7 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,trailer,any)", "any", false, "", "", "", "any,opening,trailer", "", false, "", ValidationPolicy::FallbackDefault)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc.factory = []() { return std::unique_ptr<IEngine>(new SeriesShowcaseEngine()); };
     return desc;
 }
@@ -3736,8 +3325,9 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalPersistentBytes = 16000;
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
+    desc.requirements.scalesRgb565FrameWithGeometry = true;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width anime key visual from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the anime banner from top to bottom after the key visual", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -3754,6 +3344,7 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,ending,scene,any)", "opening", false, "", "", "", "any,opening,ending,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc.factory = []() { return std::unique_ptr<IEngine>(new AnimeShowcaseEngine()); };
     return desc;
 }

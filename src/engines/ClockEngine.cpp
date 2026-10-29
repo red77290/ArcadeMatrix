@@ -341,7 +341,7 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     clockDesc.requirements.supportsSingleBuffer = true;
     clockDesc.requirements.internalPersistentBytes = 4000;
     static_assert(kFaceArenaBytes > 0, "Face arena must be sized");
-    clockDesc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "system", false, "", "", "", "system:System (General),%H:%M:%S:24 Hours with seconds (%H:%M:%S),%H:%M:24 Hours without seconds (%H:%M),%I:%M:%S %p:12 Hours with seconds (%I:%M:%S %p),%I:%M %p:12 Hours without seconds (%I:%M %p)", "", false, "", ValidationPolicy::Accept),
         ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "clock_theme!=30,31,32,33,35,37,39,41", ValidationPolicy::FallbackDefault),
@@ -355,6 +355,7 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
         ConfigField("clock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    clockDesc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     clockDesc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
     return clockDesc;
 }

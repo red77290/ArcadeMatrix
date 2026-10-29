@@ -298,6 +298,8 @@ Prise en charge native de l'anglais, du français et de l'espagnol :
 ArcadeMatrix sépare strictement la décision d'arbitrage de l'exécution du cycle de vie des moteurs :
 
 ```text
+[ Chargement Initial WebUI sur ESP32 sans PSRAM ] (Priorité 110, TIMED 4.5s, WEBUI_SYNC)
+             ↓
 [ Alertes d'Urgence / OTA ] (Priorité 100, ONE_SHOT / UNTIL_CANCELLED)
              ↓
 [ Interruptions Temps Réel : Marquee MQTT / Alertes Live ] (Priorité 75)
