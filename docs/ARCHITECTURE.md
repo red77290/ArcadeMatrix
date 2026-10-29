@@ -380,6 +380,8 @@ ArcadeMatrix supports multilingual operations (English, French, Spanish) across 
 ArcadeMatrix completely decouples display decision resolution from engine lifecycle execution:
 
 ```text
+[ WebUI SPA Bootstrap on Non-PSRAM ESP32 ] (Priority 110, TIMED 4.5s, WEBUI_SYNC)
+             ↓
 [ Emergency Alerts / OTA ] (Priority 100, ONE_SHOT / UNTIL_CANCELLED)
              ↓
 [ Real-time Interruption: MQTT Marquee / Live Alert ] (Priority 75)

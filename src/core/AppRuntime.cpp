@@ -59,6 +59,27 @@ ConfigLoader& AppRuntime::getConfig() {
     return config;
 }
 
+void AppRuntime::requestWebUiSyncWindow(uint32_t durationMs) {
+    if (hardwareHAL.capabilities().hasPsram) {
+        return;
+    }
+    WebUiSyncEngine::markRequested();
+    DisplayRequest req(
+        DisplaySourceId::WEBUI_SYNC,
+        DisplayPriority::WEBUI_SYNC,
+        RequestLifecycle::TIMED,
+        /*pre=*/false,
+        0,
+        EngineHandle("webui_sync", "webui_sync_main"),
+        durationMs,
+        millis(),
+        /*allowOv=*/false,
+        /*clear=*/true,
+        /*realtime=*/false
+    );
+    m_displayArbiter.submitRequest(req, /*restartTimer=*/true);
+}
+
 String getPosixTimezone(String tz) {
     if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome" || tz == "Europe/Brussels" || tz == "Europe/Amsterdam" || tz == "Europe/Vienna" || tz == "Europe/Zurich" || tz == "Europe/Warsaw" || tz == "Europe/Prague" || tz == "Europe/Stockholm" || tz == "Europe/Oslo" || tz == "Europe/Copenhagen") return "CET-1CEST,M3.5.0,M10.5.0/3";
     if (tz == "Europe/London" || tz == "Europe/Lisbon" || tz == "Atlantic/Canary") return "GMT0BST,M3.5.0/1,M10.5.0";
@@ -122,6 +143,7 @@ AppRuntime::~AppRuntime() {
     delete m_webServer;
     delete m_frontendListener;
     delete m_inGameShowcaseEngine;
+    delete m_webUiSyncEngine;
     if (m_preallocatedCanvasBuffer) {
         free(m_preallocatedCanvasBuffer);
         m_preallocatedCanvasBuffer = nullptr;
@@ -451,6 +473,9 @@ void AppRuntime::initialize() {
     // =========================================================================
     // STEP 4: INITIALIZE MATRIX DISPLAY
     // =========================================================================
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
     // Aggregate requirements across all enabled engines in the active rotation
     EngineRequirements rotationReq;
     for (const auto& entry : snapshot.rotation) {
@@ -458,14 +483,11 @@ void AppRuntime::initialize() {
             if (inst.instance_id == entry.instance_id) {
                 const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
                 if (desc) {
-                    rotationReq.mergeWith(desc->requirements);
+                    rotationReq.mergeWith(desc->requirements.scaledForGeometry(totalWidth, snapshot.matrix.height, hasPsram));
                 }
             }
         }
     }
-
-    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
-    bool hasPsram = hardwareHAL.capabilities().hasPsram;
 
     auto sel = PipelineSelectionPolicy::evaluate(
         totalWidth,
@@ -691,6 +713,14 @@ void AppRuntime::initialize() {
         DisplaySourceId::INGAME_SHOWCASE,
         m_inGameShowcaseEngine,
         EngineHandle("ingame_showcase", "ingame_showcase_main")
+    );
+
+    m_webUiSyncEngine = new WebUiSyncEngine();
+    m_webUiSyncEngine->initialize(m_appCtx, nullptr);
+    m_displayRuntime.registerSourceEngine(
+        DisplaySourceId::WEBUI_SYNC,
+        m_webUiSyncEngine,
+        EngineHandle("webui_sync", "webui_sync_main")
     );
 
     m_webServer->setMessageEngine(m_messageEngine);
@@ -1058,6 +1088,10 @@ void AppRuntime::update() {
             matrixEngine.markExternalDraw();
             m_wasPoweredOn = false;
             m_lastAppliedBrightness = 0;
+        }
+        if (!hardwareHAL.capabilities().hasPsram &&
+            (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+            m_displayRuntime.update(snapshot);
         }
         delay(100);
         return;

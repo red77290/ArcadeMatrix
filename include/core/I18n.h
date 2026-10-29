@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <time.h>
 
 enum class Lang {
     FR,
@@ -13,6 +14,7 @@ enum class Lang {
 class I18n {
 public:
     static Lang getLang();
+    static Lang parseLang(const char* code);
     static Lang parseLang(const String& code);
     static const char* getLangCode(Lang l);
     
@@ -41,6 +43,8 @@ public:
     // Dates
     /// Three-letter month label ("SEP", "SEPT", "SEP"), month0 is 0-11.
     static const char* getMonthLabel(int month0, Lang l);
+    /// Format a strftime pattern with localized day/month names into caller-owned buffer without heap allocations.
+    static void formatLocalizedDate(char* dest, size_t maxLen, const char* format, const struct tm* timeinfo, Lang l);
     /// A date line in the order the language uses: "MON SEP 28", "LUN 28 SEPT", "LUN 28 SEP".
     /// Written into the caller's buffer so a clock face can build it without touching the heap.
     static void getDateLine(int weekday, int month0, int day, Lang l, char* out, size_t outSize);
@@ -53,9 +57,26 @@ public:
     // Noise / Decibel
     static const char* getNoiseLevelLabel(int level);
 
-    // GNews Status
+    // Panel / MQTT Status Notices
+    static const char* getNoDataLabel(Lang l);
+    static const char* getConnectingLabel(Lang l);
+    static const char* getNoConnectionLabel(Lang l);
+    static const char* getUnsupportedLabel(Lang l);
+
+    // GNews Status & Categories
     static const char* getGNewsStatusLabel(uint8_t status);
     static const char* getGNewsStatusLabel(uint8_t status, Lang l);
+    static const char* getGNewsCategoryShort(const char* category);
+    static const char* getGNewsCategoryShort(const char* category, Lang l);
+
+    // Media Showcase Status
+    static const char* getShowcaseWarmingLabel(Lang l);
+    static const char* getShowcaseOfflineLabel(Lang l);
+    static const char* getShowcaseUnconfiguredLabel(Lang l);
+
+    // WebUI Priority Load Sync Notice (ESP32_STD without PSRAM)
+    static const char* getWebUiLoadingTitleLabel(Lang l);
+    static const char* getWebUiLoadingSubLabel(Lang l);
 };
 
 #endif // I18N_H

@@ -2108,8 +2108,7 @@ select.input option {
                 <div class="form-group">
                   <label><span data-i18n="showcase_transport_mode">Transport Protocol</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_transport_mode">?</span></label>
                   <select id="hw-showcase-transport-mode" class="input">
-                    <option value="mqtt_udp" data-i18n="showcase_opt_mqtt_udp">MQTT + UDP Real-Time (Recommended)</option>
-                    <option value="mqtt_tcp" data-i18n="showcase_opt_mqtt_tcp">MQTT + TCP Stream (Docker/VM Safe)</option>
+                    <option value="mqtt_tcp" data-i18n="showcase_opt_mqtt_tcp">MQTT + TCP Real-Time Stream (Recommended)</option>
                     <option value="http_poll" data-i18n="showcase_opt_http_poll">HTTP Polling Fallback</option>
                   </select>
                 </div>
@@ -2746,8 +2745,7 @@ const translations = {
     showcase_status_offline: "🔴 Unreachable",
     showcase_test_btn: "🔄 Test",
     showcase_transport_mode: "Transport Protocol",
-    showcase_opt_mqtt_udp: "MQTT + UDP Real-Time (Recommended)",
-    showcase_opt_mqtt_tcp: "MQTT + TCP Stream (Docker/VM Safe)",
+    showcase_opt_mqtt_tcp: "MQTT + TCP Real-Time Stream (Recommended)",
     showcase_opt_http_poll: "HTTP Polling Fallback",
     hw_safe_mode_title: "⚠️ Safe Hardware Fallback Active",
     hw_safe_mode_desc: "The previous matrix configuration failed HUB75 DMA initialization and reverted in memory to a safe profile so you can adjust and save valid parameters:",
@@ -2766,7 +2764,7 @@ const translations = {
     lbl_duration: "Duration:",
     tt_showcase_enable: "Disabled by default so no network requests are made if dmd_media_showcase is not installed on your LAN.",
     tt_showcase_server_url: "HTTP URL of the DMD Media Showcase server (auto-discovered via http://dmdmediashowcase.local:8890).",
-    tt_showcase_transport_mode: "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback.",
+    tt_showcase_transport_mode: "Real-Time MQTT + TCP DMDS stream (Docker/LAN native) or HTTP Polling fallback.",
     tt_showcase_use_broker: "Automatically connect to the Showcase server's internal MQTT broker (<server_ip>:1883).",
     tt_showcase_broker_source: "When Embedded Broker is disabled, select ArcadeMatrix Global MQTT or a Custom Broker URL.",
     tt_showcase_custom_url: "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883).",
@@ -3820,8 +3818,7 @@ const translations = {
     showcase_status_offline: "🔴 Injoignable",
     showcase_test_btn: "🔄 Tester",
     showcase_transport_mode: "Protocole de Transport",
-    showcase_opt_mqtt_udp: "MQTT + UDP Temps Réel (Recommandé)",
-    showcase_opt_mqtt_tcp: "MQTT + Flux TCP (Compatible Docker/VM)",
+    showcase_opt_mqtt_tcp: "MQTT + Flux TCP Temps Réel (Recommandé)",
     showcase_opt_http_poll: "Fallback HTTP Polling",
     hw_safe_mode_title: "⚠️ Mode de Récupération Matérielle Actif",
     hw_safe_mode_desc: "La configuration précédente a dépassé les capacités HUB75 DMA et un profil sûr temporaire a été chargé pour vous permettre de corriger et sauvegarder vos réglages :",
@@ -3840,7 +3837,7 @@ const translations = {
     lbl_duration: "Durée :",
     tt_showcase_enable: "Désactivé par défaut afin d'éviter tout appel réseau inutile si dmd_media_showcase n'est pas installé.",
     tt_showcase_server_url: "URL HTTP du serveur DMD Media Showcase (découverte automatique via http://dmdmediashowcase.local:8890).",
-    tt_showcase_transport_mode: "MQTT + UDP Temps Réel (ffmpeg -re) ou fallback HTTP Polling.",
+    tt_showcase_transport_mode: "MQTT + Flux TCP DMDS Temps Réel (natif Docker/LAN) ou fallback HTTP Polling.",
     tt_showcase_use_broker: "Se connecter automatiquement au broker MQTT intégré du serveur Showcase (<ip_serveur>:1883).",
     tt_showcase_broker_source: "Lorsque le broker intégré est désactivé, choisir le MQTT Global ArcadeMatrix ou une URL personnalisée.",
     tt_showcase_custom_url: "Utilisé si la source du broker externe est Personnalisée (ex: mqtt://192.168.1.200:1883).",
@@ -4894,8 +4891,7 @@ const translations = {
     showcase_status_offline: "🔴 Inalcanzable",
     showcase_test_btn: "🔄 Probar",
     showcase_transport_mode: "Protocolo de Transporte",
-    showcase_opt_mqtt_udp: "MQTT + UDP Tiempo Real (Recomendado)",
-    showcase_opt_mqtt_tcp: "MQTT + Flujo TCP (Compatible Docker/VM)",
+    showcase_opt_mqtt_tcp: "MQTT + Flujo TCP Tiempo Real (Recomendado)",
     showcase_opt_http_poll: "Alternativa HTTP Polling",
     hw_safe_mode_title: "⚠️ Modo Seguro de Hardware Activo",
     hw_safe_mode_desc: "La configuración anterior superó los límites HUB75 DMA y se cargó un perfil seguro temporal para que pueda ajustar y guardar parámetros válidos:",
@@ -4914,7 +4910,7 @@ const translations = {
     lbl_duration: "Duración:",
     tt_showcase_enable: "Desactivado por defecto para evitar peticiones de red innecesarias si dmd_media_showcase no está instalado.",
     tt_showcase_server_url: "URL HTTP del servidor DMD Media Showcase (autodescubierto vía http://dmdmediashowcase.local:8890).",
-    tt_showcase_transport_mode: "MQTT + UDP Tiempo Real (ffmpeg -re) o alternativa HTTP Polling.",
+    tt_showcase_transport_mode: "MQTT + Flujo TCP DMDS Tiempo Real (nativo Docker/LAN) o alternativa HTTP Polling.",
     tt_showcase_use_broker: "Conectar automáticamente al broker MQTT integrado del servidor Showcase (<ip_servidor>:1883).",
     tt_showcase_broker_source: "Si el broker integrado está desactivado, elegir MQTT Global ArcadeMatrix o URL personalizada.",
     tt_showcase_custom_url: "Utilizado si la fuente es Personalizada (ej: mqtt://192.168.1.200:1883).",
@@ -10781,7 +10777,7 @@ async function initSettings() {
     }
     setVal('hw-showcase-enabled', sc.enabled ? '1' : '0');
     setVal('hw-showcase-server-url', normScUrl);
-    setVal('hw-showcase-transport-mode', sc.transport_mode || 'mqtt_udp');
+    setVal('hw-showcase-transport-mode', sc.transport_mode === 'http_poll' ? 'http_poll' : 'mqtt_tcp');
     setVal('hw-showcase-use-broker', sc.use_showcase_broker !== false ? '1' : '0');
     setVal('hw-showcase-broker-source', sc.mqtt_broker_source || 'global');
     setVal('hw-showcase-custom-url', normCustomMqtt);

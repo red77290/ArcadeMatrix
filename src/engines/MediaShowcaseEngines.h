@@ -27,7 +27,7 @@ enum class ShowcaseDomainId : uint8_t {
  *   the server goes offline (MQTT LWT `online:false`, UDP watchdog timeout, or HTTP error).
  * - Dedicated MQTT Broker Config (`use_showcase_broker` auto-deriving `<server_ip>:1883`,
  *   or `mqtt_broker_source` `global` / `custom`).
- * - Dual-transport Core 0 worker (`mqtt_udp` real-time `DMDF` UDP streaming + `http_poll` fallback).
+ * - Dual-transport Core 0 worker (`mqtt_tcp` real-time `DMDS` TCP streaming + `http_poll` fallback).
  * - 4 Creative Procedural Pixel-Art "Waiting for Content" Animations on Core 1.
  * - Quiescent, allocation-free deactivation (`deactivate()` / `shutdownForDestruction()`)
  *   reclaiming all transient buffers before the next engine initializes.
@@ -159,7 +159,7 @@ protected:
     static constexpr size_t MAX_META_LEN = 16;
     static constexpr size_t MAX_SYNOPSIS_LEN = 256;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
-    static constexpr size_t MAX_ITEM_ID_LEN = 64;
+    static constexpr size_t MAX_ITEM_ID_LEN = 128;
     static constexpr size_t IO_SCRATCH_BYTES = 1472;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
@@ -170,7 +170,7 @@ protected:
 
     struct ConfigSlot {
         char serverUrl[MAX_URL_LEN] = "http://dmdmediashowcase.local:8890";
-        char transportMode[16] = "mqtt_udp";
+        char transportMode[16] = "mqtt_tcp";
         char mqttBrokerSource[12] = "global";
         char mqttCustomUrl[MAX_URL_LEN] = "";
         char lang[8] = "system";
@@ -227,15 +227,13 @@ protected:
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
-    char* m_ioScratch = nullptr;     // Preallocated 1472 B SRAM scratch for MQTT TX/RX, HTTP headers & 1408B UDP DMDF chunks
+    char* m_ioScratch = nullptr;     // Preallocated 1472 B SRAM scratch for MQTT TX/RX & HTTP stream headers
     char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     uint32_t m_mqttConnSeq = 0;
     uint32_t m_lastPublishedCfgGen = 0;
     uint8_t m_consecutiveNetFailures = 0;
-    uint8_t m_udpBlockedSkipCounter = 0;
-    bool m_udpBlockedHint = false;
 
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};

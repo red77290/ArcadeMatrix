@@ -4,6 +4,7 @@
 #include "core/EngineRegistry.h"
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
+#include "core/I18n.h"
 #include "core/drawing/Hub75DmaLayout.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "services/IconService.h"
@@ -2072,6 +2073,97 @@ void test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission() {
     TEST_ASSERT_EQUAL_UINT8(8, s3Depth);
 }
 
+void test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling(void) {
+    // 1. DisplayArbiter: WEBUI_SYNC (110) outranks ALERT (100) & ROTATION (10), then expires back to ROTATION
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::WEBUI_SYNC, (int)DisplayArbiter::parseSourceId("WEBUI_SYNC"));
+    TEST_ASSERT_TRUE(static_cast<uint8_t>(DisplayPriority::WEBUI_SYNC) > static_cast<uint8_t>(DisplayPriority::ALERT));
+
+    DisplayArbiter arbiter;
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false,
+        0, EngineHandle("retro_games", "retro_main"), 0, millis(), true, false, true
+    ));
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::UNTIL_CANCELLED, true,
+        0, EngineHandle("message", "alert_main"), 0, millis(), false, true, false
+    ));
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::WEBUI_SYNC, DisplayPriority::WEBUI_SYNC, RequestLifecycle::TIMED, false,
+        0, EngineHandle("webui_sync", "webui_sync_main"), 4500, millis(), false, true, false
+    ), /*restartTimer=*/true);
+
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::WEBUI_SYNC, (int)d1.sourceId);
+    TEST_ASSERT_EQUAL_STRING("webui_sync", d1.engineHandle.descriptorId);
+    TEST_ASSERT_FALSE(d1.allowsOverlay);
+
+    // Advance past 4500ms TIMED window and cancel ALERT -> control returns cleanly to ROTATION
+    arbiter.cancelRequest(DisplaySourceId::ALERT);
+    advanceVirtualMillis(4600);
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::ROTATION, (int)d2.sourceId);
+    TEST_ASSERT_EQUAL_STRING("retro_games", d2.engineHandle.descriptorId);
+
+    // 2. Centralized I18n DMD WebUI loading labels across all 3 languages (FR, EN, ES)
+    TEST_ASSERT_EQUAL_STRING("CHARGEMENT", I18n::getWebUiLoadingTitleLabel(Lang::FR));
+    TEST_ASSERT_EQUAL_STRING("INTERFACE WEB...", I18n::getWebUiLoadingSubLabel(Lang::FR));
+    TEST_ASSERT_EQUAL_STRING("LOADING", I18n::getWebUiLoadingTitleLabel(Lang::EN));
+    TEST_ASSERT_EQUAL_STRING("WEB INTERFACE...", I18n::getWebUiLoadingSubLabel(Lang::EN));
+    TEST_ASSERT_EQUAL_STRING("CARGANDO", I18n::getWebUiLoadingTitleLabel(Lang::ES));
+    TEST_ASSERT_EQUAL_STRING("INTERFAZ WEB...", I18n::getWebUiLoadingSubLabel(Lang::ES));
+
+    // 3. Automatic migration of legacy `mqtt_udp` Showcase transport config to `mqtt_tcp`
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("mqtt_udp").c_str());
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("mqtt_tcp").c_str());
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("").c_str());
+    TEST_ASSERT_EQUAL_STRING("http_poll", normalizeShowcaseTransportMode("http_poll").c_str());
+
+    // 4. Dynamic Showcase bit-depth scaling (`scalesRgb565FrameWithGeometry = true`)
+    EngineRequirements showcaseReq;
+    showcaseReq.needsPsram = false;
+    showcaseReq.needsNetwork = true;
+    showcaseReq.needsTls = false;
+    showcaseReq.internalPersistentBytes = 16000;
+    showcaseReq.internalContiguousBytes = 8192;
+    showcaseReq.scalesRgb565FrameWithGeometry = true;
+
+    // 4a. 128x32 on esp32dev with normal heap -> 8-bit color depth
+    uint8_t normal128x32 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        0, 30000, 62500, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, normal128x32);
+
+    // 4b. 128x32 on esp32dev when instantaneous free SRAM drops -> automatic fallback to 4-bit
+    uint8_t pressured128x32 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        0, 30000, 50000, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, pressured128x32);
+
+    // 4c. 128x64 on esp32dev -> geometry-scaled frame (16 KB) + poster (6 KB) -> automatic 4-bit DMA
+    EngineRequirements scaled128x64 = showcaseReq.scaledForGeometry(128, 64, false);
+    TEST_ASSERT_EQUAL_UINT32(28288U, scaled128x64.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(16384U, scaled128x64.internalContiguousBytes);
+    uint8_t geom128x64 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 64, false, showcaseReq,
+        0, 30000, 82000, 82000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, geom128x64);
+
+    // 4d. 256x64 on PSRAM board (esp32s3_waveshare) -> zero internal SRAM penalty, full 8-bit DMA
+    EngineRequirements scaledPsram = showcaseReq.scaledForGeometry(256, 64, true);
+    TEST_ASSERT_EQUAL_UINT32(16000U, scaledPsram.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(8192U, scaledPsram.internalContiguousBytes);
+    uint8_t psram256x64 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 256, 64, true, showcaseReq,
+        8, 110000, 220000, 80000, true, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, psram256x64);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2157,6 +2249,7 @@ int main(int argc, char** argv) {
     // Transition Prefetch Contracts (Hardware Gating)
     RUN_TEST(test_transition_prefetch_contract);
     RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
+    RUN_TEST(test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling);
 
     return UNITY_END();
 }

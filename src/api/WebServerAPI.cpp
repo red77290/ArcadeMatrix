@@ -37,6 +37,7 @@
 #include "../core/NetworkBudget.h"
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../core/AppRuntime.h"
+#include "../engines/WebUiSyncEngine.h"
 
 extern ConfigLoader config;
 
@@ -456,6 +457,31 @@ void WebServerAPI::begin() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
+#if defined(ESP32)
+        // On classic ESP32 without PSRAM (esp32dev), opening the WebUI preempts active DMD engines
+        // via DisplaySourceId::WEBUI_SYNC and temporarily drops HUB75 DMA depth to 2-bit so the
+        // 109 KB compressed SPA and initial /api/* bootstrap complete without 503 Low Memory errors.
+        if (!hardwareHAL.capabilities().hasPsram) {
+            app.requestWebUiSyncWindow(4500);
+            NetworkBudget::markBulkTransferActive(4500);
+            if (app.canEngageWebUiSync() && !WebUiSyncEngine::isReadyForServing()) {
+                static const char kWebUiStagingHtml[] PROGMEM =
+                    "<!doctype html><html><head><meta charset='utf-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<title>ArcadeMatrix</title>"
+                    "<style>html,body{margin:0;height:100%;background:#0b0e14;display:flex;align-items:center;justify-content:center}"
+                    ".s{width:28px;height:28px;border:3px solid #1e293b;border-top-color:#00e5ff;border-radius:50%;animation:r .7s linear infinite}"
+                    "@keyframes r{to{transform:rotate(360deg)}}</style>"
+                    "<script>setTimeout(function(){location.replace(location.href)},350)</script>"
+                    "</head><body><div class='s'></div></body></html>";
+                AsyncWebServerResponse* staging = request->beginResponse(200, "text/html; charset=utf-8", kWebUiStagingHtml);
+                staging->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+                request->send(staging);
+                return;
+            }
+        }
+#endif
+
         // If client sends conditional refresh, respond with 304 Not Modified instantly (0 bytes payload)
         if (request->hasHeader("If-None-Match")) {
             const AsyncWebHeader* h = request->getHeader("If-None-Match");
@@ -479,7 +505,7 @@ void WebServerAPI::begin() {
         if (!hardwareHAL.capabilities().hasPsram) {
             uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
             if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
-                NetworkBudget::markBulkTransferActive(3000);
+                NetworkBudget::markBulkTransferActive(4500);
             }
         }
 #endif
@@ -2021,7 +2047,7 @@ void WebServerAPI::setupRoutes() {
             // Showcase server & MQTT
             if (!doc["showcase_enabled"].isNull()) cfg.showcase.enabled = (bool)doc["showcase_enabled"];
             if (!doc["showcase_server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_server_url"]), true);
-            if (!doc["showcase_transport_mode"].isNull()) cfg.showcase.transport_mode = (const char*)doc["showcase_transport_mode"];
+            if (!doc["showcase_transport_mode"].isNull()) cfg.showcase.transport_mode = normalizeShowcaseTransportMode(String((const char*)doc["showcase_transport_mode"]));
             if (!doc["showcase_use_broker"].isNull()) cfg.showcase.use_showcase_broker = (bool)doc["showcase_use_broker"];
             if (!doc["showcase_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = (const char*)doc["showcase_broker_source"];
             if (!doc["showcase_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_custom_url"]), false);
@@ -2730,7 +2756,7 @@ void WebServerAPI::setupRoutes() {
                 JsonObject sc = doc["showcase"].as<JsonObject>();
                 if (!sc["enabled"].isNull()) cfg.showcase.enabled = sc["enabled"].as<bool>();
                 if (!sc["server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(sc["server_url"].as<String>(), true);
-                if (!sc["transport_mode"].isNull()) cfg.showcase.transport_mode = sc["transport_mode"].as<String>();
+                if (!sc["transport_mode"].isNull()) cfg.showcase.transport_mode = normalizeShowcaseTransportMode(sc["transport_mode"].as<String>());
                 if (!sc["use_showcase_broker"].isNull()) cfg.showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
                 if (!sc["mqtt_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
                 if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(sc["mqtt_custom_url"].as<String>(), false);

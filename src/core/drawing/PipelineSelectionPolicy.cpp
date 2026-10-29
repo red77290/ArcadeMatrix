@@ -227,8 +227,9 @@ bool PipelineSelectionPolicy::pipelineFits(
     const PipelineDescriptor& desc,
     bool hasPsram,
     const MemoryBudgetConstraints& memory,
-    const EngineRequirements& requirements)
+    const EngineRequirements& rawRequirements)
 {
+    EngineRequirements requirements = rawRequirements.scaledForGeometry(width, height, hasPsram);
     size_t canvasBytes = (desc.canvasStorage == CanvasStorage::SRAM) ? ((size_t)width * height * sizeof(uint16_t)) : 0;
     size_t dmaBytes = DmaMemoryLayout::calculateTotalBytes(width, height, depth, desc.dmaDoubleBuffered);
 
@@ -337,7 +338,7 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     uint16_t width,
     uint16_t height,
     bool hasPsram,
-    const EngineRequirements& reqs,
+    const EngineRequirements& rawReqs,
     uint8_t currentDepth,
     size_t currentLargestBlock,
     size_t currentFreeInternalHeap,
@@ -346,6 +347,7 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     bool hasCanvas,
     bool panelReleased)
 {
+    EngineRequirements reqs = rawReqs.scaledForGeometry(width, height, hasPsram);
     // Auto mode resolves to maximum capability ceiling (up to 8 bits)
     uint8_t maxDepthCeiling = (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0)
         ? 8

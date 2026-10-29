@@ -798,6 +798,45 @@ void test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing() {
     TEST_ASSERT_FALSE(net::ShowcaseDiscovery::isAutoDiscoverableHost("192.168.1.22"));
 }
 
+void test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity() {
+    // 1. All 4 Showcase engine descriptors must declare `scalesRgb565FrameWithGeometry = true`
+    RetroGamesEngineDescriptorHandler retroH;
+    MovieShowcaseEngineDescriptorHandler movieH;
+    SeriesShowcaseEngineDescriptorHandler seriesH;
+    AnimeShowcaseEngineDescriptorHandler animeH;
+
+    EngineDescriptor dRetro = retroH.getDescriptor();
+    EngineDescriptor dMovie = movieH.getDescriptor();
+    EngineDescriptor dSeries = seriesH.getDescriptor();
+    EngineDescriptor dAnime = animeH.getDescriptor();
+
+    TEST_ASSERT_TRUE(dRetro.requirements.scalesRgb565FrameWithGeometry);
+    TEST_ASSERT_TRUE(dMovie.requirements.scalesRgb565FrameWithGeometry);
+    TEST_ASSERT_TRUE(dSeries.requirements.scalesRgb565FrameWithGeometry);
+    TEST_ASSERT_TRUE(dAnime.requirements.scalesRgb565FrameWithGeometry);
+
+    // 2. Long 85-char `item_id` must be preserved losslessly (`MAX_ITEM_ID_LEN = 128`, zero truncation)
+    RetroGamesEngine eng;
+    const char* longId = "pkg_games_screenscraper_castlevania_symphony_of_the_night_psx_usa_1997_1234567890abcd";
+    char jsonBuf[512];
+    snprintf(
+        jsonBuf,
+        sizeof(jsonBuf),
+        "{\"ready\":true,\"item_id\":\"%s\",\"card\":{\"title\":\"Castlevania\",\"year\":\"1997\","
+        "\"badge\":\"PSX\",\"synopsis\":\"Classic action RPG.\",\"has_panoramas\":true,\"has_video\":true,\"stream_duration_s\":9.0}}",
+        longId
+    );
+    char parsedItemId[128] = "";
+    bool hasStream = false;
+    uint32_t streamMaxMs = 0;
+    bool warming = false;
+    TEST_ASSERT_TRUE(eng.parseReadyPayloadInPlaceBuf(
+        jsonBuf, false, parsedItemId, sizeof(parsedItemId), hasStream, streamMaxMs, warming
+    ));
+    TEST_ASSERT_EQUAL_STRING(longId, parsedItemId);
+    TEST_ASSERT_TRUE(hasStream);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -815,6 +854,7 @@ void setup() {
     RUN_TEST(test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis);
     RUN_TEST(test_media_showcase_live_stream_handoff_and_online_status_no_false_offline);
     RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
+    RUN_TEST(test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity);
     UNITY_END();
 }
 

@@ -269,7 +269,7 @@ paths:
                     properties:
                       enabled: { type: boolean, example: false }
                       server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
-                      transport_mode: { type: string, example: "mqtt_udp", enum: [mqtt_udp, mqtt_tcp, http_poll] }
+                      transport_mode: { type: string, example: "mqtt_tcp", enum: [mqtt_tcp, http_poll] }
                       use_showcase_broker: { type: boolean, example: true }
                       mqtt_broker_source: { type: string, example: "global", enum: [global, custom] }
                       mqtt_custom_url: { type: string, example: "mqtt://192.168.1.200:1883" }

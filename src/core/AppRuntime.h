@@ -15,6 +15,7 @@
 #include "../engines/MessageEngine.h"
 #include "../engines/MarqueeEngine.h"
 #include "../engines/GifEngine.h"
+#include "../engines/WebUiSyncEngine.h"
 #include "../services/AudioSessionManager.h"
 
 #include "drawing/IDrawingSurface.h"
@@ -44,6 +45,8 @@ public:
     inline IDrawingSurface* getDrawingSurface() { return m_drawingSurface.get(); }
     inline const MatrixRecoveryStatus& getMatrixRecoveryStatus() const { return m_matrixRecovery; }
     inline void clearMatrixRecoveryStatus() { m_matrixRecovery = MatrixRecoveryStatus{}; }
+    inline bool canEngageWebUiSync() const { return !m_firstLoop && !m_matrixRecovery.headlessMode; }
+    void requestWebUiSyncWindow(uint32_t durationMs = 4500);
 
 private:
     DisplayArbiter m_displayArbiter;
@@ -56,6 +59,7 @@ private:
     MessageEngine* m_messageEngine = nullptr;
     MarqueeEngine* m_marqueeEngine = nullptr;
     InGameShowcaseEngine* m_inGameShowcaseEngine = nullptr;
+    WebUiSyncEngine* m_webUiSyncEngine = nullptr;
     WebServerAPI* m_webServer = nullptr;
     FrontendSyncEngine* m_frontendListener = nullptr;
 

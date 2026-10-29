@@ -224,6 +224,43 @@ size_t RotationManager::getActiveEngineCount() const {
     return cnt;
 }
 
+void RotationManager::evictAllActiveEnginesForMemory() {
+    bool retiredAny = false;
+    for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+        if (activeEngines[i].engine) {
+            retireEngineSlot(i);
+            retiredAny = true;
+        }
+    }
+    currentActiveInstanceId[0] = '\0';
+    currentActiveEngineId[0] = '\0';
+    m_slotMissing = false;
+    m_missingClears = 0;
+#if defined(ESP32)
+    if (retiredAny) {
+        uint32_t waitStart = millis();
+        while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 250U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+            if (activeEngines[i].pendingRetirement && activeEngines[i].engine) {
+                if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[i].engine))) {
+                    activeEngines[i].pendingRetirement = false;
+                }
+            }
+        }
+        waitStart = millis();
+        while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 150U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        LOGI("RotationManager", "WEBUI_SYNC evicted active rotation engines -> Free=%u, LargestBlock=%u",
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    }
+#else
+    (void)retiredAny;
+#endif
+}
+
 IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     if (!instanceId || instanceId[0] == '\0') return nullptr;
     if (strlen(instanceId) >= 32) {
@@ -432,6 +469,9 @@ bool RotationManager::loop() {
     if (currentIndex >= guard->rotation.size()) {
         currentIndex = 0;
         switchToModule(0);
+    } else if (currentActiveInstanceId[0] == '\0' && !m_slotMissing) {
+        // Re-instantiate and reconfigure pipeline depth (e.g. 2-bit -> 8-bit) after WEBUI_SYNC eviction
+        switchToModule(static_cast<int>(currentIndex));
     }
 
     uint32_t now = millis();

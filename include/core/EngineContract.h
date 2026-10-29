@@ -172,6 +172,7 @@ struct EngineRequirements {
     uint32_t internalContiguousBytes = 0;   ///< Largest single contiguous allocation needed by engine
     uint32_t psramBytes = 0;                ///< Persistent external PSRAM required
     uint32_t shadowBytesPerFrame = 0;       ///< Dynamic canvas/shadow memory (e.g. GifEngine delta canvas)
+    bool scalesRgb565FrameWithGeometry = false; ///< Scales RGB565 frame & poster footprint above 128x32 reference
 
     // Conservative runtime admission thresholds (ArcadeMatrix policy margins)
     uint32_t minFreeInternalHeapBytes = 0;
@@ -216,6 +217,7 @@ struct EngineRequirements {
         internalContiguousBytes = (internalContiguousBytes > other.internalContiguousBytes) ? internalContiguousBytes : other.internalContiguousBytes;
         psramBytes = (psramBytes > other.psramBytes) ? psramBytes : other.psramBytes;
         shadowBytesPerFrame = (shadowBytesPerFrame > other.shadowBytesPerFrame) ? shadowBytesPerFrame : other.shadowBytesPerFrame;
+        scalesRgb565FrameWithGeometry |= other.scalesRgb565FrameWithGeometry;
 
         minFreeInternalHeapBytes = (minFreeInternalHeapBytes > other.minFreeInternalHeapBytes) ? minFreeInternalHeapBytes : other.minFreeInternalHeapBytes;
         minLargestInternalBlockBytes = (minLargestInternalBlockBytes > other.minLargestInternalBlockBytes) ? minLargestInternalBlockBytes : other.minLargestInternalBlockBytes;
@@ -230,6 +232,35 @@ struct EngineRequirements {
         if (other.maxHeight > 0) {
             maxHeight = (maxHeight == 0) ? other.maxHeight : ((maxHeight < other.maxHeight) ? maxHeight : other.maxHeight);
         }
+    }
+
+    /**
+     * @brief Scales RGB565 frame & mini-jacket memory requirements proportionally when panel geometry
+     *        exceeds the 128x32 reference baseline (used by all 4 Showcase engines).
+     */
+    inline EngineRequirements scaledForGeometry(uint16_t width, uint16_t height, bool hasPsram) const {
+        if (!scalesRgb565FrameWithGeometry || width == 0 || height == 0) {
+            return *this;
+        }
+        EngineRequirements out = *this;
+        uint32_t frameBytes = static_cast<uint32_t>(width) * static_cast<uint32_t>(height) * 2U;
+        constexpr uint32_t kRef128x32FrameBytes = 8192U;
+        constexpr uint32_t kRef128x32PosterBytes = 2048U;
+        uint32_t posterBytes = (height >= 64U && width >= 96U) ? (48U * 64U * 2U) : kRef128x32PosterBytes;
+        if (hasPsram) {
+            uint32_t psramWorking = frameBytes + posterBytes + 32768U;
+            if (psramWorking > out.psramBytes) {
+                out.psramBytes = psramWorking;
+            }
+            return out;
+        }
+        if (frameBytes > out.internalContiguousBytes) {
+            out.internalContiguousBytes = frameBytes;
+        }
+        uint32_t extraFrame = (frameBytes > kRef128x32FrameBytes) ? (frameBytes - kRef128x32FrameBytes) : 0U;
+        uint32_t extraPoster = (posterBytes > kRef128x32PosterBytes) ? (posterBytes - kRef128x32PosterBytes) : 0U;
+        out.internalPersistentBytes += extraFrame + extraPoster;
+        return out;
     }
 };
 
@@ -269,8 +300,8 @@ struct ConfigField {
     
     ValidationPolicy validation_policy = ValidationPolicy::Clamp;
 
-    ConfigField() = default;
-    ConfigField(const char* id_, ConfigType type_, const char* label_, const char* desc_ = "", const char* def_ = "",
+    constexpr ConfigField() = default;
+    constexpr ConfigField(const char* id_, ConfigType type_, const char* label_, const char* desc_ = "", const char* def_ = "",
                 bool req_ = false, const char* min_ = "", const char* max_ = "", const char* step_ = "",
                 const char* opt_ = "", const char* opt_ep_ = "", bool mult_ = false, const char* vis_ = "",
                 ValidationPolicy val_pol_ = ValidationPolicy::Clamp)
@@ -279,6 +310,8 @@ struct ConfigField {
           options(opt_), options_endpoint(opt_ep_), multiple(mult_), visible_when(vis_),
           validation_policy(val_pol_) {}
 };
+
+using FieldTableEntry = ConfigField;
 
 struct ConfigSchema {
     std::vector<ConfigField> fields;
