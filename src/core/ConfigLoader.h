@@ -255,6 +255,15 @@ enum class SlotState : uint8_t {
     READING = 3      // Active pinned read by Core 1 SnapshotGuard
 };
 
+enum ConfigSaveDomain : uint8_t {
+    CONFIG_DOMAIN_HARDWARE  = 1 << 0,
+    CONFIG_DOMAIN_SYSTEM    = 1 << 1,
+    CONFIG_DOMAIN_NETWORK   = 1 << 2,
+    CONFIG_DOMAIN_PLAYLIST  = 1 << 3,
+    CONFIG_DOMAIN_INSTANCES = 1 << 4,
+    CONFIG_DOMAIN_ALL       = 0x1F
+};
+
 class ConfigLoader;
 
 /**
@@ -299,6 +308,13 @@ public:
     
     bool loadFromSD(const char* filepath);
     bool saveToSD(const char* filepath);
+    bool saveDomainsToSD(uint8_t domainMask, const char* filepath = "/config.json");
+    bool tryLoadFallbackMatrixFromBackups(
+        MatrixConfig& outMatrix,
+        uint16_t maxTotalW,
+        uint16_t maxTotalH,
+        const char* filepath = "/config.json"
+    ) const;
     
     std::vector<EngineInstance> instances;
     std::vector<RotationEntry> rotation;

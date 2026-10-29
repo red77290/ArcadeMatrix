@@ -570,15 +570,15 @@ void test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls() {
 }
 
 void test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis() {
-    // Classic ESP32 without PSRAM (`hasPsram = false`): cap advertised UDP stream rate to 15 FPS
-    // (<= 120 DMDF chunks/s on 128x32) while preserving 8..15 FPS settings.
+    // Classic ESP32 without PSRAM (`hasPsram = false`): cap advertised UDP stream rate to 25 FPS
+    // (<= 150 DMDF 1408-byte chunks/s on 128x32) while preserving 8..25 FPS settings.
     TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(4U, false));
     TEST_ASSERT_EQUAL_UINT8(12U, MediaShowcaseBase::resolveEffectiveVideoFps(12U, false));
     TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(15U, false));
-    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, false));
-    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, false));
-    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, false));
-    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, false));
+    TEST_ASSERT_EQUAL_UINT8(20U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, false));
+    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, false));
+    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, false));
+    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, false));
 
     // ESP32-S3 with PSRAM (`hasPsram = true`): preserve full 20..60 FPS capability unclamped.
     TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(5U, true));
@@ -594,6 +594,156 @@ void test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis() {
     TEST_ASSERT_FALSE(MediaShowcaseBase::shouldReportNetworkOffline(2U));
     TEST_ASSERT_TRUE(MediaShowcaseBase::shouldReportNetworkOffline(3U));
     TEST_ASSERT_TRUE(MediaShowcaseBase::shouldReportNetworkOffline(5U));
+}
+
+void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline() {
+    class StreamSurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        StreamSurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 128 * 32; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override { return CanvasView{}; }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    class StreamEngineContext : public EngineContext {
+    public:
+        IDrawingSurface* surf = nullptr;
+        explicit StreamEngineContext(IDrawingSurface* s) : surf(s) {}
+        IDrawingSurface* getSurface() override { return surf; }
+        FrontendSyncEngine* getEventBus() override { return nullptr; }
+        void getSystemTime(struct tm* t) override {
+            if (t) memset(t, 0, sizeof(*t));
+        }
+        DisplayGeometry getGeometry() const override {
+            DisplayGeometry g;
+            g.width = 128;
+            g.height = 32;
+            g.nativeWidth = 128;
+            g.nativeHeight = 32;
+            return g;
+        }
+    };
+
+    class TestableShowcaseEngine : public RetroGamesEngine {
+    public:
+        void setStatus(uint8_t st) {
+            m_statusState.store(st, std::memory_order_release);
+            m_dirty = true;
+        }
+        void renderWaitingAt(IDrawingSurface* s, uint32_t elapsedMs) {
+            s->clear(0);
+            drawWaitingPixelArt(s, 128, 32, elapsedMs);
+        }
+        void simulateFramePublish(uint16_t color, uint32_t seq) {
+            TEST_ASSERT_NOT_NULL(m_frame565);
+            for (size_t i = 0; i < m_framePixels; ++i) {
+                m_frame565[i] = color;
+            }
+            m_seq.fetch_add(1, std::memory_order_acq_rel);
+            m_liveCard.hasVideoFrame = true;
+            m_seq.fetch_add(1, std::memory_order_release);
+            m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+            m_frameSeq.store(seq, std::memory_order_release);
+        }
+        void setFrameSeqRaw(uint32_t seq) {
+            m_frameSeq.store(seq, std::memory_order_release);
+        }
+        void writeFirstPixelRaw(uint16_t color) {
+            if (m_frame565) m_frame565[0] = color;
+        }
+        bool isEngineDirty() const { return m_dirty; }
+        uint32_t consumedSeq() const { return m_consumedFrameSeq.load(std::memory_order_acquire); }
+        uint32_t presentedCount() const { return m_presentedStreamFrames.load(std::memory_order_acquire); }
+    };
+
+    StreamSurface128x32 surf0;
+    StreamSurface128x32 surf1;
+    StreamSurface128x32 surf2;
+    StreamEngineContext ctx(&surf0);
+    TestableShowcaseEngine eng;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(eng.initialize(&ctx, nullptr)));
+    eng.activate();
+
+    // 1. `m_statusState == 0` (`LiveReady`) must render the exact `Warming` label (`st == 1`), NEVER `Offline` (`st == 2`)!
+    eng.setStatus(0U);
+    eng.renderWaitingAt(&surf0, 500U);
+    eng.setStatus(1U);
+    eng.renderWaitingAt(&surf1, 500U);
+    eng.setStatus(2U);
+    eng.renderWaitingAt(&surf2, 500U);
+
+    bool diff0vs1 = false;
+    bool diff0vs2 = false;
+    for (int y = 25; y < 32; ++y) {
+        for (int x = 0; x < 128; ++x) {
+            uint16_t p0 = surf0.pixels[y * 128 + x];
+            uint16_t p1 = surf1.pixels[y * 128 + x];
+            uint16_t p2 = surf2.pixels[y * 128 + x];
+            if (p0 != p1) diff0vs1 = true;
+            if (p0 != p2) diff0vs2 = true;
+        }
+    }
+    TEST_ASSERT_FALSE(diff0vs1);
+    TEST_ASSERT_TRUE(diff0vs2);
+
+    // 2. Tear-free `m_frameSeq` / `m_consumedFrameSeq` handoff: an `ODD` sequence during `render()`
+    //    must preserve `m_dirty == true` instead of permanently dropping the frame!
+    surf0.clear(0x001F);
+    surf0.present();
+    eng.simulateFramePublish(0xF800, 2U); // Complete Frame #1 (`EVEN` seq = 2)
+    eng.update(&ctx);
+    TEST_ASSERT_TRUE(eng.isEngineDirty());
+
+    // Simulate Core 0 starting Frame #2 (`ODD` seq = 3) microseconds before Core 1 `render()` runs
+    eng.setFrameSeqRaw(3U);
+    eng.writeFirstPixelRaw(0x07E0);
+    eng.render(&ctx);
+    TEST_ASSERT_FALSE(eng.hasNewFrame());
+    TEST_ASSERT_TRUE(eng.isEngineDirty());       // Must stay dirty for the very next Core 1 tick!
+    TEST_ASSERT_EQUAL_HEX16(0x001F, surf0.pixels[0]); // Previous canvas untouched while ODD!
+
+    // Core 0 finishes Frame #2 (`EVEN` seq = 4) -> next Core 1 `render()` blits immediately!
+    eng.simulateFramePublish(0x07E0, 4U);
+    eng.render(&ctx);
+    TEST_ASSERT_TRUE(eng.hasNewFrame());
+    TEST_ASSERT_FALSE(eng.isEngineDirty());
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[128 * 32 - 1]);
+    TEST_ASSERT_EQUAL_UINT32(4U, eng.consumedSeq());
+    TEST_ASSERT_EQUAL_UINT32(1U, eng.presentedCount());
+
+    eng.deactivate();
 }
 
 void test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing() {
@@ -663,6 +813,7 @@ void setup() {
     RUN_TEST(test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art);
     RUN_TEST(test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls);
     RUN_TEST(test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis);
+    RUN_TEST(test_media_showcase_live_stream_handoff_and_online_status_no_false_offline);
     RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
     UNITY_END();
 }

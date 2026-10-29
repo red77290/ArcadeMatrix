@@ -104,20 +104,29 @@ bool ModularConfigManager::loadAll(ConfigLoader& config) {
 }
 
 bool ModularConfigManager::saveAll(const ConfigLoader& config) {
+    return saveDomains(config, CONFIG_DOMAIN_ALL);
+}
+
+bool ModularConfigManager::saveDomains(const ConfigLoader& config, uint8_t domainMask) {
     _storage.mkdir("/config");
-    _storage.mkdir("/config/instances");
+    if ((domainMask & CONFIG_DOMAIN_INSTANCES) != 0) {
+        _storage.mkdir("/config/instances");
+    }
 
-    bool hwOk = saveHardware(config.matrix);
-    bool sysOk = saveSystem(config.system);
-    bool netOk = saveNetwork(config.wifi, config.mqtt, config.dataMqtt, &config.showcase);
-    bool rotOk = savePlaylist(config.rotation);
+    bool hwOk = ((domainMask & CONFIG_DOMAIN_HARDWARE) != 0) ? saveHardware(config.matrix) : true;
+    bool sysOk = ((domainMask & CONFIG_DOMAIN_SYSTEM) != 0) ? saveSystem(config.system) : true;
+    bool netOk = ((domainMask & CONFIG_DOMAIN_NETWORK) != 0)
+        ? saveNetwork(config.wifi, config.mqtt, config.dataMqtt, &config.showcase)
+        : true;
+    bool rotOk = ((domainMask & CONFIG_DOMAIN_PLAYLIST) != 0) ? savePlaylist(config.rotation) : true;
 
-    // Persist all instances
     bool instOk = true;
-    for (const auto& inst : config.instances) {
-        if (inst.instance_id.isEmpty()) continue;
-        if (!_workingSet.saveInstance(inst)) {
-            instOk = false;
+    if ((domainMask & CONFIG_DOMAIN_INSTANCES) != 0) {
+        for (const auto& inst : config.instances) {
+            if (inst.instance_id.isEmpty()) continue;
+            if (!_workingSet.saveInstance(inst)) {
+                instOk = false;
+            }
         }
     }
 
@@ -130,7 +139,7 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
         return false;
     }
     StaticJsonDocument<1024> doc;
-    if (deserializeJson(doc, content)) return false;
+    if (deserializeJson(doc, content) || !doc.is<JsonObjectConst>()) return false;
 
     outMatrix.width = doc["width"] | outMatrix.width;
     outMatrix.height = doc["height"] | outMatrix.height;
@@ -225,8 +234,13 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     doc["matrix_power"] = matrix.matrix_power;
 
+    if (doc.overflowed()) {
+        LOGE("ModularConfigManager", "Hardware config overflowed StaticJsonDocument; refusing to overwrite /config/hardware.json");
+        return false;
+    }
     String out;
     serializeJsonPretty(doc, out);
+    if (out.length() < 8 || out == "null") return false;
     return _storage.writeStringAtomic("/config/hardware.json", out);
 }
 
@@ -236,7 +250,7 @@ bool ModularConfigManager::loadSystem(SystemConfig& outSystem) {
         return false;
     }
     StaticJsonDocument<1024> doc;
-    if (deserializeJson(doc, content)) return false;
+    if (deserializeJson(doc, content) || !doc.is<JsonObjectConst>()) return false;
 
     if (doc.containsKey("timezone")) outSystem.timezone = doc["timezone"].as<String>();
 
@@ -296,8 +310,13 @@ bool ModularConfigManager::saveSystem(const SystemConfig& system) {
     doc["api_auth_enabled"] = system.api_auth_enabled;
     doc["api_token"] = system.api_token;
 
+    if (doc.overflowed()) {
+        LOGE("ModularConfigManager", "System config overflowed StaticJsonDocument; refusing to overwrite /config/system.json");
+        return false;
+    }
     String out;
     serializeJsonPretty(doc, out);
+    if (out.length() < 8 || out == "null") return false;
     return _storage.writeStringAtomic("/config/system.json", out);
 }
 
@@ -306,8 +325,8 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
     if (!_storage.readString("/config/network.json", content)) {
         return false;
     }
-    SpiRamJsonDocument doc(2048);
-    if (deserializeJson(doc, content)) return false;
+    SpiRamJsonDocument doc(3072);
+    if (doc.capacity() == 0 || deserializeJson(doc, content) || !doc.is<JsonObjectConst>()) return false;
 
     if (doc.containsKey("wifi")) {
         JsonObjectConst w = doc["wifi"];
@@ -374,7 +393,11 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
 }
 
 bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt, const ShowcaseConfig* showcase) {
-    SpiRamJsonDocument doc(2048);
+    SpiRamJsonDocument doc(3072);
+    if (doc.capacity() == 0) {
+        LOGE("ModularConfigManager", "Failed to allocate JSON scratch for /config/network.json; preserving existing file");
+        return false;
+    }
     JsonObject w = doc.createNestedObject("wifi");
     w["ssid"] = wifi.ssid;
     w["password"] = wifi.password;
@@ -424,8 +447,18 @@ bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig&
         sc["mqtt_custom_url"] = showcase->mqtt_custom_url;
     }
 
+    if (doc.overflowed()) {
+        LOGE("ModularConfigManager", "Network config overflowed capacity (%u bytes); refusing to overwrite /config/network.json",
+             (unsigned)doc.capacity());
+        return false;
+    }
     String out;
     serializeJsonPretty(doc, out);
+    if (out.length() < 16 || out == "null") {
+        LOGE("ModularConfigManager", "Serialized network config invalid (len=%u); preserving /config/network.json",
+             (unsigned)out.length());
+        return false;
+    }
     return _storage.writeStringAtomic("/config/network.json", out);
 }
 

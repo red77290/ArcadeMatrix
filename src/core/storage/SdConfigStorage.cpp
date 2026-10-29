@@ -57,6 +57,11 @@ bool SdConfigStorage::writeStringAtomic(const char* path, const String& content)
         LOGE("SdConfigStorage", "Invalid null/empty path in writeStringAtomic");
         return false;
     }
+    size_t len = content.length();
+    if (len < 2 || content == "null") {
+        LOGE("SdConfigStorage", "Refusing to write empty or null JSON payload to %s (len=%u)", path, (unsigned)len);
+        return false;
+    }
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) {
         LOGE("SdConfigStorage", "Cannot write %s: SD lock timeout", path);
@@ -75,7 +80,6 @@ bool SdConfigStorage::writeStringAtomic(const char* path, const String& content)
         return false;
     }
 
-    size_t len = content.length();
     size_t written = f.write(reinterpret_cast<const uint8_t*>(content.c_str()), len);
     f.flush();
     f.close();

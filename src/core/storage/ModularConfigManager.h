@@ -30,6 +30,11 @@ public:
      */
     bool saveAll(const ConfigLoader& config);
 
+    /**
+     * @brief Save only the specified ConfigSaveDomain bitmask to /config/ without touching unmodified domains.
+     */
+    bool saveDomains(const ConfigLoader& config, uint8_t domainMask);
+
     // Individual domain load/save methods
     bool loadHardware(MatrixConfig& outMatrix);
     bool saveHardware(const MatrixConfig& matrix);

@@ -231,8 +231,56 @@ void AppRuntime::initialize() {
          postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
     MemTrace::mark("after config load");
 
-    ConfigSnapshotGuard guard = config.acquireSnapshot();
-    const ConfigSnapshot& snapshot = guard.get();
+    // Pre-validate matrix geometry against board profile limits BEFORE allocating the SRAM1 canvas
+    // so an invalid/corrupted geometry (e.g. 256x64 on ESP32_STD) never starves heap or bootloops.
+    {
+        const DisplayCapabilities& dispCaps = BoardProfile::current().display();
+        uint32_t cfgChain = (config.matrix.chainLength > 0) ? static_cast<uint32_t>(config.matrix.chainLength) : 1U;
+        uint32_t reqTotalW = static_cast<uint32_t>(config.matrix.width > 0 ? config.matrix.width : 0) * cfgChain;
+        uint32_t reqTotalH = static_cast<uint32_t>(config.matrix.height > 0 ? config.matrix.height : 0);
+        if (reqTotalW == 0 || reqTotalH == 0 || reqTotalW > dispCaps.maxWidth || reqTotalH > dispCaps.maxHeight) {
+            m_matrixRecovery.safeModeActive = true;
+            m_matrixRecovery.rejectedWidth = config.matrix.width;
+            m_matrixRecovery.rejectedHeight = config.matrix.height;
+            m_matrixRecovery.rejectedChain = config.matrix.chainLength;
+            m_matrixRecovery.rejectedColorDepth = config.matrix.colorDepth;
+            m_matrixRecovery.rejectedLatchBlanking = config.matrix.latchBlanking;
+            snprintf(
+                m_matrixRecovery.reason,
+                sizeof(m_matrixRecovery.reason),
+                "Requested geometry %ux%u (%dx%d Chain %d) exceeds board limit (%ux%u)",
+                (unsigned)reqTotalW,
+                (unsigned)reqTotalH,
+                config.matrix.width,
+                config.matrix.height,
+                config.matrix.chainLength,
+                (unsigned)dispCaps.maxWidth,
+                (unsigned)dispCaps.maxHeight
+            );
+            LOGE("Matrix", "SAFE FALLBACK: %s. Recovering safe matrix geometry...", m_matrixRecovery.reason);
+
+            MatrixConfig recovered = config.matrix;
+            if (!config.tryLoadFallbackMatrixFromBackups(recovered, dispCaps.maxWidth, dispCaps.maxHeight)) {
+                recovered.width = 64;
+                recovered.height = 32;
+                recovered.chainLength = 1;
+            }
+            recovered.colorDepth = 0;
+            recovered.dynamicColorDepth = true;
+            if (recovered.latchBlanking < 1 || recovered.latchBlanking > 4) {
+                recovered.latchBlanking = 4;
+            }
+            recovered.render_pipeline = "auto";
+            recovered.matrix_power = true;
+            config.mutate([&](ConfigLoader& c) {
+                c.matrix = recovered;
+            });
+        }
+    }
+
+    std::unique_ptr<ConfigSnapshotGuard> guardHolder(new ConfigSnapshotGuard(config.acquireSnapshot()));
+    const ConfigSnapshot* snapPtr = &guardHolder->get();
+    #define snapshot (*snapPtr)
 
     LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d, Power: %s, Brightness: %d%%",
          snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
@@ -443,10 +491,99 @@ void AppRuntime::initialize() {
     LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
          snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
          snapshot.matrix.panelType.c_str(), snapshot.matrix.colorDepth, sel.effectiveColorDepth, sel.reasonText);
-    if (!matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
-        LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
-        while (1) { delay(100); }
+
+    bool matrixReady = false;
+    if (sel.valid && matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
+        matrixReady = true;
+    } else {
+        if (!m_matrixRecovery.safeModeActive) {
+            m_matrixRecovery.safeModeActive = true;
+            m_matrixRecovery.rejectedWidth = snapshot.matrix.width;
+            m_matrixRecovery.rejectedHeight = snapshot.matrix.height;
+            m_matrixRecovery.rejectedChain = snapshot.matrix.chainLength;
+            m_matrixRecovery.rejectedColorDepth = snapshot.matrix.colorDepth;
+            m_matrixRecovery.rejectedLatchBlanking = snapshot.matrix.latchBlanking;
+            snprintf(
+                m_matrixRecovery.reason,
+                sizeof(m_matrixRecovery.reason),
+                "HUB75 DMA allocation failed for %dx%d Chain %d (Depth %d, LatchBlanking %d): %s",
+                snapshot.matrix.width,
+                snapshot.matrix.height,
+                snapshot.matrix.chainLength,
+                snapshot.matrix.colorDepth,
+                snapshot.matrix.latchBlanking,
+                sel.reasonText ? sel.reasonText : "OOM"
+            );
+        }
+        LOGE("Matrix", "Primary matrix init failed (%s). Engaging progressive Safe Fallback ladder (Zero-Bootloop)...",
+             m_matrixRecovery.reason);
+
+        MatrixConfig workingMat = snapshot.matrix;
+        workingMat.colorDepth = 0;
+        workingMat.dynamicColorDepth = true;
+        workingMat.latchBlanking = 4;
+        workingMat.render_pipeline = "auto";
+        workingMat.matrix_power = true;
+
+        const uint8_t safeDepths[2] = { 4, 2 };
+        const DisplayCapabilities& dispCaps = BoardProfile::current().display();
+        uint32_t curTotalW = static_cast<uint32_t>(workingMat.width) *
+                             static_cast<uint32_t>(workingMat.chainLength > 0 ? workingMat.chainLength : 1);
+        if (curTotalW <= dispCaps.maxWidth && static_cast<uint32_t>(workingMat.height) <= dispCaps.maxHeight) {
+            for (uint8_t d : safeDepths) {
+                esp_task_wdt_reset();
+                if (matrixEngine.begin(workingMat, d)) {
+                    matrixReady = true;
+                    LOGW("Matrix", "SAFE FALLBACK TIER 2 SUCCEEDED: %dx%d Chain %d @ %u-bit, latchBlanking=4",
+                         workingMat.width, workingMat.height, workingMat.chainLength, (unsigned)d);
+                    break;
+                }
+            }
+        }
+
+        if (!matrixReady) {
+            if (m_preallocatedCanvasBuffer && (curTotalW != 64U || workingMat.height != 32)) {
+                heap_caps_free(m_preallocatedCanvasBuffer);
+                m_preallocatedCanvasBuffer = nullptr;
+            }
+            workingMat.width = 64;
+            workingMat.height = 32;
+            workingMat.chainLength = 1;
+            for (uint8_t d : safeDepths) {
+                esp_task_wdt_reset();
+                if (matrixEngine.begin(workingMat, d)) {
+                    matrixReady = true;
+                    LOGW("Matrix", "SAFE FALLBACK TIER 3 SUCCEEDED: minimal 64x32 Chain 1 @ %u-bit", (unsigned)d);
+                    break;
+                }
+            }
+        }
+
+        if (matrixReady) {
+            guardHolder.reset();
+            config.mutate([&](ConfigLoader& c) {
+                c.matrix = workingMat;
+            });
+            guardHolder.reset(new ConfigSnapshotGuard(config.acquireSnapshot()));
+            snapPtr = &guardHolder->get();
+        } else {
+            m_matrixRecovery.headlessMode = true;
+            if (m_preallocatedCanvasBuffer) {
+                heap_caps_free(m_preallocatedCanvasBuffer);
+                m_preallocatedCanvasBuffer = nullptr;
+            }
+            LOGE("Matrix", "HEADLESS SAFE RECOVERY MODE ENGAGED: All HUB75 DMA allocations failed. WebUI & HTTP API remain online for recovery!");
+        }
     }
+
+    if (m_matrixRecovery.headlessMode) {
+        m_lastReconciledVersion = snapshot.version;
+        MemTrace::mark("boot complete (headless safe mode)");
+        MemTrace::arm();
+        LOGW("System", "Setup complete in Headless Safe Recovery Mode. Open WebUI Hardware tab to revert settings.");
+        return;
+    }
+
     // Commit Frame 0 (deterministic black frame) via backend as sole presentation authority
     matrixEngine.commitFirstFrame();
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
@@ -573,7 +710,10 @@ void AppRuntime::initialize() {
 
     if (wifiConnected) {
         String ipMsg = "IP: " + WiFi.localIP().toString();
-        MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 35, 1};
+        if (m_matrixRecovery.safeModeActive) {
+            ipMsg += " [SAFE MODE]";
+        }
+        MessageConfig ipConfig = {ipMsg, m_matrixRecovery.safeModeActive ? (uint16_t)0xFD20 : (uint16_t)0x07E0, 1, "rtl", 35, 1};
         m_messageEngine->displayMessage(ipConfig);
     } else {
         String apMsg = "Offline Mode (AP: ArcadeMatrix)";
@@ -584,17 +724,21 @@ void AppRuntime::initialize() {
     // Allow message to finish scrolling before main loop
     LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
-    while (m_messageEngine->isActive()) {
+    while (m_messageEngine && m_messageEngine->isActive()) {
+        esp_task_wdt_reset();
         if (m_drawingSurface) {
             m_drawingSurface->clear(0);
             m_messageEngine->update(m_appCtx);
             m_messageEngine->render(m_appCtx);
             m_drawingSurface->present();
-        } else {
+        } else if (matrixEngine.getDisplay()) {
             matrixEngine.getDisplay()->fillScreen(0);
             m_messageEngine->update(m_appCtx);
             m_messageEngine->render(m_appCtx);
             matrixEngine.present();
+        } else {
+            m_messageEngine->deactivate();
+            break;
         }
         delay(10);
         if (millis() - startWait > 15000) {
@@ -617,6 +761,7 @@ void AppRuntime::initialize() {
     audioSessionManager.update(snapshot);
 
     m_lastReconciledVersion = snapshot.version;
+    #undef snapshot
 
     MemTrace::mark("boot complete (webserver up)");
     MemTrace::arm();
@@ -839,6 +984,18 @@ void AppRuntime::update() {
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
+
+    if (m_matrixRecovery.headlessMode) {
+        static unsigned long lastHeadlessWifiCheck = millis();
+        if (snapshot.wifi.ssid.length() > 0 && millis() - lastHeadlessWifiCheck > 60000) {
+            lastHeadlessWifiCheck = millis();
+            if (WiFi.status() != WL_CONNECTED) {
+                WiFi.reconnect();
+            }
+        }
+        delay(25);
+        return;
+    }
 
     if (snapshot.version != m_lastReconciledVersion || (snapshot.mqtt.enabled && !m_frontendListener)) {
         m_lastReconciledVersion = snapshot.version;
