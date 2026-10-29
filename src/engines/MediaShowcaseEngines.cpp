@@ -850,19 +850,83 @@ bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId, const std::ato
     return writeAllToClient(cli, pkt, off, wantActive);
 }
 
-void sendMqttPingReq(WiFiClient& cli, const std::atomic<bool>& wantActive) {
-    if (cli.connected()) {
-        const uint8_t pingPkt[2] = {0xC0, 0x00};
-        writeAllToClient(cli, pingPkt, sizeof(pingPkt), wantActive, 400);
-    }
-}
-
 void sendMqttDisconnectAndStop(WiFiClient& cli, const std::atomic<bool>& wantActive) {
     if (cli.connected()) {
         const uint8_t discPkt[2] = {0xE0, 0x00};
         writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 300);
     }
     cli.stop();
+}
+
+bool connectMqttBrokerSession(
+    WiFiClient& cli,
+    const char* mqttHost,
+    uint16_t mqttPort,
+    const char* sessionId,
+    uint32_t& ioConnSeq,
+    const std::atomic<bool>& wantActive,
+    uint32_t tcpTimeoutMs = 1500,
+    uint32_t connAckTimeoutMs = 900
+) {
+    if (!wantActive.load(std::memory_order_acquire) || !mqttHost || mqttHost[0] == '\0') {
+        return false;
+    }
+    cli.setTimeout(2);
+    if (!cli.connect(mqttHost, mqttPort, tcpTimeoutMs)) {
+        return false;
+    }
+    char mqttConnectId[64];
+    snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", sessionId, (++ioConnSeq) % 1000U);
+    if (!sendMqttConnectPacket(cli, mqttConnectId, wantActive)) {
+        cli.stop();
+        return false;
+    }
+    uint32_t connWait = millis();
+    while (cli.available() < 4 && (millis() - connWait) < connAckTimeoutMs) {
+        if (!wantActive.load(std::memory_order_acquire)) {
+            cli.stop();
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    if (cli.available() < 4) {
+        cli.stop();
+        return false;
+    }
+    uint8_t connAck[4];
+    cli.readBytes(connAck, 4);
+    if (connAck[0] != 0x20 || connAck[3] != 0x00) {
+        cli.stop();
+        return false;
+    }
+    return true;
+}
+
+// Ephemeral (< 20 ms LAN) MQTT publish session that opens a TCP socket, publishes a single
+// control event (`start_stream` or `stop_stream`), sends DISCONNECT, and closes the socket
+// immediately so ZERO TCP sockets coexist with high-rate UDP `DMDF` streaming on ESP32_STD.
+// Strictly refuses to allocate/connect when `wantActive` is false (Invariant 15).
+bool publishFlashMqttEvent(
+    const char* mqttHost,
+    uint16_t mqttPort,
+    const char* sessionId,
+    uint32_t& ioConnSeq,
+    const char* topic,
+    const char* jsonPayload,
+    char* ioScratch,
+    size_t scratchCap,
+    const std::atomic<bool>& wantActive
+) {
+    if (!wantActive.load(std::memory_order_acquire) || !topic || !jsonPayload) {
+        return false;
+    }
+    WiFiClient flashCli;
+    if (!connectMqttBrokerSession(flashCli, mqttHost, mqttPort, sessionId, ioConnSeq, wantActive, 1000, 600)) {
+        return false;
+    }
+    bool ok = sendMqttPublishPacket(flashCli, topic, jsonPayload, false, wantActive, ioScratch, scratchCap);
+    sendMqttDisconnectAndStop(flashCli, wantActive);
+    return ok;
 }
 
 int openNonBlockingUdpSocket(uint16_t localPort, bool hasPsram) {
@@ -872,7 +936,7 @@ int openNonBlockingUdpSocket(uint16_t localPort, bool hasPsram) {
     int reuse = 1;
     lwip_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_RCVBUF
-    int rcvBuf = hasPsram ? 65536 : 12288;
+    int rcvBuf = hasPsram ? 65536 : 8192;
     lwip_setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvBuf, sizeof(rcvBuf));
 #else
     (void)hasPsram;
@@ -899,85 +963,6 @@ void closeUdpSocket(int& fd) {
     if (fd >= 0) {
         lwip_close(fd);
         fd = -1;
-    }
-}
-
-// Non-blocking drain of MQTT control/event packets during Card dwell & UDP stream.
-// Sets `outServerOffline = true` if LWT `online:false` arrives, or `outStreamEof = true`
-// if `{"event":"stream_eof"}` arrives. Zero heap allocation.
-void pollMqttControlNonBlocking(
-    WiFiClient& mqttCli,
-    const char* statusTopic,
-    const std::atomic<bool>& wantActive,
-    bool& outServerOffline,
-    bool& outStreamEof
-) {
-    while (mqttCli.connected() && mqttCli.available() >= 2) {
-        uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
-        uint32_t remLen = 0;
-        uint32_t mult = 1;
-        for (int i = 0; i < 4; ++i) {
-            uint8_t b = 0;
-            if (!readExactFromStream(mqttCli, &b, 1, wantActive, 500)) {
-                mqttCli.stop();
-                return;
-            }
-            remLen += static_cast<uint32_t>(b & 0x7F) * mult;
-            mult *= 128;
-            if ((b & 0x80) == 0) break;
-        }
-        if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen > 384U) {
-            if (remLen > 0 && !drainFromStream(mqttCli, remLen, wantActive, 1500)) {
-                mqttCli.stop();
-                return;
-            }
-            continue;
-        }
-        uint8_t tLenBe[2];
-        if (!readExactFromStream(mqttCli, tLenBe, 2, wantActive, 500)) {
-            mqttCli.stop();
-            return;
-        }
-        uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
-        if (static_cast<uint32_t>(tLen) + 2U > remLen) {
-            if (!drainFromStream(mqttCli, remLen - 2U, wantActive, 1000)) {
-                mqttCli.stop();
-                return;
-            }
-            continue;
-        }
-        char topicBuf[96] = "";
-        size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
-        if (toReadT > 0 && !readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, wantActive, 500)) {
-            mqttCli.stop();
-            return;
-        }
-        topicBuf[toReadT] = '\0';
-        if (tLen > toReadT && !drainFromStream(mqttCli, tLen - toReadT, wantActive, 500)) {
-            mqttCli.stop();
-            return;
-        }
-        size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
-        char msgBuf[256] = "";
-        size_t toReadP = (payloadLen < sizeof(msgBuf) - 1) ? payloadLen : (sizeof(msgBuf) - 1);
-        if (toReadP > 0 && !readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(msgBuf), toReadP, wantActive, 500)) {
-            mqttCli.stop();
-            return;
-        }
-        msgBuf[toReadP] = '\0';
-        if (payloadLen > toReadP && !drainFromStream(mqttCli, payloadLen - toReadP, wantActive, 1000)) {
-            mqttCli.stop();
-            return;
-        }
-        if (statusTopic && strcmp(topicBuf, statusTopic) == 0) {
-            if (strstr(msgBuf, "\"online\":false") || strstr(msgBuf, "\"online\": false")) {
-                outServerOffline = true;
-                return;
-            }
-        } else if (strstr(msgBuf, "\"stream_eof\"") != nullptr) {
-            outStreamEof = true;
-            return;
-        }
     }
 }
 #endif
@@ -1343,6 +1328,8 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
 
     m_cfgIdx.store(next, std::memory_order_release);
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
+    m_lastPublishedCfgGen = 0;
+    m_consecutiveNetFailures = 0;
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
     if (m_wantActive.load(std::memory_order_acquire)) {
         m_skipTurnImmediately.store(false, std::memory_order_release);
@@ -1358,6 +1345,7 @@ void MediaShowcaseBase::activate() {
     m_activatedAtMs = millis();
     m_phaseStartedAtMs = m_activatedAtMs;
     m_lastScrollStepMs = m_activatedAtMs;
+    m_consecutiveNetFailures = 0;
     m_itemsPlayedInTurn.store(0, std::memory_order_release);
     m_skipTurnImmediately.store(false, std::memory_order_release);
     m_warmingFallback.store(false, std::memory_order_release);
@@ -1521,21 +1509,42 @@ void MediaShowcaseBase::runWorkerLoop() {
 
         net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
-        bool handled = false;
-        char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
-        if (strcasecmp(cfg.transportMode, "mqtt_udp") == 0) {
-            handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
-        }
-        if (handled && httpFallbackItemId[0] != '\0') {
-            // Flat-stack HTTP DMDS fallback executed AFTER `runMqttUdpTurn()` freed its stack frame,
-            // MQTT TCP socket, and UDP socket. Uses `?purge=true` to uphold Consume-Once semantics.
-            if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                char fallbackPath[144];
-                snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=true", domain, httpFallbackItemId);
-                streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
+        bool useMqttUdp = (strcasecmp(cfg.transportMode, "mqtt_udp") == 0);
+        if (useMqttUdp) {
+            char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
+            bool handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
+            if (handled && httpFallbackItemId[0] != '\0') {
+                // Flat-stack HTTP DMDS fallback executed AFTER `runMqttUdpTurn()` freed its stack frame,
+                // MQTT TCP socket, and UDP socket. Uses `?purge=true` to uphold Consume-Once semantics.
+                if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+                    char fallbackPath[144];
+                    snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=true", domain, httpFallbackItemId);
+                    streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
+                }
+                finishTurnItem();
+            } else if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+                // Stay strictly on `mqtt_udp` instead of cross-protocol ping-ponging into HTTP `/config`.
+                // Require 3 consecutive transport failures before displaying `NetworkOffline` (2).
+                if (m_consecutiveNetFailures < 10U) {
+                    ++m_consecutiveNetFailures;
+                }
+                if (shouldReportNetworkOffline(m_consecutiveNetFailures)) {
+                    m_statusState.store(2, std::memory_order_release);
+                    m_lastPublishedCfgGen = 0;
+                    clearLiveCardState();
+                    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                        m_skipTurnImmediately.store(true, std::memory_order_release);
+                    }
+                } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
+                    m_statusState.store(1, std::memory_order_release);
+                }
+#if defined(ESP32)
+                for (int w = 0; w < 12 && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen; ++w) {
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+#endif
             }
-            finishTurnItem();
-        } else if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+        } else if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
             runHttpPollTurn(cfg, domain, reqLangBuf);
         }
         if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
@@ -1683,302 +1692,299 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         return false;
     }
 
-    WiFiClient mqttCli;
-    mqttCli.setTimeout(2);
-    {
-        char mqttHost[64] = "";
-        uint16_t mqttPort = 1883;
-        if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
-            return false;
-        }
-        if (!mqttCli.connect(mqttHost, mqttPort, 1500)) {
-            return false;
-        }
-    }
-
-    {
-        char mqttConnectId[64];
-        snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", m_sessionId, (++m_mqttConnSeq) % 1000U);
-        if (!sendMqttConnectPacket(mqttCli, mqttConnectId, m_wantActive)) {
-            mqttCli.stop();
-            return false;
-        }
-    }
-
-    // Wait briefly for CONNACK (0x20)
-    uint32_t connWait = millis();
-    while (mqttCli.available() < 4 && (millis() - connWait) < 1000) {
-        if (!m_wantActive.load(std::memory_order_acquire)) {
-            mqttCli.stop();
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    if (mqttCli.available() >= 4) {
-        uint8_t connAck[4];
-        mqttCli.readBytes(connAck, 4);
-        if (connAck[0] != 0x20 || connAck[3] != 0x00) {
-            mqttCli.stop();
-            return false;
-        }
-    } else {
-        mqttCli.stop();
+    char mqttHost[64] = "";
+    uint16_t mqttPort = 1883;
+    if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
         return false;
     }
 
+    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
-    int udpFd = -1; // Deferred until Phase 2 (`start_stream`) to conserve LwIP socket resources
-
     const char* statusTopic = "dmd_showcase/server/status";
     char readyTopic[96];
     char eventsTopic[96];
-    char streamStateTopic[96];
     snprintf(readyTopic, sizeof(readyTopic), "dmd_showcase/clients/%s/%s/ready", m_sessionId, domain);
     snprintf(eventsTopic, sizeof(eventsTopic), "dmd_showcase/clients/%s/%s/events", m_sessionId, domain);
-    snprintf(streamStateTopic, sizeof(streamStateTopic), "dmd_showcase/clients/%s/stream_state", m_sessionId);
 
     IPAddress ipAddr = WiFi.localIP();
     char localIpBuf[20];
     snprintf(localIpBuf, sizeof(localIpBuf), "%u.%u.%u.%u", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
 
-    // Ensure Phase::Card is active before reusing `m_frame565` as the zero-malloc MQTT RX buffer on ESP32_STD
-    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-
-    {
-        char configTopic[80];
-        snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
-
-        // Build retained client config JSON in preallocated `m_ioScratch` (zero heap allocation)
-        size_t pos = 0;
-        m_ioScratch[0] = '\0';
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
-        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
-        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
-        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
-        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
-        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
-        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
-
-        // Publish retained client config FIRST so the Showcase orchestrator can clean up
-        // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
-        sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
-    }
-
-    sendMqttSubscribePacket(mqttCli, 1, statusTopic, m_wantActive);
-    sendMqttSubscribePacket(mqttCli, 2, readyTopic, m_wantActive);
-    sendMqttSubscribePacket(mqttCli, 3, eventsTopic, m_wantActive);
-    sendMqttSubscribePacket(mqttCli, 4, streamStateTopic, m_wantActive);
-
     uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
     uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
     bool soloSlot = (m_rotationSlotCount.load(std::memory_order_relaxed) <= 1U);
     uint32_t warmSettleMs = soloSlot
-        ? 2500U
+        ? 2200U
         : ((prevSkips >= 1U && playedSoFar == 0U) ? 350U : 0U);
-    uint32_t maxWaitMs = soloSlot ? 2800U : 900U;
-    uint32_t waitReadyStart = millis();
+    uint32_t maxWaitMs = soloSlot ? 2600U : 900U;
+
     bool gotReadyItem = false;
     bool sawReadyFalse = false;
-    uint32_t readyFalseAtMs = 0;
+    bool sawServerOnline = false;
     char itemIdBuf[MAX_ITEM_ID_LEN] = "";
     bool itemHasStream = false;
     uint32_t maxCfgStreamMs = configuredMaxStreamMs(cfg);
-    uint32_t streamMaxMs = maxCfgStreamMs + 1500U;
+    uint32_t streamMaxMs = maxCfgStreamMs + 4000U;
 
-    // Dual-profile zero-malloc MQTT RX target:
-    // - On ESP32-S3 (PSRAM): `m_psramMqttRx` (32 KB SPIRAM) accommodates 256x64 48x64 Base64 posters + full synopsis.
-    // - On ESP32_STD (no PSRAM): `m_frame565` (8,192 B SRAM) is idle during `Phase::Card` and holds 128x32 `ready` JSON (~3.8 KB) with 0 mallocs.
-    char* primaryRxBuf = m_psramMqttRx
-        ? m_psramMqttRx
-        : reinterpret_cast<char*>(m_frame565);
-    size_t primaryRxCap = m_psramMqttRx
-        ? PSRAM_MQTT_RX_BYTES
-        : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
+    // Ensure Phase::Card is active before reusing `m_frame565` as the zero-malloc MQTT RX buffer on ESP32_STD
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
-    while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < maxWaitMs && !gotReadyItem) {
-        if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
-            break;
+    // =========================================================================
+    // STEP A: Scoped Pre-Stream MQTT Session (Connect -> Retained Read -> Claim Card -> DISCONNECT)
+    // Closes and destroys `mqttCli` BEFORE Card scroll and UDP streaming so 0 TCP sockets remain open!
+    // =========================================================================
+    {
+        WiFiClient mqttCli;
+        if (!connectMqttBrokerSession(mqttCli, mqttHost, mqttPort, m_sessionId, m_mqttConnSeq, m_wantActive, 1500, 1000)) {
+            if (!m_wantActive.load(std::memory_order_acquire)) {
+                return true;
+            }
+            return false;
         }
-        if (mqttCli.available() >= 2) {
-            uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
-            uint32_t remLen = 0;
-            uint32_t mult = 1;
-            for (int i = 0; i < 4; ++i) {
-                uint8_t b = 0;
-                if (!readExactFromStream(mqttCli, &b, 1, m_wantActive, 1000)) break;
-                remLen += static_cast<uint32_t>(b & 0x7F) * mult;
-                mult *= 128;
-                if ((b & 0x80) == 0) break;
-            }
-            const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 14336U;
-            if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= maxMqttPacketBytes) {
-                if (remLen > 0) {
-                    drainFromStream(mqttCli, remLen, m_wantActive, 1500);
-                }
-                continue;
-            }
+        m_consecutiveNetFailures = 0;
 
-            uint8_t tLenBe[2];
-            if (!readExactFromStream(mqttCli, tLenBe, 2, m_wantActive, 1000)) {
+        // Only publish retained `config` on boot, config mutation, or post-offline recovery
+        if (m_lastPublishedCfgGen != startGen) {
+            uint16_t posterW = 32;
+            uint16_t posterH = 32;
+            computeCardPosterDims(m_width, m_height, posterW, posterH);
+            uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
+
+            char configTopic[80];
+            snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
+
+            size_t pos = 0;
+            m_ioScratch[0] = '\0';
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_width\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, posterW);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_height\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, posterH);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
+            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, effFps);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
+            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
+
+            if (sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES)) {
+                m_lastPublishedCfgGen = startGen;
+            }
+        }
+
+        sendMqttSubscribePacket(mqttCli, 1, statusTopic, m_wantActive);
+        sendMqttSubscribePacket(mqttCli, 2, readyTopic, m_wantActive);
+
+        char* primaryRxBuf = m_psramMqttRx
+            ? m_psramMqttRx
+            : reinterpret_cast<char*>(m_frame565);
+        size_t primaryRxCap = m_psramMqttRx
+            ? PSRAM_MQTT_RX_BYTES
+            : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
+
+        uint32_t waitReadyStart = millis();
+        uint32_t readyFalseAtMs = 0;
+
+        while (m_wantActive.load(std::memory_order_acquire) &&
+               m_cfgGen.load(std::memory_order_acquire) == startGen &&
+               (millis() - waitReadyStart) < maxWaitMs &&
+               !gotReadyItem) {
+            if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
                 break;
             }
-            uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
-            if (static_cast<uint32_t>(tLen) + 2U > remLen) {
-                drainFromStream(mqttCli, remLen - 2U, m_wantActive, 1000);
-                continue;
-            }
-            char topicBuf[112] = "";
-            size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
-            if (toReadT > 0) {
-                readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
-            }
-            topicBuf[toReadT] = '\0';
-            if (tLen > toReadT) {
-                drainFromStream(mqttCli, tLen - toReadT, m_wantActive, 1000);
-            }
-            size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
+            if (mqttCli.available() >= 2) {
+                uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
+                uint32_t remLen = 0;
+                uint32_t mult = 1;
+                for (int i = 0; i < 4; ++i) {
+                    uint8_t b = 0;
+                    if (!readExactFromStream(mqttCli, &b, 1, m_wantActive, 1000)) break;
+                    remLen += static_cast<uint32_t>(b & 0x7F) * mult;
+                    mult *= 128;
+                    if ((b & 0x80) == 0) break;
+                }
+                const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 14336U;
+                if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= maxMqttPacketBytes) {
+                    if (remLen > 0) {
+                        drainFromStream(mqttCli, remLen, m_wantActive, 1500);
+                    }
+                    continue;
+                }
 
-            char* payloadBuf = nullptr;
-            bool freePayloadAfter = false;
-            if (payloadLen + 1U <= IO_SCRATCH_BYTES) {
-                payloadBuf = m_ioScratch;
-            } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
-                payloadBuf = primaryRxBuf;
-            } else if (ESP.getMaxAllocHeap() >= (payloadLen + 2048U)) {
-                payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
-                freePayloadAfter = (payloadBuf != nullptr);
-            }
-            if (!payloadBuf) {
-                drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
-                continue;
-            }
-            if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
-                if (freePayloadAfter) free(payloadBuf);
-                break;
-            }
-            payloadBuf[payloadLen] = '\0';
+                uint8_t tLenBe[2];
+                if (!readExactFromStream(mqttCli, tLenBe, 2, m_wantActive, 1000)) {
+                    break;
+                }
+                uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
+                if (static_cast<uint32_t>(tLen) + 2U > remLen) {
+                    drainFromStream(mqttCli, remLen - 2U, m_wantActive, 1000);
+                    continue;
+                }
+                char topicBuf[112] = "";
+                size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
+                if (toReadT > 0) {
+                    readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
+                }
+                topicBuf[toReadT] = '\0';
+                if (tLen > toReadT) {
+                    drainFromStream(mqttCli, tLen - toReadT, m_wantActive, 1000);
+                }
+                size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
 
-            if (strcmp(topicBuf, statusTopic) == 0) {
-                StaticJsonDocument<192> sDoc;
-                if (deserializeJson(sDoc, payloadBuf) == DeserializationError::Ok) {
-                    bool online = sDoc["online"] | false;
-                    if (!online) {
-                        if (freePayloadAfter) free(payloadBuf);
-                        if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-                            memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+                char* payloadBuf = nullptr;
+                bool freePayloadAfter = false;
+                if (payloadLen + 1U <= IO_SCRATCH_BYTES) {
+                    payloadBuf = m_ioScratch;
+                } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
+                    payloadBuf = primaryRxBuf;
+                } else if (ESP.getMaxAllocHeap() >= (payloadLen + 2048U)) {
+                    payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
+                    freePayloadAfter = (payloadBuf != nullptr);
+                }
+                if (!payloadBuf) {
+                    drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
+                    continue;
+                }
+                if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
+                    if (freePayloadAfter) free(payloadBuf);
+                    break;
+                }
+                payloadBuf[payloadLen] = '\0';
+
+                if (strcmp(topicBuf, statusTopic) == 0) {
+                    StaticJsonDocument<192> sDoc;
+                    if (deserializeJson(sDoc, payloadBuf) == DeserializationError::Ok) {
+                        bool online = sDoc["online"] | false;
+                        if (!online) {
+                            if (freePayloadAfter) free(payloadBuf);
+                            if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+                                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+                            }
+                            m_statusState.store(2, std::memory_order_release);
+                            m_lastPublishedCfgGen = 0;
+                            clearLiveCardState();
+                            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                                m_skipTurnImmediately.store(true, std::memory_order_release);
+                            }
+                            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+                            return true;
                         }
-                        m_statusState.store(2, std::memory_order_release);
-                        clearLiveCardState();
-                        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                            m_skipTurnImmediately.store(true, std::memory_order_release);
+                        sawServerOnline = true;
+                    }
+                } else if (strcmp(topicBuf, readyTopic) == 0) {
+                    bool explicitWarming = false;
+                    if (parseReadyPayloadInPlaceBuf(payloadBuf, cfg.showPoster, itemIdBuf, sizeof(itemIdBuf), itemHasStream, streamMaxMs, explicitWarming)) {
+                        gotReadyItem = true;
+                    } else if (explicitWarming) {
+                        m_statusState.store(1, std::memory_order_release);
+                        if (!sawReadyFalse) {
+                            sawReadyFalse = true;
+                            readyFalseAtMs = millis();
                         }
-                        sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-                        return true;
                     }
                 }
-            } else if (strcmp(topicBuf, readyTopic) == 0) {
-                bool explicitWarming = false;
-                if (parseReadyPayloadInPlaceBuf(payloadBuf, cfg.showPoster, itemIdBuf, sizeof(itemIdBuf), itemHasStream, streamMaxMs, explicitWarming)) {
-                    gotReadyItem = true;
-                } else if (explicitWarming) {
-                    m_statusState.store(1, std::memory_order_release);
-                    if (!sawReadyFalse) {
-                        sawReadyFalse = true;
-                        readyFalseAtMs = millis();
-                    }
+                if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+                    memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
                 }
+                if (freePayloadAfter) {
+                    free(payloadBuf);
+                }
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
-            if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-            }
-            if (freePayloadAfter) {
-                free(payloadBuf);
-            }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(10));
         }
-    }
 
-    if (!gotReadyItem) {
+        if (!gotReadyItem) {
+            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+            if (!sawReadyFalse) {
+                // Broker connected without a retained `ready` message yet (e.g. fresh server start):
+                // force `config` re-registration on next turn so Showcase initializes this slot.
+                m_lastPublishedCfgGen = 0;
+            }
+            if (sawReadyFalse || sawServerOnline) {
+                m_statusState.store(1, std::memory_order_release);
+                if (playedSoFar == 0U && prevSkips < 10U) {
+                    m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
+                } else if (playedSoFar > 0U) {
+                    m_consecutiveWarmSkips.store(0, std::memory_order_release);
+                }
+                if (!soloSlot) {
+                    m_skipTurnImmediately.store(true, std::memory_order_release);
+                } else {
+                    for (int w = 0; w < 10 && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen; ++w) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Unsubscribe from `readyTopic` BEFORE `start_card`, claim the item, and IMMEDIATELY
+        // close the MQTT TCP socket so 0 sockets remain open during Card scroll and UDP streaming!
+        sendMqttUnsubscribePacket(mqttCli, 3, readyTopic, m_wantActive);
+        char startCardCmd[176];
+        snprintf(
+            startCardCmd,
+            sizeof(startCardCmd),
+            "{\"action\":\"start_card\",\"item_id\":\"%s\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+            itemIdBuf,
+            localIpBuf,
+            localIpBuf
+        );
+        sendMqttPublishPacket(mqttCli, eventsTopic, startCardCmd, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
         sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-        if (sawReadyFalse) {
-            m_statusState.store(1, std::memory_order_release);
-            if (playedSoFar == 0U && prevSkips < 10U) {
-                m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
-            } else if (playedSoFar > 0U) {
-                m_consecutiveWarmSkips.store(0, std::memory_order_release);
-            }
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
-            return true;
-        }
-        return false;
     }
 
-    if (streamMaxMs > maxCfgStreamMs + 2500U) {
-        streamMaxMs = maxCfgStreamMs + 2500U;
+    uint32_t naturalStreamMs = (streamMaxMs > 4000U) ? (streamMaxMs - 4000U) : 2000U;
+    if (streamMaxMs > maxCfgStreamMs + 4500U) {
+        streamMaxMs = maxCfgStreamMs + 4500U;
     }
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
-    uint32_t lastMqttPingMs = millis();
 
-    // Unsubscribe from `readyTopic` BEFORE publishing `start_card` on the same ordered TCP socket:
-    // when Showcase processes `start_card` and promotes the N+1 standby item (`4-10 KB` retained JSON),
-    // the broker keeps it retained on the server instead of flooding `mqttCli`'s LwIP TCP RX window!
-    sendMqttUnsubscribePacket(mqttCli, 5, readyTopic, m_wantActive);
-
-    // Consume-Once: immediately notify server that Card display started (`start_card`)
-    snprintf(
-        m_ioScratch,
-        IO_SCRATCH_BYTES,
-        "{\"action\":\"start_card\",\"item_id\":\"%s\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
-        itemIdBuf,
-        localIpBuf,
-        localIpBuf
-    );
-    sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
-
-    // Phase 1: Wait for organic full-synopsis scroll on the Card (counted in true UTF-8 glyphs)
+    // =========================================================================
+    // STEP B: Zero-Socket Organic Card Dwell (Core 1 scrolls full UTF-8 synopsis)
+    // =========================================================================
     uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(m_liveCard.synopsis));
     uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
     uint32_t cardWaitMs = 4500U;
@@ -1991,36 +1997,22 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
         }
     }
-    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint32_t cardT0 = millis();
-    bool serverWentOffline = false;
-    bool gotStreamEof = false;
-    while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - cardT0) < cardWaitMs) {
-        uint32_t nowMs = millis();
-        if (nowMs - lastMqttPingMs >= 10000U) {
-            sendMqttPingReq(mqttCli, m_wantActive);
-            lastMqttPingMs = nowMs;
-        }
-        pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
-        if (serverWentOffline) {
-            m_statusState.store(2, std::memory_order_release);
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
-            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-            return true;
-        }
+    while (m_wantActive.load(std::memory_order_acquire) &&
+           m_cfgGen.load(std::memory_order_acquire) == startGen &&
+           (millis() - cardT0) < cardWaitMs) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 
-    // Phase 2 & 3: Request real-time `ffmpeg -re` UDP stream (`start_stream`) and reassemble `DMDF` chunks
-    // via zero-allocation non-blocking LwIP socket (`lwip_select` + `lwip_recvfrom` into `m_ioScratch`).
-    if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && itemHasStream && m_frame565) {
-        udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
+    // =========================================================================
+    // STEP C: Pure UDP Stream (`0` TCP sockets open!) + Ephemeral Flash MQTT Start/Stop
+    // =========================================================================
+    if (m_wantActive.load(std::memory_order_acquire) &&
+        m_cfgGen.load(std::memory_order_acquire) == startGen &&
+        itemHasStream &&
+        m_frame565) {
+        int udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
         if (udpFd < 0) {
-            // Socket table full: close MQTT first and hand off item to flat-stack HTTP fallback (`?purge=true`)
-            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
             if (outHttpFallbackItemId && fallbackItemCap > 0) {
                 copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
             }
@@ -2028,26 +2020,37 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         }
 
         memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-        // Drain any stale UDP datagram before starting the new item stream
         while (lwip_recvfrom(udpFd, m_ioScratch, 1040, MSG_DONTWAIT, nullptr, nullptr) > 0) {}
-
         m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-        snprintf(
-            m_ioScratch,
-            IO_SCRATCH_BYTES,
-            "{\"action\":\"start_stream\",\"item_id\":\"%s\",\"udp_port\":%u,\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
-            itemIdBuf,
-            static_cast<unsigned>(localUdpPort),
-            localIpBuf,
-            localIpBuf
-        );
-        if (!sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES)) {
-            closeUdpSocket(udpFd);
-            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-            if (outHttpFallbackItemId && fallbackItemCap > 0) {
-                copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+
+        // Flash MQTT `start_stream`: connects, publishes, and closes TCP BEFORE UDP frames flow!
+        {
+            char startStreamCmd[192];
+            snprintf(
+                startStreamCmd,
+                sizeof(startStreamCmd),
+                "{\"action\":\"start_stream\",\"item_id\":\"%s\",\"udp_port\":%u,\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+                itemIdBuf,
+                static_cast<unsigned>(localUdpPort),
+                localIpBuf,
+                localIpBuf
+            );
+            if (!publishFlashMqttEvent(
+                    mqttHost,
+                    mqttPort,
+                    m_sessionId,
+                    m_mqttConnSeq,
+                    eventsTopic,
+                    startStreamCmd,
+                    m_ioScratch,
+                    IO_SCRATCH_BYTES,
+                    m_wantActive)) {
+                closeUdpSocket(udpFd);
+                if (m_wantActive.load(std::memory_order_acquire) && outHttpFallbackItemId && fallbackItemCap > 0) {
+                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+                }
+                return true;
             }
-            return true;
         }
 
         uint32_t streamT0 = millis();
@@ -2057,13 +2060,17 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         uint64_t chunkMask = 0;
         size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
         constexpr size_t kUdpPktCap = 1040U;
-        constexpr uint32_t kUdpInitialGraceMs = 2200U;
+        constexpr uint32_t kUdpInitialGraceMs = 4000U;
         uint8_t* udpBuf = reinterpret_cast<uint8_t*>(m_ioScratch);
-        gotStreamEof = false;
+        bool stoppedEarlyByClient = false;
+        bool initialGraceTimeout = false;
 
-        while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
+        while (m_wantActive.load(std::memory_order_acquire) &&
+               m_cfgGen.load(std::memory_order_acquire) == startGen &&
+               (millis() - streamT0) < streamMaxMs) {
             if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
-                break; // Strictly enforce configured max stream duration
+                stoppedEarlyByClient = (maxCfgStreamMs + 500U < naturalStreamMs);
+                break;
             }
 
             fd_set rfds;
@@ -2071,11 +2078,10 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             FD_SET(udpFd, &rfds);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = 20000; // 20ms max idle wait; instant microsecond wakeup on packet arrival
+            tv.tv_usec = 20000;
 
             int sel = lwip_select(udpFd + 1, &rfds, nullptr, nullptr, &tv);
             if (sel > 0 && FD_ISSET(udpFd, &rfds)) {
-                // Drain all queued DMDF chunks immediately so ESP32's LwIP UDP mailbox never overflows
                 while (m_wantActive.load(std::memory_order_acquire)) {
                     int rLen = lwip_recvfrom(udpFd, udpBuf, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr);
                     if (rLen <= 0) break;
@@ -2114,43 +2120,72 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             }
 
             uint32_t nowMs = millis();
-            if (nowMs - lastMqttPingMs >= 10000U) {
-                sendMqttPingReq(mqttCli, m_wantActive);
-                lastMqttPingMs = nowMs;
-            }
-            pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
-            if (serverWentOffline || gotStreamEof) {
+            if (firstUdpPktMs > 0U) {
+                uint32_t elapsedStreamMs = nowMs - firstUdpPktMs;
+                uint32_t silenceMs = nowMs - lastUdpPktMs;
+                if (elapsedStreamMs + 600U >= naturalStreamMs && silenceMs >= 450U) {
+                    break; // Natural `ffmpeg -re` completion
+                }
+                if (silenceMs > 2800U) {
+                    stoppedEarlyByClient = true;
+                    break;
+                }
+            } else if ((nowMs - streamT0) > kUdpInitialGraceMs) {
+                initialGraceTimeout = true;
                 break;
             }
-            if (lastUdpPktMs > 0U && (nowMs - lastUdpPktMs) > 1500U) {
-                break; // Stream completed or server stopped
-            }
-            if (lastUdpPktMs == 0U && (nowMs - streamT0) > kUdpInitialGraceMs) {
-                // Container-to-LAN UDP blocked by VM NAT: close UDP + MQTT sockets and return to
-                // `runWorkerLoop()` so plain-HTTP `.rgb565.stream?purge=true` runs on a flat stack!
-                closeUdpSocket(udpFd);
-                sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+        }
+
+        if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
+            stoppedEarlyByClient = true;
+        }
+
+        // Always close UDP socket FIRST to free LwIP pbufs before any post-stream action!
+        closeUdpSocket(udpFd);
+
+        if (initialGraceTimeout) {
+            // Container-to-LAN UDP blocked by VM NAT: stop server UDP stream FIRST so `ffmpeg -re`
+            // never floods port 5568 concurrently with the HTTP `.rgb565.stream?purge=true` fallback!
+            if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+                char stopCmd[128];
+                snprintf(stopCmd, sizeof(stopCmd), "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
+                publishFlashMqttEvent(
+                    mqttHost,
+                    mqttPort,
+                    m_sessionId,
+                    m_mqttConnSeq,
+                    eventsTopic,
+                    stopCmd,
+                    m_ioScratch,
+                    IO_SCRATCH_BYTES,
+                    m_wantActive
+                );
                 if (outHttpFallbackItemId && fallbackItemCap > 0) {
                     copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
                 }
-                return true;
             }
+            return true;
+        }
+
+        // Only open a post-stream flash MQTT socket when `m_wantActive` is true (Invariant 15)
+        // and the client intentionally cut a longer stream short (`maxCfgStreamMs` or live config edit).
+        if (stoppedEarlyByClient && m_wantActive.load(std::memory_order_acquire) && itemIdBuf[0] != '\0') {
+            char stopCmd[128];
+            snprintf(stopCmd, sizeof(stopCmd), "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
+            publishFlashMqttEvent(
+                mqttHost,
+                mqttPort,
+                m_sessionId,
+                m_mqttConnSeq,
+                eventsTopic,
+                stopCmd,
+                m_ioScratch,
+                IO_SCRATCH_BYTES,
+                m_wantActive
+            );
         }
     }
 
-    if (itemIdBuf[0] != '\0' && !serverWentOffline && !gotStreamEof) {
-        snprintf(m_ioScratch, IO_SCRATCH_BYTES, "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
-        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
-    }
-
-    closeUdpSocket(udpFd);
-    sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-    if (serverWentOffline) {
-        m_statusState.store(2, std::memory_order_release);
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
-        }
-    }
     finishTurnItem();
     return true;
 #else
@@ -2165,6 +2200,26 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
 void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
     if (!m_ioScratch) return;
+
+    auto handleTransientHttpFailure = [this]() {
+        if (m_consecutiveNetFailures < 10U) {
+            ++m_consecutiveNetFailures;
+        }
+        if (shouldReportNetworkOffline(m_consecutiveNetFailures)) {
+            m_statusState.store(2, std::memory_order_release);
+            clearLiveCardState();
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+        } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
+            m_statusState.store(1, std::memory_order_release);
+        }
+#if defined(ESP32)
+        for (int w = 0; w < 10 && m_wantActive.load(std::memory_order_acquire); ++w) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+#endif
+    };
 
     char baseServerUrl[112] = "";
     {
@@ -2183,11 +2238,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
                 0,
                 true,
                 false)) {
-            m_statusState.store(2, std::memory_order_release);
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
+            handleTransientHttpFailure();
             return;
         }
     }
@@ -2195,11 +2246,13 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     net::SecureHttpOptions httpOpts;
     httpOpts.ownerId = net::OWNER_SHOWCASE;
     httpOpts.requestTimeoutMs = 3500;
+    httpOpts.handshakeTimeoutSec = 2;
     httpOpts.keepAlive = false;
 
     uint16_t pw = 32;
     uint16_t ph = 32;
     computeCardPosterDims(m_width, m_height, pw, ph);
+    uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
 
     // 1. Register client config (`POST /api/v1/{domain}/config`) using `m_ioScratch`
     size_t pos = 0;
@@ -2237,7 +2290,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, effFps);
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
     appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
@@ -2253,11 +2306,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", baseServerUrl, domain);
         auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", m_ioScratch, httpOpts);
         if (!cfgResp.ok()) {
-            m_statusState.store(2, std::memory_order_release); // NetworkOffline
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
+            handleTransientHttpFailure();
             return;
         }
     }
@@ -2278,13 +2327,10 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
         auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
         if (!nextResp.ok()) {
-            m_statusState.store(2, std::memory_order_release);
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
+            handleTransientHttpFailure();
             return;
         }
+        m_consecutiveNetFailures = 0;
 
         // Zero-copy in-place parse when Content-Length fits in `m_psramMqttRx` (S3) or `m_frame565` (ESP32_STD)
         char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
@@ -2360,10 +2406,13 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     }
 
     if (!parsedReady) {
-        m_statusState.store(serverWarming ? 1 : 2, std::memory_order_release);
-        clearLiveCardState();
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
+        if (serverWarming) {
+            m_statusState.store(1, std::memory_order_release);
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+        } else {
+            handleTransientHttpFailure();
         }
         return;
     }

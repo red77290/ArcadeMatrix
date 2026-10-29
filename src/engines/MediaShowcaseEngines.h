@@ -51,6 +51,7 @@ public:
         if (newW != m_width || newH != m_height) {
             m_width = newW;
             m_height = newH;
+            m_lastPublishedCfgGen = 0;
             m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
             clearLiveCardState();
             m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
@@ -120,6 +121,26 @@ public:
      *        complete comma boundary so partial system/genre IDs are never sent to Showcase.
      */
     static void copySafeCsvTokens(char* dst, size_t cap, const char* src);
+
+    /**
+     * @brief Caps advertised `video_fps` to 15 FPS on non-PSRAM boards (`ESP32_STD`) to keep
+     *        Wi-Fi/LwIP UDP chunk rate <= 120 pkt/s, while preserving full 25..60 FPS on PSRAM (`ESP32-S3`).
+     */
+    static uint8_t resolveEffectiveVideoFps(uint8_t requestedFps, bool hasPsram) {
+        uint8_t clamped = requestedFps < 8U ? 8U : (requestedFps > 60U ? 60U : requestedFps);
+        if (!hasPsram && clamped > 15U) {
+            return 15U;
+        }
+        return clamped;
+    }
+
+    /**
+     * @brief Requires 3 consecutive transport failures before transitioning to `NetworkOffline` (`2`),
+     *        preventing transient LAN/Wi-Fi retries from flashing a false offline banner on the DMD.
+     */
+    static bool shouldReportNetworkOffline(uint8_t consecutiveFailures) {
+        return consecutiveFailures >= 3U;
+    }
 
     static constexpr size_t MAX_SYSTEMS_FILTER_LEN = 560;
     static constexpr size_t MAX_FILTER_LEN = 192;
@@ -201,6 +222,8 @@ protected:
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     uint32_t m_mqttConnSeq = 0;
+    uint32_t m_lastPublishedCfgGen = 0;
+    uint8_t m_consecutiveNetFailures = 0;
 
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};
