@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdlib>
 #include "../core/drawing/IDrawingSurface.h"
+#include "../core/drawing/DmdzStreamDecoder.h"
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
@@ -215,7 +216,7 @@ void InGameShowcaseEngine::activate() {
 void InGameShowcaseEngine::update(EngineContext* context) {
     (void)context;
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
-    if (seq != m_lastRenderedSeq && m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
+    if ((seq & 1U) == 0U && seq != m_lastRenderedSeq && m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
         m_dirty = true;
     }
 }
@@ -231,12 +232,18 @@ void InGameShowcaseEngine::render(EngineContext* context) {
         return;
     }
 
-    const uint16_t* ptr = m_activeFramePtr.load(std::memory_order_acquire);
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
+    if ((seq & 1U) != 0U) {
+        m_renderedNewFrame = false;
+        return;
+    }
+    const uint16_t* ptr = m_activeFramePtr.load(std::memory_order_acquire);
     uint16_t fw = m_frameW.load(std::memory_order_relaxed);
     uint16_t fh = m_frameH.load(std::memory_order_relaxed);
 
-    s->clear(0);
+    if (s->width() != static_cast<int>(fw) || s->height() != static_cast<int>(fh)) {
+        s->clear(0);
+    }
     if (ptr && fw > 0 && fh > 0) {
         s->blit565(ptr, 0, 0, fw, fh);
         m_lastRenderedSeq = seq;
@@ -888,12 +895,12 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
         m_streamFrames[0] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_streamFrames[1] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     } else {
-        // On non-PSRAM ESP32_STD, enforce generous internal SRAM safety reserve (>= 24 KB free after allocation)
-        if (ESP.getFreeHeap() >= frameBytes + 24576U && ESP.getMaxAllocHeap() >= frameBytes) {
+        // Classic ESP32 (`esp32dev`): allocate a single 8 KB frame buffer (`m_streamFrames[0]`) for in-place
+        // `DMDZ` / `DMDS` decoding so 8-bit HUB75 DMA stays pinned with plenty of internal 8-bit DRAM headroom.
+        size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (frameBytes <= 16384U && free8 >= frameBytes + 6144U && largest8 >= frameBytes) {
             m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
-        }
-        if (m_streamFrames[0] && ESP.getFreeHeap() >= frameBytes + 28672U && ESP.getMaxAllocHeap() >= frameBytes) {
-            m_streamFrames[1] = static_cast<uint16_t*>(malloc(frameBytes));
         }
     }
 #else
@@ -990,7 +997,7 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     httpOpts.requestTimeoutMs = 3500;
     httpOpts.keepAlive = false;
 
-    String streamUrl = String(resolvedServerUrl) + "/api/v1/games/stream/" + itemId + ".rgb565.stream?purge=false";
+    String streamUrl = String(resolvedServerUrl) + "/api/v1/games/stream/" + itemId + ".rgb565.stream?purge=false&paced=1&codec=dmdz1";
     auto resp = net::SecureHttpClient::get(streamUrl, httpOpts);
     if (!resp.ok()) {
         return false;
@@ -998,57 +1005,103 @@ bool FrontendSyncEngine::streamReadyItemOnce(
 
     Stream& st = resp.stream();
     uint8_t hdr[16];
+    core::drawing::DmdzStreamHeader parsedHdr;
     if (!readExactTokenAware(st, hdr, sizeof(hdr), m_playSessionToken, jobToken, m_workerStopRequested, 2500) ||
-        memcmp(hdr, "DMDS", 4) != 0) {
+        !core::drawing::DmdzStreamDecoder::parseHeader(hdr, parsedHdr)) {
         return false;
     }
 
-    uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
-    uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
-    uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
-    uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
-    uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
-    uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
+    uint8_t fps = parsedHdr.fps;
+    uint16_t w = parsedHdr.width;
+    uint16_t h = parsedHdr.height;
+    uint16_t totalFrames = parsedHdr.totalFrames;
     size_t framePixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     size_t frameBytes = framePixels * sizeof(uint16_t);
     if (framePixels == 0 || framePixels > m_streamFramePixels || totalFrames == 0) {
         return false;
     }
 
-    uint32_t streamStartMs = millis();
+    core::drawing::DmdzStreamDecoder dmdzDec;
+    if (parsedHdr.isDmdz) {
+        dmdzDec.init(w, h);
+    }
+
+    const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(fps));
+    uint32_t scheduleT0 = 0U;
+    uint32_t publishedOnClock = 0U;
+    const bool singleBuffer = (m_streamFrames[1] == nullptr) || parsedHdr.isDmdz;
+
     for (uint16_t f = 0; f < totalFrames; ++f) {
         if (m_workerStopRequested.load(std::memory_order_acquire) ||
             m_playSessionToken.load(std::memory_order_acquire) != jobToken) {
             return false;
         }
 
-        uint16_t* dst = (m_streamFrames[1] != nullptr) ? m_streamFrames[f & 1U] : m_streamFrames[0];
-        if (!readExactTokenAware(st, reinterpret_cast<uint8_t*>(dst), frameBytes, m_playSessionToken, jobToken, m_workerStopRequested, 2500)) {
+        uint16_t* dst = singleBuffer ? m_streamFrames[0] : m_streamFrames[f & 1U];
+        if (singleBuffer && m_inGameEngine && f > 0U) {
+            m_inGameEngine->beginFrameUpdate();
+        }
+
+        bool okFrame = false;
+        if (parsedHdr.isDmdz) {
+            uint8_t lenBytes[2] = {0, 0};
+            if (readExactTokenAware(st, lenBytes, 2U, m_playSessionToken, jobToken, m_workerStopRequested, 2500)) {
+                const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) | (static_cast<uint16_t>(lenBytes[1]) << 8);
+                dmdzDec.beginFrame(payloadLen);
+                uint8_t decChunk[256];
+                size_t rem = payloadLen;
+                okFrame = true;
+                while (rem > 0U) {
+                    const size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
+                    if (!readExactTokenAware(st, decChunk, take, m_playSessionToken, jobToken, m_workerStopRequested, 2500) ||
+                        !dmdzDec.feed(decChunk, take, dst)) {
+                        okFrame = false;
+                        break;
+                    }
+                    rem -= take;
+                }
+                if (okFrame && !dmdzDec.finishFrame()) {
+                    okFrame = false;
+                }
+            }
+        } else {
+            okFrame = readExactTokenAware(st, reinterpret_cast<uint8_t*>(dst), frameBytes, m_playSessionToken, jobToken, m_workerStopRequested, 2500);
+        }
+
+        if (!okFrame ||
+            m_workerStopRequested.load(std::memory_order_acquire) ||
+            m_playSessionToken.load(std::memory_order_acquire) != jobToken) {
+            if (singleBuffer && m_inGameEngine) {
+                m_inGameEngine->endFrameUpdateWithoutPublish();
+            }
             return false;
         }
 
-        if (m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_playSessionToken.load(std::memory_order_acquire) != jobToken) {
-            return false;
+        const uint32_t now = millis();
+        if (publishedOnClock == 0U) {
+            scheduleT0 = now;
+        } else {
+            const uint32_t due = scheduleT0 + static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
+            const int32_t lagMs = static_cast<int32_t>(now - due);
+            if (lagMs > static_cast<int32_t>(1000U / safeFps)) {
+                scheduleT0 = now - static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
+            } else {
+                while (!m_workerStopRequested.load(std::memory_order_acquire) &&
+                       m_playSessionToken.load(std::memory_order_acquire) == jobToken &&
+                       static_cast<int32_t>(due - millis()) > 0) {
+                    const uint32_t rem = due - millis();
+                    vTaskDelay(pdMS_TO_TICKS(rem > 2U ? (rem - 1U) : 1U));
+                }
+            }
         }
 
         if (m_inGameEngine) {
             m_inGameEngine->publishFrame(dst, w, h);
         }
+        ++publishedOnClock;
         if (f == 0) {
             // Late Preemption: Frame 0 is now buffered and published -> preempt marquee cleanly!
             m_wantsInGameDisplay.store(true, std::memory_order_release);
-        }
-
-        uint32_t targetElapsedMs = (fps > 0U)
-            ? ((static_cast<uint32_t>(f + 1U) * 1000U) / static_cast<uint32_t>(fps))
-            : (static_cast<uint32_t>(f + 1U) * frameDelayMs);
-        while (!m_workerStopRequested.load(std::memory_order_acquire) &&
-               m_playSessionToken.load(std::memory_order_acquire) == jobToken) {
-            uint32_t elapsed = millis() - streamStartMs;
-            if (elapsed >= targetElapsedMs) break;
-            uint32_t rem = targetElapsedMs - elapsed;
-            vTaskDelay(pdMS_TO_TICKS(rem > 20U ? 20U : rem));
         }
     }
     return true;

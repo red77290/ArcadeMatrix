@@ -401,7 +401,6 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     extern ConfigLoader config;
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const auto& matrixCfg = guard->matrix;
-    if (!matrixCfg.dynamicColorDepth) return;
 
     const char* descId = handle.descriptorId;
     if ((!descId || descId[0] == '\0') && sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
@@ -415,10 +414,36 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
             reqs = desc->requirements;
         } else if (strcmp(descId, "ingame_showcase") == 0) {
             reqs.needsNetwork = true;
-            reqs.internalPersistentBytes = 16000;
+            reqs.preferredColorDepth = 8;
+            reqs.internalPersistentBytes = 14000;
             reqs.internalContiguousBytes = 8192;
             reqs.scalesRgb565FrameWithGeometry = true;
         }
+    }
+
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const bool forceMinimalWebUiSyncDepth = (!hasPsram && sourceId == DisplaySourceId::WEBUI_SYNC);
+    const bool hasEngineDepthOverride = (reqs.preferredColorDepth > 0);
+    uint8_t currentDepth = m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : 0;
+
+    if (!matrixCfg.dynamicColorDepth && !hasEngineDepthOverride && !forceMinimalWebUiSyncDepth) {
+        // Restore user-configured manual depth if a previous Showcase override elevated the panel
+        if (matrixCfg.colorDepth > 0 && currentDepth > 0 && currentDepth != matrixCfg.colorDepth && m_matrixEngine) {
+            if (m_surface) {
+                m_surface->setPresentationBackend(nullptr);
+            }
+            m_matrixEngine->releasePanel();
+            auto res = m_matrixEngine->reconfigurePresentationPipeline(matrixCfg.colorDepth);
+            if (m_surface) {
+                m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());
+            }
+            if (m_orientationManager) {
+                m_orientationManager->begin(m_matrixEngine->getDisplay());
+                m_orientationManager->setSurface(m_surface);
+            }
+            (void)res;
+        }
+        return;
     }
 
     // Dynamic TLS requirement refinement:
@@ -427,8 +452,6 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     if (reqs.needsTls && targetEngine) {
         reqs.needsTls = targetEngine->needsTlsFetch();
     }
-
-    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
 
     size_t largestBlock = 0;
     size_t freeInternal = 0;
@@ -444,32 +467,41 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     measure();
 
     uint16_t totalWidth = matrixCfg.width * (matrixCfg.chainLength > 0 ? matrixCfg.chainLength : 1);
-    uint8_t currentDepth = m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : 0;
     bool isDbl = m_matrixEngine ? m_matrixEngine->isDoubleBuffered() : false;
     bool hasCanvas = (m_surface != nullptr);
+
+    const uint8_t effectiveConfigDepth = hasEngineDepthOverride
+        ? ((matrixCfg.colorDepth > reqs.preferredColorDepth) ? matrixCfg.colorDepth : reqs.preferredColorDepth)
+        : matrixCfg.colorDepth;
+    const bool effectiveDynamicDepth = matrixCfg.dynamicColorDepth || hasEngineDepthOverride;
 
     // Stage 1: cheap estimate with the current panel still allocated.
     // During priority WEBUI_SYNC on non-PSRAM boards, temporarily drop HUB75 DMA to 2 bits (8 KB)
     // to reclaim ~24-28 KB of contiguous SRAM while serving the 109 KB SPA + bootstrap API calls.
-    const bool forceMinimalWebUiSyncDepth = (!hasPsram && sourceId == DisplaySourceId::WEBUI_SYNC);
     uint8_t stage1Target = forceMinimalWebUiSyncDepth
         ? 2
         : PipelineSelectionPolicy::resolveTargetDepth(
-              matrixCfg.colorDepth, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+              effectiveConfigDepth, effectiveDynamicDepth, totalWidth, matrixCfg.height,
               hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas);
 
     LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, free=%u, largestBlock=%u, tls=%d)",
-         descId ? descId : "unknown", currentDepth, stage1Target, matrixCfg.colorDepth, (unsigned)freeInternal, (unsigned)largestBlock, reqs.needsTls);
+         descId ? descId : "unknown", currentDepth, stage1Target, effectiveConfigDepth, (unsigned)freeInternal, (unsigned)largestBlock, reqs.needsTls);
 
     uint8_t targetDepth = stage1Target;
-    // Stage 2 (teardown-then-measure): a depth change, or a TLS engine on a zone whose largest block
-    // is too small, frees the whole DMA sandbox first. The depth is then decided on the emptied zone
-    // (exact measurement, no stale view of the outgoing panel) and the panel is rebuilt. Only the HUB75
-    // output goes dark (hundreds of ms); the system zone (Wi-Fi, web server, tasks) keeps running.
-    // On classic ESP32 without PSRAM, any TLS engine requires the clean DMA-released window for prefetchData()
-    // because mbedTLS cannot allocate its record/BIGNUM buffers while HUB75 DMA is active.
+    // Stage 2 (teardown-then-measure): a depth change, a TLS engine needing its clean window, or a
+    // Showcase `preferredColorDepth` upgrade blocked at Stage 1 by lower-depth DMA fragmentation
+    // frees the DMA sandbox first and evaluates the exact coalesced emptied zone.
     const bool tlsNeedsCleanWindow = reqs.needsTls && !hasPsram;
-    const bool needTeardown = m_matrixEngine && (targetDepth != currentDepth || tlsNeedsCleanWindow);
+    const size_t currentDmaBytes = (currentDepth > 0)
+        ? DmaMemoryLayout::calculateTotalBytes(totalWidth, matrixCfg.height, currentDepth, isDbl)
+        : 0U;
+    const bool upgradeWorthProbing = !forceMinimalWebUiSyncDepth &&
+        hasEngineDepthOverride &&
+        currentDepth > 0 &&
+        currentDepth < effectiveConfigDepth &&
+        stage1Target < effectiveConfigDepth &&
+        (freeInternal + currentDmaBytes >= 56000U);
+    const bool needTeardown = m_matrixEngine && (targetDepth != currentDepth || tlsNeedsCleanWindow || upgradeWorthProbing);
     if (needTeardown) {
         if (m_surface) {
             m_surface->setPresentationBackend(nullptr);
@@ -477,17 +509,13 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         m_matrixEngine->releasePanel();
         measure();
         MemTrace::dumpSurvivors("teardown");  // memtrace env only: who pins the emptied zone
-        // Invariant: Stage 2 re-evaluates admission on the emptied zone. When downgrading
-        // (`stage1Target <= currentDepth`), never escalate beyond `stage1Target`; when upgrading
-        // (`stage1Target > currentDepth`, e.g. recovering from 2-bit `WEBUI_SYNC` or 4-bit TLS),
-        // evaluate up to `matrixCfg.colorDepth` (`0` = Auto 8-bit) on the exact emptied heap.
-        const uint8_t stage2Ceiling = (!forceMinimalWebUiSyncDepth && stage1Target > currentDepth)
-            ? matrixCfg.colorDepth
-            : stage1Target;
+        // Stage 2 evaluates admission directly on the exact emptied zone up to `effectiveConfigDepth`
+        // (`0` = Auto 8-bit, or `preferredColorDepth = 8`), eliminating stale Stage-1 DMA descriptor skew.
+        const uint8_t stage2Ceiling = forceMinimalWebUiSyncDepth ? 2 : effectiveConfigDepth;
         targetDepth = forceMinimalWebUiSyncDepth
             ? 2
             : PipelineSelectionPolicy::resolveTargetDepth(
-                  stage2Ceiling, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+                  stage2Ceiling, effectiveDynamicDepth, totalWidth, matrixCfg.height,
                   hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas,
                   /*panelReleased=*/true);
         LOGI("DisplayRuntime", "Teardown-then-measure for '%s': cur=%u -> target=%u (free=%u, largestBlock=%u)",

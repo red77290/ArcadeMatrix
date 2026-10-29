@@ -42,17 +42,35 @@ public:
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool allowRotation() const override { return false; }
 
-    // Lock-free Core 0 -> Core 1 frame handoff
+    // Lock-free Core 0 -> Core 1 frame handoff (EVEN = published, ODD = Core 0 updating single buffer)
+    void beginFrameUpdate() {
+        uint32_t cur = m_frameSeq.load(std::memory_order_relaxed);
+        if ((cur & 1U) == 0U) {
+            m_frameSeq.store(cur + 1U, std::memory_order_release);
+        }
+    }
+
+    void endFrameUpdateWithoutPublish() {
+        uint32_t cur = m_frameSeq.load(std::memory_order_relaxed);
+        if ((cur & 1U) != 0U) {
+            m_frameSeq.store(cur - 1U, std::memory_order_release);
+        }
+    }
+
     void publishFrame(const uint16_t* framePtr, uint16_t w, uint16_t h) {
         m_frameW.store(w, std::memory_order_relaxed);
         m_frameH.store(h, std::memory_order_relaxed);
         m_activeFramePtr.store(framePtr, std::memory_order_release);
-        m_frameSeq.fetch_add(1, std::memory_order_release);
+        uint32_t cur = m_frameSeq.load(std::memory_order_relaxed);
+        uint32_t nextEven = ((cur & 1U) != 0U) ? (cur + 1U) : (cur + 2U);
+        m_frameSeq.store(nextEven, std::memory_order_release);
     }
 
     void clearFrame() {
         m_activeFramePtr.store(nullptr, std::memory_order_release);
-        m_frameSeq.fetch_add(1, std::memory_order_release);
+        uint32_t cur = m_frameSeq.load(std::memory_order_relaxed);
+        uint32_t nextEven = ((cur & 1U) != 0U) ? (cur + 1U) : (cur + 2U);
+        m_frameSeq.store(nextEven, std::memory_order_release);
     }
 
     bool isDisplayEngaged() const {

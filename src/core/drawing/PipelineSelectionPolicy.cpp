@@ -49,6 +49,9 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
 
     // Use candidate nominal depth for initial pipeline sizing
     uint8_t sizingDepth = (colorDepth > 0) ? colorDepth : 8;
+    if (requirements.preferredColorDepth > sizingDepth) {
+        sizingDepth = requirements.preferredColorDepth;
+    }
 
     size_t canvasBytes = (size_t)width * height * sizeof(uint16_t);
     size_t dmaBytesSingle = DmaMemoryLayout::calculateTotalBytes(width, height, sizingDepth, false);
@@ -188,22 +191,28 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     }
 
     // 2. Resolve Effective Color Depth based on pipeline admission
-    if (colorDepth > 0) {
-        // Manual mode: contractually strictly enforced (no auto-downgrade)
+    if (colorDepth > 0 && requirements.preferredColorDepth == 0) {
+        // Manual mode (without engine-level override): contractually strictly enforced
         uint8_t manual = colorDepth;
         if (manual < COLOR_DEPTH_MIN) manual = COLOR_DEPTH_MIN;
         if (manual > COLOR_DEPTH_MAX) manual = COLOR_DEPTH_MAX;
         res.effectiveColorDepth = manual;
     } else {
-        // Auto mode: evaluate candidate depths from highest quality downwards (up to 8 bits, min 2 bits)
-        static const uint8_t s_candidates[] = {8, 7, 6, 5, 4, 3, 2};
-        const uint8_t* candidates = s_candidates;
-        size_t numCandidates = sizeof(s_candidates);
+        // Auto mode or engine-level preferredColorDepth override (e.g. 8-bit Showcase RGB565):
+        // evaluate candidate depths from highest quality ceiling downwards (min 2 bits).
+        uint8_t ceiling = (colorDepth > 0) ? colorDepth : 8;
+        if (requirements.preferredColorDepth > ceiling) {
+            ceiling = requirements.preferredColorDepth;
+        }
+        if (ceiling > COLOR_DEPTH_MAX) ceiling = COLOR_DEPTH_MAX;
+        if (ceiling < 2) ceiling = 2;
 
-        uint8_t selectedDepth = candidates[numCandidates - 1]; // fallback lowest (2 bits)
-        for (size_t i = 0; i < numCandidates; ++i) {
-            uint8_t d = candidates[i];
-            if (pipelineFits(width, height, d, res.descriptor, hasPsram, effectiveMem, requirements)) {
+        static const uint8_t s_candidates[] = {8, 7, 6, 5, 4, 3, 2};
+        uint8_t selectedDepth = 2;
+        for (size_t i = 0; i < sizeof(s_candidates); ++i) {
+            uint8_t d = s_candidates[i];
+            if (d > ceiling) continue;
+            if (pipelineFits(width, height, d, res.descriptor, hasPsram, effectiveMem, requirements, hasPreallocatedCanvas)) {
                 selectedDepth = d;
                 break;
             }
@@ -227,10 +236,13 @@ bool PipelineSelectionPolicy::pipelineFits(
     const PipelineDescriptor& desc,
     bool hasPsram,
     const MemoryBudgetConstraints& memory,
-    const EngineRequirements& rawRequirements)
+    const EngineRequirements& rawRequirements,
+    bool hasPreallocatedCanvas)
 {
     EngineRequirements requirements = rawRequirements.scaledForGeometry(width, height, hasPsram);
-    size_t canvasBytes = (desc.canvasStorage == CanvasStorage::SRAM) ? ((size_t)width * height * sizeof(uint16_t)) : 0;
+    size_t canvasBytes = (desc.canvasStorage == CanvasStorage::SRAM && !hasPreallocatedCanvas)
+        ? ((size_t)width * height * sizeof(uint16_t))
+        : 0;
     size_t dmaBytes = DmaMemoryLayout::calculateTotalBytes(width, height, depth, desc.dmaDoubleBuffered);
 
     // Add HUB75 DMA descriptor overhead (~16 bytes per row plane)
@@ -262,9 +274,10 @@ bool PipelineSelectionPolicy::pipelineFits(
     size_t netReserve = 0;
     if (requirements.needsTls) {
         netReserve += ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE;
-    } else {
-        // Classic ESP32 without PSRAM always runs AsyncWebServer on Core 0.
-        // It requires ASYNC_TCP_ADMISSION_RESERVE to reliably serve WebUI and API traffic.
+    } else if (!hasPreallocatedCanvas) {
+        // Static reference profile evaluation (before WiFi/AsyncWebServer boot): reserve AsyncTCP baseline.
+        // When `hasPreallocatedCanvas == true` (live boot Step 4 after WiFi + WebServerAPI::begin()),
+        // the AsyncWebServer baseline is already allocated and deducted from `memory.freeInternalHeap`.
         netReserve += ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE;
     }
 
@@ -274,8 +287,12 @@ bool PipelineSelectionPolicy::pipelineFits(
     size_t engineRam = (requirements.internalPersistentBytes > requirements.minFreeInternalHeapBytes)
         ? requirements.internalPersistentBytes : requirements.minFreeInternalHeapBytes;
 
+    const size_t systemHeadroom = hasPreallocatedCanvas
+        ? ((requirements.preferredColorDepth > 0 && !requirements.needsTls) ? 11264U : 12288U)
+        : ResourceReserve::SYSTEM_MIN_HEADROOM_RESERVE;
+
     size_t totalInternalNeeded = displayInternalBytes + netReserve + audioReserve +
-                                 ResourceReserve::SYSTEM_MIN_HEADROOM_RESERVE +
+                                 systemHeadroom +
                                  engineRam +
                                  requirements.shadowBytesPerFrame;
 
@@ -348,16 +365,20 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     bool panelReleased)
 {
     EngineRequirements reqs = rawReqs.scaledForGeometry(width, height, hasPsram);
-    // Auto mode resolves to maximum capability ceiling (up to 8 bits)
+    // Auto mode resolves to maximum capability ceiling (up to 8 bits); an engine-level
+    // `preferredColorDepth` (e.g. 8-bit Showcase RGB565) elevates any lower manual ceiling.
     uint8_t maxDepthCeiling = (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0)
         ? 8
         : configuredDepth;
+    if (reqs.preferredColorDepth > maxDepthCeiling) {
+        maxDepthCeiling = reqs.preferredColorDepth;
+    }
 
     if (maxDepthCeiling > 8) maxDepthCeiling = 8;
     if (maxDepthCeiling < 2) maxDepthCeiling = 2;
 
-    // Dynamic presentation adaptation disabled: enforce configured depth strictly
-    if (!dynamicColorDepth) {
+    // Dynamic presentation adaptation disabled: enforce configured depth unless engine overrides it
+    if (!dynamicColorDepth && reqs.preferredColorDepth == 0) {
         if (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0) {
             return resolveEffectiveColorDepth(0, width, height, hasPsram);
         }
@@ -422,8 +443,9 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         }
     } else {
         // Classic ESP32 without PSRAM runs AsyncWebServer on Core 0.
-        // For non-TLS engines, baseline system reserve is the standard OS floor.
-        baseSystemReserve = SYSTEM_MIN_RESERVE; // 12,288 bytes
+        // For non-TLS engines, baseline system reserve is the standard OS floor (11 KB on emptied zone
+        // for preferredColorDepth Showcase engines whose transient buffers are bounded to 14 KB).
+        baseSystemReserve = (reqs.preferredColorDepth > 0 && panelReleased) ? 11264U : SYSTEM_MIN_RESERVE;
         minContiguousNeeded = reqs.internalContiguousBytes > 0 
             ? (reqs.internalContiguousBytes + 2048) 
             : 8192;
@@ -449,6 +471,12 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
 
     // Total new internal DRAM required to safely run the incoming engine
     size_t totalNewRamNeeded = baseSystemReserve + engineDynamicRam + audioReserve;
+    // When retaining an already-allocated HUB75 panel in place (`!panelReleased && candidate == currentDepth`)
+    // for a `preferredColorDepth` engine (Showcase), both `sizeof(Engine)` (~3.7 KB) and the 8-bit HUB75
+    // `lldesc_t` descriptor chain (~7.5 KB) are ALREADY deducted from `currentFreeInternalHeap`; only
+    // `activate()` buffers + OS/LwIP socket headroom (8 KB) remain to be allocated.
+    constexpr size_t SYSTEM_KEEP_DEPTH_RESERVE = 8192U;
+    size_t totalKeepNeeded = SYSTEM_KEEP_DEPTH_RESERVE + engineDynamicRam + audioReserve;
 
     // Query PSRAM headroom if present (ESP32-S3)
     size_t freePsram = 0;
@@ -459,13 +487,11 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
 #endif
 
     // Determine candidate evaluation sequence:
-    // - For TLS engines on non-PSRAM boards: nominal target is min(maxDepthCeiling, 4). 4 bits is chosen
-    //   whenever the measured free heap / largest block admit it; 2 bits is a last resort taken ONLY when
-    //   the admission math proves 4 bits cannot fit (better a degraded TLS engine than none).
-    // - On boards with PSRAM (ESP32-S3), internal DRAM is abundant and canvas is in SPIRAM, so nominal target
-    //   remains maxDepthCeiling (8 bits) with 4-bit/2-bit as runtime pressure fallbacks.
-    // - For non-TLS graphics engines: nominal target is maxDepthCeiling (e.g. 8 bits), with 4-bit and 2-bit fallback floors.
-    uint8_t candidateDepths[3];
+    // - For TLS engines on non-PSRAM boards: nominal target is min(maxDepthCeiling, 4).
+    // - For Showcase RGB565 engines (`preferredColorDepth >= 6`): step gracefully `{8, 7, 6, 4, 2}`
+    //   instead of cliff-dropping from 8 bits straight to 4 bits.
+    // - For standard non-TLS graphics engines: `{maxDepthCeiling, 4, 2}`.
+    uint8_t candidateDepths[5];
     size_t numCandidates = 0;
     bool capTls = reqs.needsTls && !hasPsram;
     uint8_t tlsNominal = (capTls && maxDepthCeiling > 4) ? 4 : maxDepthCeiling;
@@ -473,6 +499,17 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         candidateDepths[0] = tlsNominal;
         numCandidates = 1;
         if (tlsNominal > 2) {
+            candidateDepths[numCandidates++] = 2;
+        }
+    } else if (reqs.preferredColorDepth >= 6) {
+        static const uint8_t kFineLadder[] = {8, 7, 6, 4, 2};
+        for (size_t k = 0; k < sizeof(kFineLadder); ++k) {
+            uint8_t d = kFineLadder[k];
+            if (d <= maxDepthCeiling) {
+                candidateDepths[numCandidates++] = d;
+            }
+        }
+        if (numCandidates == 0) {
             candidateDepths[numCandidates++] = 2;
         }
     } else {
@@ -513,7 +550,10 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         }
         int64_t estimatedDma = (int64_t)currentFreeDma + deltaMem;
 
-        bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)totalNewRamNeeded);
+        size_t reqFreeThreshold = (!panelReleased && reqs.preferredColorDepth > 0 && !reqs.needsTls && candidate == currentDepth)
+            ? totalKeepNeeded
+            : totalNewRamNeeded;
+        bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)reqFreeThreshold);
         bool blockOk = (currentLargestBlock == 0) || (estimatedBlock >= (int64_t)minContiguousNeeded);
         bool dmaOk = (currentFreeDma == 0) || (estimatedDma >= (int64_t)minDmaNeeded);
         bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + 65536));
