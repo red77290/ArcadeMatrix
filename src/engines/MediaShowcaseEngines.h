@@ -86,6 +86,7 @@ public:
         m_lastRenderedCardSeq = 0xFFFFFFFFU;
         m_lastRenderedFrameSeq = 0xFFFFFFFFU;
         m_lastRenderedPhase = 0xFFU;
+        m_cardLastTickMs = millis();
         m_dirty = true;
         m_renderedNewFrame = false;
     }
@@ -114,6 +115,13 @@ public:
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool selfPaced() const override { return true; }
+    uint32_t nextFrameDueInMs() const override {
+        if (m_phase.load(std::memory_order_acquire) == static_cast<uint8_t>(Phase::LiveStream) &&
+            m_renderCard.hasVideoFrame) {
+            return 2U;
+        }
+        return 0xFFFFFFFFU;
+    }
     void setRotationBudget(uint32_t budget) override {
         uint32_t clamped = budget > 0 ? budget : 1;
         m_rotationBudget.store(clamped, std::memory_order_relaxed);
@@ -169,16 +177,13 @@ public:
     static void copySafeCsvTokens(char* dst, size_t cap, const char* src);
 
     /**
-     * @brief Caps advertised `video_fps` to 25 FPS on non-PSRAM boards (`ESP32_STD`) to keep
-     *        Wi-Fi/LwIP UDP chunk rate <= 150 pkt/s (6x 1408-byte chunks/frame), while preserving
-     *        full 25..60 FPS on PSRAM (`ESP32-S3`).
+     * @brief Clamps requested `video_fps` to the supported Showcase protocol range (`8..60` FPS).
+     *        Over paced TCP (`mqtt_tcp` / `http_poll`), `128x32` RGB565 up to 60 FPS is governed
+     *        cleanly by TCP window backpressure without legacy UDP packet-rate clamping.
      */
     static uint8_t resolveEffectiveVideoFps(uint8_t requestedFps, bool hasPsram) {
-        uint8_t clamped = requestedFps < 8U ? 8U : (requestedFps > 60U ? 60U : requestedFps);
-        if (!hasPsram && clamped > 25U) {
-            return 25U;
-        }
-        return clamped;
+        (void)hasPsram;
+        return requestedFps < 8U ? 8U : (requestedFps > 60U ? 60U : requestedFps);
     }
 
     /**
@@ -301,6 +306,12 @@ protected:
     uint32_t m_activatedAtMs = 0;
     uint32_t m_phaseStartedAtMs = 0;
     uint32_t m_lastScrollStepMs = 0;
+    uint32_t m_cardAnimStartMs = 0;
+    uint32_t m_cardLastTickMs = 0;
+    uint32_t m_synSubpixelRem = 0;
+    uint32_t m_synScrollPx = 0;
+    uint32_t m_titleSubpixelRem = 0;
+    uint32_t m_titleStepPx = 0;
     uint32_t m_fallbackCycleMs = 24000;
     uint32_t m_lastRenderedCardSeq = 0xFFFFFFFFU;
     uint32_t m_lastRenderedFrameSeq = 0xFFFFFFFFU;
@@ -334,8 +345,8 @@ protected:
     bool streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath);
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
-    void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);
-    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs, uint32_t speedPxPerSec);
+    void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t stepPx);
+    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t scrollPx);
 };
 
 class RetroGamesEngine : public MediaShowcaseBase {

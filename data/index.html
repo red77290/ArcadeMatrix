@@ -2353,6 +2353,15 @@ const API = {
       throw err;
     }
     const text = await res.text();
+    if (typeof window.invalidateCachedEndpoint === 'function') {
+      if (url.startsWith('/api/instances') || url.startsWith('/api/rotation') || url.startsWith('/api/config') || url.startsWith('/api/system') || url.startsWith('/api/settings')) {
+        window.invalidateCachedEndpoint('/api/instances');
+        window.invalidateCachedEndpoint('/api/rotation');
+      }
+      if (url.startsWith('/api/system') || url.startsWith('/api/settings') || url.startsWith('/api/config')) {
+        window.invalidateCachedEndpoint('/api/engines');
+      }
+    }
     try {
       return JSON.parse(text);
     } catch {
@@ -2371,6 +2380,10 @@ const API = {
       throw new Error(`HTTP Error 401: Unauthorized`);
     }
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    if (typeof window.invalidateCachedEndpoint === 'function' && (url.startsWith('/api/instances') || url.startsWith('/api/rotation'))) {
+      window.invalidateCachedEndpoint('/api/instances');
+      window.invalidateCachedEndpoint('/api/rotation');
+    }
     return await res.json();
   },
 
@@ -6068,35 +6081,39 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   }
 
   const promise = (async () => {
-    let retries = 1;
-    while (true) {
-      try {
-        const data = await API.get(url, timeoutMs);
-        const isValid = (url === '/api/engines')
-          ? (Array.isArray(data) && data.length > 0)
-          : ((Array.isArray(data) && data.length > 0) ||
-             (typeof data === 'object' && data !== null && !data.error && data.status !== 'success' && Object.keys(data).length > 0));
-        if (isValid) {
-          endpointCache.set(url, data);
-          if (isStaticEndpoint) {
-            try {
-              sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
-              localStorage.setItem('am_cache_' + url, JSON.stringify(data));
-            } catch (_) {}
+    let retries = 3;
+    try {
+      while (true) {
+        try {
+          const data = await API.get(url, timeoutMs);
+          const isValid = (url === '/api/engines')
+            ? (Array.isArray(data) && data.length > 0)
+            : ((url === '/api/instances' || url === '/api/rotation')
+              ? Array.isArray(data)
+              : ((Array.isArray(data) && data.length > 0) ||
+                 (typeof data === 'object' && data !== null && !data.error && data.status !== 'success' && Object.keys(data).length > 0)));
+          if (isValid) {
+            endpointCache.set(url, data);
+            if (isStaticEndpoint) {
+              try {
+                sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
+                localStorage.setItem('am_cache_' + url, JSON.stringify(data));
+              } catch (_) {}
+            }
           }
+          return data || [];
+        } catch (err) {
+          if (retries > 0) {
+            retries--;
+            await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+          console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
+          return [];
         }
-        return data || [];
-      } catch (err) {
-        if (retries > 0) {
-          retries--;
-          await new Promise(r => setTimeout(r, 600));
-          continue;
-        }
-        console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
-        return [];
-      } finally {
-        inFlightRequests.delete(url);
       }
+    } finally {
+      inFlightRequests.delete(url);
     }
   })();
 
@@ -7719,6 +7736,9 @@ function normalizeShowcaseMdnsUrl(raw, fallback = 'http://dmdmediashowcase.local
 window.normalizeMdnsEndpointUrl = normalizeMdnsEndpointUrl;
 window.normalizeShowcaseMdnsUrl = normalizeShowcaseMdnsUrl;
 
+let _showcaseStatusInFlight = null;
+const _showcaseReferentialInFlight = new Map();
+
 async function fetchShowcaseReferential(serverUrl, endpointPath, lang, forceRefresh = false) {
   const sysShowcase = (window.__sysConfig && window.__sysConfig.showcase) ? window.__sysConfig.showcase : null;
   if (!forceRefresh && sysShowcase && sysShowcase.enabled === false) {
@@ -7729,7 +7749,11 @@ async function fetchShowcaseReferential(serverUrl, endpointPath, lang, forceRefr
     : normalizeShowcaseMdnsUrl(serverUrl || (sysShowcase && sysShowcase.server_url));
   if ((!window.__showcaseResolvedUrl || forceRefresh) && base.toLowerCase().includes('.local')) {
     try {
-      const st = await API.get(`/api/showcase/status?url=${encodeURIComponent(base)}&enabled=1${forceRefresh ? '&force=1' : ''}`);
+      if (forceRefresh || !_showcaseStatusInFlight) {
+        _showcaseStatusInFlight = API.get(`/api/showcase/status?url=${encodeURIComponent(base)}&enabled=1${forceRefresh ? '&force=1' : ''}`)
+          .finally(() => { _showcaseStatusInFlight = null; });
+      }
+      const st = await _showcaseStatusInFlight;
       if (st && st.resolved_url && !String(st.resolved_url).toLowerCase().includes('.local')) {
         window.__showcaseResolvedUrl = st.resolved_url;
         base = String(st.resolved_url).trim().replace(/\/+$/, '');
@@ -7741,19 +7765,28 @@ async function fetchShowcaseReferential(serverUrl, endpointPath, lang, forceRefr
   if (!forceRefresh && _showcaseReferentialCache.has(fullUrl)) {
     return _showcaseReferentialCache.get(fullUrl);
   }
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(fullUrl, { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    _showcaseReferentialCache.set(fullUrl, data);
-    return data;
-  } catch (err) {
-    console.warn(`[Showcase] Could not fetch referential from ${fullUrl}:`, err);
-    return null;
+  if (!forceRefresh && _showcaseReferentialInFlight.has(fullUrl)) {
+    return _showcaseReferentialInFlight.get(fullUrl);
   }
+  const fetchPromise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(fullUrl, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      _showcaseReferentialCache.set(fullUrl, data);
+      return data;
+    } catch (err) {
+      console.warn(`[Showcase] Could not fetch referential from ${fullUrl}:`, err);
+      return null;
+    } finally {
+      _showcaseReferentialInFlight.delete(fullUrl);
+    }
+  })();
+  _showcaseReferentialInFlight.set(fullUrl, fetchPromise);
+  return fetchPromise;
 }
 
 function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
@@ -8212,10 +8245,10 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    // Fetch instances, rotation, and dynamic engine catalog from backend (EngineRegistry)
-    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
-    const rotationList = await API.get('/api/rotation', 5000).catch(() => []);
-    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    // Fetch instances, rotation, and dynamic engine catalog (warm in cache from WEBUI_SYNC preload)
+    const instancesList = await fetchCachedEndpoint('/api/instances', 5000).catch(() => []);
+    const rotationList = await fetchCachedEndpoint('/api/rotation', 5000).catch(() => []);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 10000).catch(() => []);
     const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
       ? rawDescriptors
       : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);
@@ -8887,11 +8920,38 @@ window.switchMqttSubTab = function(subTabId) {
   }
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  // Ordered startup: initHardwareCapabilities sets transport concurrency, initNavigation restores active page.
-  initHardwareCapabilities();
+document.addEventListener('DOMContentLoaded', async () => {
+  // Ordered startup:
+  // 1. initHardwareCapabilities sets HttpRequestQueue concurrency (1 on ESP32_STD, 3 on WAVESHARE_S3).
+  // 2. initNavigation + loadVersion populate the active tab.
+  // 3. Preload the Display ("Affichage") catalog, instances, rotation, and Showcase server endpoint
+  //    during the initial WEBUI_SYNC pause window so later tab switches require zero heavy ESP32 I/O.
+  await initHardwareCapabilities();
   initNavigation();
   loadVersion();
+  (async () => {
+    try {
+      await fetchCachedEndpoint('/api/engines', 10000);
+      await fetchCachedEndpoint('/api/instances', 5000);
+      await fetchCachedEndpoint('/api/rotation', 5000);
+      if (!window.__sysConfig || !window.__sysConfig.showcase) {
+        const sc = await API.get('/api/system?section=showcase', 5000).catch(() => null);
+        if (sc && typeof sc === 'object' && !sc.error) {
+          window.__sysConfig = Object.assign({}, window.__sysConfig || {}, { showcase: sc });
+        }
+      }
+      const scCfg = window.__sysConfig && window.__sysConfig.showcase;
+      if (scCfg && scCfg.enabled !== false && !window.__showcaseResolvedUrl) {
+        const scUrl = normalizeShowcaseMdnsUrl(scCfg.server_url);
+        if (scUrl.toLowerCase().includes('.local')) {
+          const st = await API.get(`/api/showcase/status?url=${encodeURIComponent(scUrl)}&enabled=1`, 5000).catch(() => null);
+          if (st && st.resolved_url && !String(st.resolved_url).toLowerCase().includes('.local')) {
+            window.__showcaseResolvedUrl = st.resolved_url;
+          }
+        }
+      }
+    } catch (_) {}
+  })();
 });
 
 function switchPage(pageName) {
@@ -9174,8 +9234,8 @@ async function loadDashboardCatalog(force = false) {
   if (!force && container.children.length > 0 && !container.querySelector('.spinner-border') && container.querySelector('.engine-catalog-card, [data-engine-id], #engine-catalog-section')) return;
 
   try {
-    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
-    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    const instancesList = await fetchCachedEndpoint('/api/instances', 5000).catch(() => []);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 10000).catch(() => []);
     const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
       ? rawDescriptors
       : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);

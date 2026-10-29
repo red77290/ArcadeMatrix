@@ -570,17 +570,17 @@ void test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls() {
 }
 
 void test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis() {
-    // Classic ESP32 without PSRAM (`hasPsram = false`): cap advertised UDP stream rate to 25 FPS
-    // (<= 150 DMDF 1408-byte chunks/s on 128x32) while preserving 8..25 FPS settings.
+    // Both classic ESP32 (`hasPsram = false`) and ESP32-S3 (`hasPsram = true`) honor the user's
+    // WebUI `video_fps` override across the full Showcase protocol range `8..60` FPS over paced TCP.
     TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(4U, false));
     TEST_ASSERT_EQUAL_UINT8(12U, MediaShowcaseBase::resolveEffectiveVideoFps(12U, false));
     TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(15U, false));
     TEST_ASSERT_EQUAL_UINT8(20U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, false));
     TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, false));
-    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, false));
-    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, false));
+    TEST_ASSERT_EQUAL_UINT8(30U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, false));
+    TEST_ASSERT_EQUAL_UINT8(60U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, false));
+    TEST_ASSERT_EQUAL_UINT8(60U, MediaShowcaseBase::resolveEffectiveVideoFps(90U, false));
 
-    // ESP32-S3 with PSRAM (`hasPsram = true`): preserve full 20..60 FPS capability unclamped.
     TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(5U, true));
     TEST_ASSERT_EQUAL_UINT8(20U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, true));
     TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, true));

@@ -871,7 +871,13 @@ bool connectMqttBrokerSession(
     uint32_t tcpTimeoutMs = 1500,
     uint32_t connAckTimeoutMs = 900
 ) {
-    if (!wantActive.load(std::memory_order_acquire) || !mqttHost || mqttHost[0] == '\0') {
+    if (!wantActive.load(std::memory_order_acquire) || WebUiSyncEngine::isRequested() ||
+        !mqttHost || mqttHost[0] == '\0') {
+        return false;
+    }
+    if (!hardwareHAL.capabilities().hasPsram &&
+        (ESP.getFreeHeap() < 12288U || heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 3584U)) {
+        vTaskDelay(pdMS_TO_TICKS(120));
         return false;
     }
     cli.setTimeout(2);
@@ -967,18 +973,18 @@ uint16_t MediaShowcaseBase::defaultAccent565() const {
 }
 
 uint32_t MediaShowcaseBase::synopsisPxPerSec(const char* speedStr) {
-    if (!speedStr || speedStr[0] == '\0') return 32U;
-    if (strcmp(speedStr, "1") == 0) return 14U;
-    if (strcmp(speedStr, "2") == 0 || strcasecmp(speedStr, "slow") == 0) return 18U;
+    if (!speedStr || speedStr[0] == '\0') return 30U;
+    if (strcmp(speedStr, "1") == 0) return 15U;
+    if (strcmp(speedStr, "2") == 0 || strcasecmp(speedStr, "slow") == 0) return 20U;
     if (strcmp(speedStr, "3") == 0) return 24U;
-    if (strcmp(speedStr, "4") == 0 || strcasecmp(speedStr, "normal") == 0) return 32U;
-    if (strcmp(speedStr, "5") == 0) return 42U;
-    if (strcmp(speedStr, "6") == 0 || strcasecmp(speedStr, "fast") == 0) return 56U;
+    if (strcmp(speedStr, "4") == 0 || strcasecmp(speedStr, "normal") == 0) return 30U;
+    if (strcmp(speedStr, "5") == 0) return 40U;
+    if (strcmp(speedStr, "6") == 0 || strcasecmp(speedStr, "fast") == 0) return 60U;
     if (strcmp(speedStr, "7") == 0) return 75U;
-    if (strcmp(speedStr, "8") == 0) return 100U;
-    if (strcmp(speedStr, "9") == 0) return 130U;
-    if (strcmp(speedStr, "10") == 0) return 160U;
-    return 32U;
+    if (strcmp(speedStr, "8") == 0) return 90U;
+    if (strcmp(speedStr, "9") == 0) return 120U;
+    if (strcmp(speedStr, "10") == 0) return 150U;
+    return 30U;
 }
 
 void MediaShowcaseBase::computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH) {
@@ -2826,7 +2832,9 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    closeStreamSocket(false);
+    // Send immediate TCP RST (`SO_LINGER {1, 0}`) whenever closing before EOF so LwIP frees all
+    // queued `TCP_WND` rx `pbuf`s in internal DRAM instead of stranding ~6-8 KB in `FIN_WAIT_1`.
+    closeStreamSocket(framesRead < totalFrames);
     if (framesRead > 0U) {
         net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
         uint32_t durMs = std::max<uint32_t>(1U, millis() - streamStartMs);
@@ -2903,6 +2911,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
     m_rotationSlotCount.store(static_cast<uint8_t>(snap.rotation.size()), std::memory_order_relaxed);
 
     // Lock-free seqlock check: only copy CardSnapshot when `m_seq` is EVEN and actually changed
+    uint32_t now = millis();
     uint32_t s1 = m_seq.load(std::memory_order_acquire);
     if ((s1 & 1U) == 0U && s1 != m_lastRenderedCardSeq) {
         CardSnapshot temp = m_liveCard;
@@ -2910,6 +2919,12 @@ void MediaShowcaseBase::update(EngineContext* context) {
         if (s1 == s2) {
             m_renderCard = temp;
             m_lastRenderedCardSeq = s1;
+            m_cardAnimStartMs = now;
+            m_cardLastTickMs = now;
+            m_synSubpixelRem = 0U;
+            m_synScrollPx = 0U;
+            m_titleSubpixelRem = 0U;
+            m_titleStepPx = 0U;
             m_dirty = true;
         }
     }
@@ -2917,10 +2932,10 @@ void MediaShowcaseBase::update(EngineContext* context) {
     uint8_t curPhase = m_phase.load(std::memory_order_acquire);
     if (curPhase != m_lastRenderedPhase) {
         m_lastRenderedPhase = curPhase;
+        m_cardLastTickMs = now;
         m_dirty = true;
     }
 
-    uint32_t now = millis();
     if (curPhase == static_cast<uint8_t>(Phase::LiveStream)) {
         // Tear-free double-buffer handoff: mark dirty when Core 0 finished a complete new frame (`EVEN` seq).
         // Do NOT advance `m_lastRenderedFrameSeq` here — only `render()` advances it after `blit565` succeeds,
@@ -2932,9 +2947,44 @@ void MediaShowcaseBase::update(EngineContext* context) {
             m_lastScrollStepMs = now;
             m_dirty = true;
         }
-    } else if ((now - m_lastScrollStepMs) >= 33U) {
-        m_lastScrollStepMs = now;
-        m_dirty = true;
+    } else if (!m_renderCard.hasData) {
+        if ((now - m_lastScrollStepMs) >= 30U) {
+            m_lastScrollStepMs = now;
+            m_dirty = true;
+        }
+    } else {
+        // Frame-locked 60 Hz Bresenham pixel stepper for eye-comfortable, judder-free LED text scrolling:
+        // normal 12..24 ms Core 1 ticks advance 1 exact nominal 60 Hz quantum (`60/60 = 1 px/frame` on speed 6,
+        // `30/60 = 1 px/2 frames` on speed 4 & title), eliminating `millis()` 1 ms beat stalls and multi-pixel jumps.
+        uint32_t dtMs = now - m_cardLastTickMs;
+        if (dtMs > 0U) {
+            m_cardLastTickMs = now;
+            uint32_t frameUnits = (dtMs <= 24U)
+                ? 1U
+                : std::max<uint32_t>(1U, (std::min<uint32_t>(dtMs, 2000U) * 60U + 500U) / 1000U);
+
+            uint32_t prevTitleStep = m_titleStepPx;
+            uint32_t prevSynPx = m_synScrollPx;
+
+            m_titleSubpixelRem += frameUnits * 30U;
+            m_titleStepPx += m_titleSubpixelRem / 60U;
+            m_titleSubpixelRem %= 60U;
+
+            const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+            if (cfg.showSynopsis && m_renderCard.synopsis[0] != '\0' && (now - m_cardAnimStartMs) >= 900U) {
+                uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+                m_synSubpixelRem += frameUnits * speedPx;
+                m_synScrollPx += m_synSubpixelRem / 60U;
+                m_synSubpixelRem %= 60U;
+            }
+
+            if (m_titleStepPx != prevTitleStep || m_synScrollPx != prevSynPx) {
+                m_dirty = true;
+            } else if ((now - m_lastScrollStepMs) >= 250U) {
+                m_lastScrollStepMs = now;
+                m_dirty = true;
+            }
+        }
     }
 }
 
@@ -2945,7 +2995,7 @@ void MediaShowcaseBase::drawScrollingLine(
     int maxX,
     int y,
     uint16_t color,
-    uint32_t elapsedMs
+    uint32_t stepPx
 ) {
     if (!s || !text || text[0] == '\0' || minX >= maxX) return;
     int availW = maxX - minX;
@@ -2957,9 +3007,10 @@ void MediaShowcaseBase::drawScrollingLine(
     }
 
     int totalScroll = textW - availW + 12;
-    int cycleSteps = totalScroll + 28; // 14 steps (~630ms) start hold + scroll + 14 steps end hold
-    int step = static_cast<int>((elapsedMs / 45U) % static_cast<uint32_t>(cycleSteps));
-    int offset = std::min(totalScroll, std::max(0, step - 14));
+    int holdSteps = 22; // ~730ms start hold + scroll + ~730ms end hold at 30 px/s
+    int cycleSteps = totalScroll + holdSteps * 2;
+    int step = static_cast<int>(stepPx % static_cast<uint32_t>(cycleSteps));
+    int offset = std::min(totalScroll, std::max(0, step - holdSteps));
     drawClippedText5x7(s, text, minX - offset, y, minX, maxX, color);
 }
 
@@ -2970,8 +3021,7 @@ void MediaShowcaseBase::drawSinglePassSynopsis(
     int maxX,
     int y,
     uint16_t color,
-    uint32_t elapsedMs,
-    uint32_t speedPxPerSec
+    uint32_t scrollPx
 ) {
     if (!s || !text || text[0] == '\0' || minX >= maxX) return;
     int availW = maxX - minX;
@@ -2982,10 +3032,9 @@ void MediaShowcaseBase::drawSinglePassSynopsis(
         return;
     }
 
-    uint32_t activeScrollMs = (elapsedMs > 900U) ? (elapsedMs - 900U) : 0U;
     int maxScrollPx = (textW - availW) + (availW / 2);
-    int scrollPx = std::min(maxScrollPx, static_cast<int>((activeScrollMs * speedPxPerSec) / 1000U));
-    drawClippedText5x7(s, text, minX - scrollPx, y, minX, maxX, color);
+    int clampedPx = std::min(maxScrollPx, static_cast<int>(scrollPx));
+    drawClippedText5x7(s, text, minX - clampedPx, y, minX, maxX, color);
 }
 
 void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs) {
@@ -3222,8 +3271,6 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
         return;
     }
 
-    uint32_t cardElapsedMs = (millis() >= m_phaseStartedAtMs) ? (millis() - m_phaseStartedAtMs) : elapsedMs;
-    uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
     uint16_t sepCol = s->color565(28, 36, 52);
     uint16_t yearCol = s->color565(165, 180, 200);
     uint16_t synCol = s->color565(205, 214, 226);
@@ -3248,12 +3295,12 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
             }
             posterBottom = py + ph + 3;
         }
-        drawScrollingLine(s, card.title, 2, mW - 2, posterBottom, 0xFFFF, cardElapsedMs);
+        drawScrollingLine(s, card.title, 2, mW - 2, posterBottom, 0xFFFF, m_titleStepPx);
         int sepY = posterBottom + 10;
         if (sepY < mH - 10) {
             s->drawFastHLine(2, sepY, mW - 4, sepCol);
             if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-                drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, sepY + 3, synCol, cardElapsedMs, speedPx);
+                drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, sepY + 3, synCol, m_synScrollPx);
             }
         }
         return;
@@ -3277,10 +3324,10 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
         if (card.rating[0] != '\0') {
             drawClippedText3x5(s, card.rating, rightX, 23, rightX, mW - 2, 0xFFE0);
         }
-        drawScrollingLine(s, card.title, 2, mW - 2, 35, 0xFFFF, cardElapsedMs);
+        drawScrollingLine(s, card.title, 2, mW - 2, 35, 0xFFFF, m_titleStepPx);
         s->drawFastHLine(2, 45, mW - 4, sepCol);
         if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-            drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, 49, synCol, cardElapsedMs, speedPx);
+            drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, 49, synCol, m_synScrollPx);
         }
         return;
     }
@@ -3318,13 +3365,13 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
                 drawClippedText5x7(s, card.rating, rx, 2, curX, maxX, 0xFFE0);
             }
         }
-        drawScrollingLine(s, card.title, textX, maxX, 14, 0xFFFF, cardElapsedMs);
+        drawScrollingLine(s, card.title, textX, maxX, 14, 0xFFFF, m_titleStepPx);
         if (card.year[0] != '\0') {
             drawClippedText5x7(s, card.year, textX, 25, textX, maxX, yearCol);
         }
         s->drawFastHLine(textX, 36, std::max(1, maxX - textX), sepCol);
         if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-            drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 43, synCol, cardElapsedMs, speedPx);
+            drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 43, synCol, m_synScrollPx);
         }
         return;
     }
@@ -3382,14 +3429,14 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
     }
 
     // Middle Row (y = 10..17): Full 5x7 UTF-8 Accented Title strictly clipped to [textX, maxX)
-    drawScrollingLine(s, card.title, textX, maxX, 10, 0xFFFF, cardElapsedMs);
+    drawScrollingLine(s, card.title, textX, maxX, 10, 0xFFFF, m_titleStepPx);
 
     // Subtle Horizontal Divider (y = 19)
     s->drawFastHLine(textX, 19, std::max(1, maxX - textX), sepCol);
 
     // Bottom Row (y = 22..29): Full 5x7 UTF-8 Accented Synopsis strictly clipped to [textX, maxX)
     if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-        drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 22, synCol, cardElapsedMs, speedPx);
+        drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 22, synCol, m_synScrollPx);
     }
 }
 
