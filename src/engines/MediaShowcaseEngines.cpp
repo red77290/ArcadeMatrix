@@ -704,6 +704,16 @@ bool drainFromStream(Stream& st, size_t len, const std::atomic<bool>& wantActive
     return true;
 }
 
+#if defined(ESP32)
+inline size_t showcaseFree8BitHeap() {
+    return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+inline size_t showcaseLargest8BitBlock() {
+    return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+#endif
+
 #if defined(ESP32) && !defined(UNIT_TEST)
 size_t encodeMqttRemainingLength(uint8_t* out, size_t remLen) {
     size_t idx = 0;
@@ -853,10 +863,14 @@ bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId, const std::ato
     return writeAllToClient(cli, pkt, off, wantActive);
 }
 
+inline bool shouldYieldShowcaseToWebUi(bool hasPsram) {
+    return !hasPsram && WebUiSyncEngine::isRequested();
+}
+
 void sendMqttDisconnectAndStop(WiFiClient& cli, const std::atomic<bool>& wantActive) {
     if (cli.connected()) {
         const uint8_t discPkt[2] = {0xE0, 0x00};
-        writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 300);
+        writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 200);
     }
     cli.stop();
 }
@@ -876,7 +890,7 @@ bool connectMqttBrokerSession(
         return false;
     }
     if (!hardwareHAL.capabilities().hasPsram &&
-        (ESP.getFreeHeap() < 12288U || heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 3584U)) {
+        (showcaseFree8BitHeap() < 5120U || showcaseLargest8BitBlock() < 2560U)) {
         vTaskDelay(pdMS_TO_TICKS(120));
         return false;
     }
@@ -1082,17 +1096,17 @@ bool MediaShowcaseBase::allocateBuffers() {
     } else {
         // Classic ESP32 (`esp32dev`): allocate LARGEST contiguous block (`m_frame565` = 8,192 B on 128x32)
         // FIRST so smaller `m_poster565` (2,048 B) and `m_ioScratch` (1,472 B) allocations never fragment
-        // the largest free internal DRAM block.
+        // the largest free internal 8-bit DRAM block.
         if (frameBytes > 0 && frameBytes <= 16384U &&
-            ESP.getFreeHeap() >= (frameBytes + 10240U) &&
-            ESP.getMaxAllocHeap() >= frameBytes) {
+            showcaseFree8BitHeap() >= (frameBytes + 6144U) &&
+            showcaseLargest8BitBlock() >= frameBytes) {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
         if (!m_frame565) {
-            LOGW("Showcase", "Frame buffer deferred (%u B): free=%u maxAlloc=%u",
+            LOGW("Showcase", "Frame buffer deferred (%u B): free8=%u maxAlloc8=%u",
                  static_cast<unsigned>(frameBytes),
-                 static_cast<unsigned>(ESP.getFreeHeap()),
-                 static_cast<unsigned>(ESP.getMaxAllocHeap()));
+                 static_cast<unsigned>(showcaseFree8BitHeap()),
+                 static_cast<unsigned>(showcaseLargest8BitBlock()));
         }
         m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
@@ -1431,9 +1445,15 @@ void MediaShowcaseBase::startWorkerTask() {
 
 void MediaShowcaseBase::stopWorkerTaskBounded(uint32_t timeoutMs) {
 #if defined(ESP32) && !defined(UNIT_TEST)
+    const bool hadTask = (m_task != nullptr) || m_taskAlive.load(std::memory_order_acquire);
     uint32_t start = millis();
     while (m_taskAlive.load(std::memory_order_acquire) && (millis() - start) < timeoutMs) {
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (hadTask && !m_taskAlive.load(std::memory_order_acquire)) {
+        // Yield briefly so Core 0 IDLE0 runs prvCheckTasksWaitingTermination() and reclaims
+        // ShowcaseWkr's 5.7 KB stack + TCB before pipeline color-depth admission measures heap.
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     m_task = nullptr;
 #else
@@ -1832,6 +1852,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
         uint32_t readyFalseAtMs = 0;
 
         while (m_wantActive.load(std::memory_order_acquire) &&
+               !shouldYieldShowcaseToWebUi(m_hasPsram) &&
                m_cfgGen.load(std::memory_order_acquire) == startGen &&
                (millis() - waitReadyStart) < maxWaitMs &&
                !gotReadyItem) {
@@ -1883,7 +1904,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                     payloadBuf = m_ioScratch;
                 } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
                     payloadBuf = primaryRxBuf;
-                } else if (ESP.getMaxAllocHeap() >= (payloadLen + 2048U)) {
+                } else if (showcaseLargest8BitBlock() >= (payloadLen + 2048U)) {
                     payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
                     freePayloadAfter = (payloadBuf != nullptr);
                 }
@@ -1942,6 +1963,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
         if (!gotReadyItem) {
             sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+            if (shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                return true;
+            }
             if (!sawReadyFalse) {
                 // Broker connected without a retained `ready` message yet (e.g. fresh server start):
                 // force `config` re-registration on next turn so Showcase initializes this slot.
@@ -1955,9 +1979,25 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                     m_consecutiveWarmSkips.store(0, std::memory_order_release);
                 }
                 if (!soloSlot) {
+                    // Dwell cleanly on the animated "Preparing stream..." waiting screen for ~2.8s
+                    // (with 0 sockets open) before rotating to the next Showcase domain, preventing
+                    // 2 Hz ping-pong connection storms and LwIP TIME_WAIT PCB heap fragmentation.
+                    for (int w = 0;
+                         w < 56 &&
+                         m_wantActive.load(std::memory_order_acquire) &&
+                         !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                         m_cfgGen.load(std::memory_order_acquire) == startGen;
+                         ++w) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                    }
                     m_skipTurnImmediately.store(true, std::memory_order_release);
                 } else {
-                    for (int w = 0; w < 10 && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen; ++w) {
+                    for (int w = 0;
+                         w < 10 &&
+                         m_wantActive.load(std::memory_order_acquire) &&
+                         !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                         m_cfgGen.load(std::memory_order_acquire) == startGen;
+                         ++w) {
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }
                 }
@@ -2001,6 +2041,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     }
     uint32_t cardT0 = millis();
     while (m_wantActive.load(std::memory_order_acquire) &&
+           !shouldYieldShowcaseToWebUi(m_hasPsram) &&
            m_cfgGen.load(std::memory_order_acquire) == startGen &&
            (millis() - cardT0) < cardWaitMs) {
         vTaskDelay(pdMS_TO_TICKS(30));
@@ -2010,13 +2051,14 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     // STEP C: Zero-Heap TCP Stream Handoff (`DMDS` `.rgb565.stream`)
     // =========================================================================
     if (m_wantActive.load(std::memory_order_acquire) &&
+        !shouldYieldShowcaseToWebUi(m_hasPsram) &&
         m_cfgGen.load(std::memory_order_acquire) == startGen &&
         itemHasStream) {
         if (!m_frame565 && !m_hasPsram) {
             size_t frameBytes = m_framePixels * sizeof(uint16_t);
             if (frameBytes > 0 && frameBytes <= 16384U &&
-                ESP.getFreeHeap() >= (frameBytes + 8192U) &&
-                ESP.getMaxAllocHeap() >= frameBytes) {
+                showcaseFree8BitHeap() >= (frameBytes + 5120U) &&
+                showcaseLargest8BitBlock() >= frameBytes) {
                 m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
                 if (m_frame565) {
                     memset(m_frame565, 0, frameBytes);
@@ -2488,7 +2530,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     addr.sin_port = htons(resolvedPort);
     if (inet_aton(resolvedHost, &addr.sin_addr) == 0) {
         IPAddress resolvedIp;
-        if (ESP.getFreeHeap() < 10240U || !WiFi.hostByName(resolvedHost, resolvedIp)) {
+        if (showcaseFree8BitHeap() < 5120U || !WiFi.hostByName(resolvedHost, resolvedIp)) {
             return false;
         }
         addr.sin_addr.s_addr = static_cast<uint32_t>(resolvedIp);
@@ -2524,11 +2566,13 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     if (rc != 0) {
         uint32_t connT0 = millis();
         bool connected = false;
-        while ((millis() - connT0) < 1500U && m_wantActive.load(std::memory_order_acquire)) {
+        while ((millis() - connT0) < 1500U &&
+               m_wantActive.load(std::memory_order_acquire) &&
+               !shouldYieldShowcaseToWebUi(m_hasPsram)) {
             fd_set wfds;
             FD_ZERO(&wfds);
             FD_SET(fd, &wfds);
-            struct timeval tv = {0, 150000};
+            struct timeval tv = {0, 80000};
             int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
             if (sel > 0 && FD_ISSET(fd, &wfds)) {
                 int soErr = -1;
@@ -2546,7 +2590,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     }
 
     lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    struct timeval rcvTv = {0, 250000}; // 250 ms slice keeps `deactivate()` responsive (< 250 ms)
+    struct timeval rcvTv = {0, 80000}; // 80 ms slice keeps `deactivate()` & `WEBUI_SYNC` preemption snappy
     struct timeval sndTv = {1, 0};
     lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
     lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
@@ -2570,7 +2614,10 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     size_t bodyStart = 0;
     bool foundHeaderEnd = false;
     uint32_t hdrT0 = millis();
-    while (!foundHeaderEnd && (millis() - hdrT0) < 3500U && m_wantActive.load(std::memory_order_acquire)) {
+    while (!foundHeaderEnd &&
+           (millis() - hdrT0) < 3500U &&
+           m_wantActive.load(std::memory_order_acquire) &&
+           !shouldYieldShowcaseToWebUi(m_hasPsram)) {
         if (scratchUsed >= IO_SCRATCH_BYTES - 1U) {
             break;
         }
@@ -2629,7 +2676,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             }
             uint32_t lastProg = millis();
             while (got < wantLen) {
-                if (!m_wantActive.load(std::memory_order_acquire)) {
+                if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
                     return false;
                 }
                 int r = lwip_recv(fd, dst + got, wantLen - got, 0);
@@ -2654,7 +2701,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         size_t got = 0;
         uint32_t lastProg = millis();
         while (got < wantLen) {
-            if (!m_wantActive.load(std::memory_order_acquire)) {
+            if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
                 return false;
             }
             if (preBufferedOff < preBufferedEnd) {
@@ -2727,14 +2774,25 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     }
 
     const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-    uint32_t maxAllowedMs = configuredMaxStreamMs(cfg);
+    uint32_t headerExpectedMs =
+        ((static_cast<uint32_t>(totalFrames) * 1000U) / std::max<uint32_t>(1U, static_cast<uint32_t>(fps))) + 4500U;
+    uint32_t maxAllowedMs = std::min<uint32_t>(
+        180000U,
+        std::max<uint32_t>(configuredMaxStreamMs(cfg) + 4000U, headerExpectedMs)
+    );
+    uint32_t minInterFrameMs = (fps > 0U && fps <= 60U)
+        ? std::max<uint32_t>(10U, ((1000U / static_cast<uint32_t>(fps)) * 4U) / 5U)
+        : 12U;
+    uint32_t lastFrameCommitMs = 0U;
     uint32_t streamStartMs = millis();
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     m_presentedStreamFrames.store(0, std::memory_order_release);
 
     uint16_t framesRead = 0;
     for (uint16_t f = 0; f < totalFrames; ++f) {
-        if (!m_wantActive.load(std::memory_order_acquire) || m_cfgGen.load(std::memory_order_acquire) != startGen) break;
+        if (!m_wantActive.load(std::memory_order_acquire) ||
+            shouldYieldShowcaseToWebUi(m_hasPsram) ||
+            m_cfgGen.load(std::memory_order_acquire) != startGen) break;
         if ((millis() - streamStartMs) >= maxAllowedMs) break;
 
         // 1. Wait for the next frame's payload bytes to arrive WHILE `m_frameSeq` remains EVEN!
@@ -2751,13 +2809,14 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             uint32_t waitT0 = millis();
             bool socketReadable = false;
             while (m_wantActive.load(std::memory_order_acquire) &&
+                   !shouldYieldShowcaseToWebUi(m_hasPsram) &&
                    m_cfgGen.load(std::memory_order_acquire) == startGen &&
                    (millis() - streamStartMs) < maxAllowedMs &&
                    (millis() - waitT0) < 3500U) {
                 fd_set rfds;
                 FD_ZERO(&rfds);
                 FD_SET(fd, &rfds);
-                struct timeval tv = {0, 25000};
+                struct timeval tv = {0, 20000};
                 int sel = lwip_select(fd + 1, &rfds, nullptr, nullptr, &tv);
                 if (sel > 0 && FD_ISSET(fd, &rfds)) {
                     socketReadable = true;
@@ -2772,14 +2831,23 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             }
         }
 
-        // 2. Ensure Core 1 has blitted Frame `f - 1` before overwriting `m_frame565` (bounded <= 18 ms)
-        //    while incoming Frame `f` sits safely in LwIP's `TCP_WND`.
+        // 2. Ensure Core 1 has blitted Frame `f - 1` AND absorb Wi-Fi AMPDU packet coalescing bursts
+        //    so two consecutive panorama frames never overwrite each other 2 ms apart on the LEDs!
         if (framesRead > 0U) {
             uint32_t handoffT0 = millis();
             while (m_wantActive.load(std::memory_order_acquire) &&
+                   !shouldYieldShowcaseToWebUi(m_hasPsram) &&
                    m_consumedFrameSeq.load(std::memory_order_acquire) != m_frameSeq.load(std::memory_order_relaxed) &&
                    (millis() - handoffT0) < 18U) {
                 vTaskDelay(1);
+            }
+            if (serverPaced) {
+                while (m_wantActive.load(std::memory_order_acquire) &&
+                       !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                       (millis() - lastFrameCommitMs) < minInterFrameMs) {
+                    uint32_t remGap = minInterFrameMs - (millis() - lastFrameCommitMs);
+                    vTaskDelay(pdMS_TO_TICKS(remGap > 2U ? (remGap - 1U) : 1U));
+                }
             }
         }
 
@@ -2801,6 +2869,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         if (!okFrame) {
             break;
         }
+        lastFrameCommitMs = millis();
         ++framesRead;
         if (!m_liveCard.hasVideoFrame) {
             m_seq.fetch_add(1, std::memory_order_acq_rel);

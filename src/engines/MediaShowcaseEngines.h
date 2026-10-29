@@ -132,6 +132,7 @@ public:
     }
     uint32_t computeTurnSafetyTimeoutMs() const;
     bool isFinished() const override;
+    bool evictOnInactiveLowMemory() const override { return true; }
 
     /**
      * @brief Zero-copy in-place parser for an MQTT `ready` JSON payload (`dmd_showcase/clients/{id}/{domain}/ready`).

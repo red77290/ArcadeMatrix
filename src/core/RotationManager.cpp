@@ -354,10 +354,34 @@ void RotationManager::switchToModule(int index) {
       }
   }
 
-  // Deactivate old engine
+  const bool switchingInstance =
+      (currentActiveInstanceId[0] == '\0') || (strcmp(currentActiveInstanceId, newInstanceId) != 0);
+
+  // Deactivate (or retire on non-PSRAM if large stateless Showcase object) old engine
   if (currentActiveInstanceId[0] != '\0' && strcmp(currentActiveInstanceId, newInstanceId) != 0) {
-      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
-      if (oldEngine) {
+      char outgoingId[32]{0};
+      strncpy(outgoingId, currentActiveInstanceId, sizeof(outgoingId) - 1);
+      IEngine* oldEngine = findActiveEngine(outgoingId);
+      bool evictedOutgoing = false;
+#if defined(ESP32)
+      if (!hardwareHAL.capabilities().hasPsram && oldEngine && oldEngine->evictOnInactiveLowMemory()) {
+          for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+              if (!activeEngines[i].pendingRetirement &&
+                  activeEngines[i].engine.get() == oldEngine) {
+                  retireEngineSlot(i);
+                  evictedOutgoing = true;
+                  break;
+              }
+          }
+          if (evictedOutgoing) {
+              uint32_t waitStart = millis();
+              while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 120U) {
+                  vTaskDelay(pdMS_TO_TICKS(5));
+              }
+          }
+      }
+#endif
+      if (!evictedOutgoing && oldEngine) {
           oldEngine->deactivate();
       }
       if (m_ctx && m_ctx->getSurface()) {
@@ -371,8 +395,9 @@ void RotationManager::switchToModule(int index) {
               m_slotFxStartedMs = millis();
           }
       }
-      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s' -> Baseline Heap: Free=%u, LargestBlock=%u",
-           currentActiveInstanceId, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s'%s -> Baseline Heap: Free=%u, LargestBlock=%u",
+           outgoingId, evictedOutgoing ? " (evicted)" : "",
+           (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   // Activate new engine
@@ -385,7 +410,7 @@ void RotationManager::switchToModule(int index) {
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
-      if (strcmp(currentActiveInstanceId, newInstanceId) != 0 || (newEngine->selfPaced() && newEngine->isFinished())) {
+      if (switchingInstance || (newEngine->selfPaced() && newEngine->isFinished())) {
           newEngine->activate();
       }
   }

@@ -815,8 +815,18 @@ void test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capac
     TEST_ASSERT_TRUE(dSeries.requirements.scalesRgb565FrameWithGeometry);
     TEST_ASSERT_TRUE(dAnime.requirements.scalesRgb565FrameWithGeometry);
 
+    // 1b. All 4 Showcase engines opt into low-memory inactive eviction (~3.4 KB stateless C++ footprint),
+    //     unlike stateful/TLS engines which keep `evictOnInactiveLowMemory() == false`.
+    MovieShowcaseEngine movieEng;
+    SeriesShowcaseEngine seriesEng;
+    AnimeShowcaseEngine animeEng;
+    TEST_ASSERT_TRUE(movieEng.evictOnInactiveLowMemory());
+    TEST_ASSERT_TRUE(seriesEng.evictOnInactiveLowMemory());
+    TEST_ASSERT_TRUE(animeEng.evictOnInactiveLowMemory());
+
     // 2. Long 85-char `item_id` must be preserved losslessly (`MAX_ITEM_ID_LEN = 128`, zero truncation)
     RetroGamesEngine eng;
+    TEST_ASSERT_TRUE(eng.evictOnInactiveLowMemory());
     const char* longId = "pkg_games_screenscraper_castlevania_symphony_of_the_night_psx_usa_1997_1234567890abcd";
     char jsonBuf[512];
     snprintf(

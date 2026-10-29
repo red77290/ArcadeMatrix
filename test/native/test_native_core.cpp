@@ -2162,6 +2162,31 @@ void test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling(v
         8, 110000, 220000, 80000, true, true, /*panelReleased=*/false
     );
     TEST_ASSERT_EQUAL_UINT8(8, psram256x64);
+
+    // 4e. Stage 1 recovery from 2-bit WEBUI_SYNC (`cur=2 -> target=8`) on real esp32dev heap metrics
+    //     (`free=54924, largestBlock=34804`): TLSF fragment absorption avoids the 12-byte false downgrade to 4-bit.
+    uint8_t recoverFrom2Bit = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        2, 34804, 54924, 46040, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, recoverFrom2Bit);
+
+    // 4f. Stage 1 recovery from 4-bit TLS/pressured slot (`cur=4 -> target=8`) on esp32dev
+    uint8_t recoverFrom4Bit = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        4, 24564, 46500, 46500, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, recoverFrom4Bit);
+
+    // 4g. Base IEngine contract defaults `evictOnInactiveLowMemory()` to false so TLS caches persist
+    struct DummyCachedEngine : public IEngine {
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override {}
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {}
+    } dummyCached;
+    TEST_ASSERT_FALSE(dummyCached.evictOnInactiveLowMemory());
 }
 
 #include "core/NetworkBudget.h"
