@@ -567,6 +567,33 @@ void test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls() {
     NetworkBudget::clearBulkTransfer();
 }
 
+void test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis() {
+    // Classic ESP32 without PSRAM (`hasPsram = false`): cap advertised UDP stream rate to 15 FPS
+    // (<= 120 DMDF chunks/s on 128x32) while preserving 8..15 FPS settings.
+    TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(4U, false));
+    TEST_ASSERT_EQUAL_UINT8(12U, MediaShowcaseBase::resolveEffectiveVideoFps(12U, false));
+    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(15U, false));
+    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, false));
+    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, false));
+    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, false));
+    TEST_ASSERT_EQUAL_UINT8(15U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, false));
+
+    // ESP32-S3 with PSRAM (`hasPsram = true`): preserve full 20..60 FPS capability unclamped.
+    TEST_ASSERT_EQUAL_UINT8(8U, MediaShowcaseBase::resolveEffectiveVideoFps(5U, true));
+    TEST_ASSERT_EQUAL_UINT8(20U, MediaShowcaseBase::resolveEffectiveVideoFps(20U, true));
+    TEST_ASSERT_EQUAL_UINT8(25U, MediaShowcaseBase::resolveEffectiveVideoFps(25U, true));
+    TEST_ASSERT_EQUAL_UINT8(30U, MediaShowcaseBase::resolveEffectiveVideoFps(30U, true));
+    TEST_ASSERT_EQUAL_UINT8(60U, MediaShowcaseBase::resolveEffectiveVideoFps(60U, true));
+    TEST_ASSERT_EQUAL_UINT8(60U, MediaShowcaseBase::resolveEffectiveVideoFps(90U, true));
+
+    // 3-strike network offline hysteresis prevents transient single-packet drops from flashing offline.
+    TEST_ASSERT_FALSE(MediaShowcaseBase::shouldReportNetworkOffline(0U));
+    TEST_ASSERT_FALSE(MediaShowcaseBase::shouldReportNetworkOffline(1U));
+    TEST_ASSERT_FALSE(MediaShowcaseBase::shouldReportNetworkOffline(2U));
+    TEST_ASSERT_TRUE(MediaShowcaseBase::shouldReportNetworkOffline(3U));
+    TEST_ASSERT_TRUE(MediaShowcaseBase::shouldReportNetworkOffline(5U));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -581,6 +608,7 @@ void setup() {
     RUN_TEST(test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation);
     RUN_TEST(test_media_showcase_render_new_frame_handoff_and_waiting_pixel_art);
     RUN_TEST(test_media_showcase_utf8_accents_poster_clipping_and_plain_http_no_tls);
+    RUN_TEST(test_media_showcase_esp32dev_fps_cap_vs_psram_and_offline_hysteresis);
     UNITY_END();
 }
 
