@@ -40,6 +40,8 @@ public:
     bool isRealtime() const override { return true; }
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_renderedNewFrame; }
+    bool selfPaced() const override { return true; }
+    uint32_t nextFrameDueInMs() const override;
     bool allowRotation() const override { return false; }
 
     // Lock-free Core 0 -> Core 1 frame handoff (EVEN = published, ODD = Core 0 updating single buffer)
@@ -67,6 +69,7 @@ public:
     }
 
     void clearFrame() {
+        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
         m_activeFramePtr.store(nullptr, std::memory_order_release);
         uint32_t cur = m_frameSeq.load(std::memory_order_relaxed);
         uint32_t nextEven = ((cur & 1U) != 0U) ? (cur + 1U) : (cur + 2U);
@@ -85,11 +88,20 @@ public:
         return m_consumedFrameSeq.load(std::memory_order_acquire);
     }
 
+    uint32_t renderBlitSeq() const {
+        return m_renderBlitSeq.load(std::memory_order_acquire);
+    }
+
     uint32_t presentedFrames() const {
         return m_presentedFrames.load(std::memory_order_relaxed);
     }
 
+    void setNextStreamFrameDueMs(uint32_t dueMs) {
+        m_nextStreamFrameDueMs.store(dueMs, std::memory_order_relaxed);
+    }
+
     void resetStreamTelemetry() {
+        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
         m_presentedFrames.store(0U, std::memory_order_release);
     }
 
@@ -110,6 +122,7 @@ private:
     std::atomic<uint32_t> m_consumedFrameSeq{0};
     std::atomic<uint32_t> m_renderBlitSeq{0};
     std::atomic<uint32_t> m_presentedFrames{0};
+    std::atomic<uint32_t> m_nextStreamFrameDueMs{0};
     std::atomic<bool> m_displayEngaged{false};
 
     uint32_t m_lastRenderedSeq = 0;
@@ -274,7 +287,9 @@ private:
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
-    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 1472U;
+    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 3584U;
+    static constexpr size_t FALLBACK_STREAM_IO_SCRATCH_BYTES = 2048U;
+    static constexpr size_t MIN_STREAM_IO_SCRATCH_BYTES = 1472U;
     static constexpr size_t PSRAM_STREAM_IO_SCRATCH_BYTES = 8192U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     uint16_t* m_streamFrames[2] = {nullptr, nullptr};

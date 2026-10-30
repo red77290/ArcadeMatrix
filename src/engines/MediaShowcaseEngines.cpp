@@ -295,7 +295,12 @@ bool MediaShowcaseBase::allocateBuffers() {
             m_ioScratchCap = PSRAM_IO_SCRATCH_BYTES;
         } else {
             m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
-            m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
+            if (m_ioScratch) {
+                m_ioScratchCap = IO_SCRATCH_BYTES;
+            } else {
+                m_ioScratch = static_cast<char*>(malloc(MIN_IO_SCRATCH_BYTES));
+                m_ioScratchCap = m_ioScratch ? MIN_IO_SCRATCH_BYTES : 0U;
+            }
         }
         if (!m_poster565) {
             m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
@@ -307,9 +312,51 @@ bool MediaShowcaseBase::allocateBuffers() {
         m_frame565 = nullptr;
         m_frame565Back = nullptr;
         m_posterAliasesFrame = false;
-        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
-        m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
-        m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
+        const size_t free8 = showcaseFree8BitHeap();
+        const size_t scratchCandidates[3] = {
+            IO_SCRATCH_BYTES,
+            FALLBACK_IO_SCRATCH_BYTES,
+            MIN_IO_SCRATCH_BYTES
+        };
+
+        // Prefer a single upfront unified `m_frame565` (`8 KB` on `128x32`) aliased by `m_poster565`
+        // BEFORE spawning `ShowcaseWkr` (`5.6 KB` stack):
+        // - Saves `+2,048 B` SRAM permanently (no separate `m_poster565` allocation).
+        // - Step A MQTT `ready` JSON (`~4.5-5.5 KB`) parses in-place inside `m_frame565` (`0` `malloc()`).
+        // - Eliminates Step B <-> Step C `free()`/`malloc()` TLSF heap fragmentation across items.
+        if (frameBytes >= posterBytes && frameBytes <= 16384U && showcaseLargest8BitBlock() >= frameBytes) {
+            const size_t unifiedHeadroom[3] = {10240U, 8192U, 6144U};
+            for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
+                const size_t cand = scratchCandidates[i];
+                if (free8 >= (frameBytes + cand + unifiedHeadroom[i])) {
+                    m_ioScratch = static_cast<char*>(malloc(cand));
+                    if (m_ioScratch) {
+                        m_ioScratchCap = cand;
+                    }
+                }
+            }
+            if (m_ioScratch && showcaseLargest8BitBlock() >= frameBytes) {
+                m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+                if (m_frame565) {
+                    m_poster565 = m_frame565;
+                    m_posterAliasesFrame = true;
+                }
+            }
+        }
+
+        if (!m_poster565) {
+            const size_t headroomCandidates[3] = {4096U, 3072U, 0U};
+            for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
+                const size_t cand = scratchCandidates[i];
+                if (headroomCandidates[i] == 0U || free8 >= (posterBytes + cand + headroomCandidates[i])) {
+                    m_ioScratch = static_cast<char*>(malloc(cand));
+                    if (m_ioScratch) {
+                        m_ioScratchCap = cand;
+                    }
+                }
+            }
+            m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+        }
     }
 #else
     m_hasPsram = true;
@@ -352,6 +399,26 @@ void MediaShowcaseBase::waitRenderBlitQuiescent() const {
 #endif
 }
 
+void MediaShowcaseBase::blankCardBeforeStream() {
+    if (m_phase.load(std::memory_order_acquire) != static_cast<uint8_t>(Phase::Card)) {
+        return;
+    }
+    const uint32_t prevBlank = m_blankPresentedSeq.load(std::memory_order_acquire);
+    m_phase.store(static_cast<uint8_t>(Phase::StreamBlank), std::memory_order_release);
+#if defined(ESP32) && !defined(UNIT_TEST)
+    const uint32_t t0 = millis();
+    while (m_wantActive.load(std::memory_order_acquire) &&
+           !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+           m_blankPresentedSeq.load(std::memory_order_acquire) == prevBlank &&
+           (millis() - t0) < 35U) {
+        vTaskDelay(1);
+    }
+#else
+    (void)prevBlank;
+#endif
+    waitRenderBlitQuiescent();
+}
+
 bool MediaShowcaseBase::acquireStepCFrameBuffer() {
     if (m_frame565 != nullptr) {
         return true;
@@ -362,8 +429,9 @@ bool MediaShowcaseBase::acquireStepCFrameBuffer() {
     }
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!m_hasPsram && m_poster565 != nullptr && !m_posterAliasesFrame) {
-        // Card Step B has finished: reclaim the 2 KB poster buffer before allocating the
-        // 8 KB video frame buffer so adjacent SRAM blocks coalesce and Wi-Fi RX keeps +2 KB headroom.
+        // Clear the entire Card display to black BEFORE reclaiming `m_poster565` so the jacket
+        // never visibly disappears inside a still-rendered Info Card.
+        blankCardBeforeStream();
         if (m_liveCard.hasPoster) {
             m_seq.fetch_add(1U, std::memory_order_acq_rel);
             m_liveCard.hasPoster = false;
@@ -395,7 +463,8 @@ bool MediaShowcaseBase::acquireStepCFrameBuffer() {
 }
 
 void MediaShowcaseBase::releaseStepCFrameBuffer() {
-    if (!m_frame565 || m_hasPsram) {
+    m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+    if (!m_frame565 || m_hasPsram || m_posterAliasesFrame) {
         return;
     }
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
@@ -427,8 +496,25 @@ void MediaShowcaseBase::releaseStepCFrameBuffer() {
 }
 
 void MediaShowcaseBase::freeBuffers() {
+    m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
     waitRenderBlitQuiescent();
+    // Free transient upper-heap buffers before `m_ioScratch` to preserve LIFO TLSF coalescing.
+    if (m_frame565Back) {
+        free(m_frame565Back);
+        m_frame565Back = nullptr;
+    }
+    if (m_frame565) {
+        free(m_frame565);
+        m_frame565 = nullptr;
+    }
+    if (m_poster565) {
+        if (!m_posterAliasesFrame) {
+            free(m_poster565);
+        }
+        m_poster565 = nullptr;
+    }
+    m_posterAliasesFrame = false;
     if (m_psramMqttRx) {
         free(m_psramMqttRx);
         m_psramMqttRx = nullptr;
@@ -438,27 +524,17 @@ void MediaShowcaseBase::freeBuffers() {
         m_ioScratch = nullptr;
     }
     m_ioScratchCap = 0U;
-    if (m_poster565) {
-        if (!m_posterAliasesFrame) {
-            free(m_poster565);
-        }
-        m_poster565 = nullptr;
-    }
-    m_posterAliasesFrame = false;
-    if (m_frame565Back) {
-        free(m_frame565Back);
-        m_frame565Back = nullptr;
-    }
-    if (m_frame565) {
-        free(m_frame565);
-        m_frame565 = nullptr;
-    }
     m_posterCapBytes = 0U;
     m_framePixels = 0U;
 }
 
 void MediaShowcaseBase::clearLiveCardState() {
+    m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+    m_activeItemStreamMaxMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
+    if (m_phase.load(std::memory_order_relaxed) != static_cast<uint8_t>(Phase::Card)) {
+        m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+    }
     m_seq.fetch_add(1, std::memory_order_acq_rel);
     m_liveCard.hasData = false;
     m_liveCard.hasPoster = false;
@@ -712,10 +788,16 @@ uint32_t MediaShowcaseBase::configuredMaxStreamMs(const ConfigSlot& cfg) {
     return totalSec * 1000U;
 }
 
+uint32_t MediaShowcaseBase::effectiveMaxStreamMs(const ConfigSlot& cfg) const {
+    const uint32_t cfgMs = configuredMaxStreamMs(cfg);
+    const uint32_t itemMs = m_activeItemStreamMaxMs.load(std::memory_order_relaxed);
+    return std::min<uint32_t>(300000U, std::max<uint32_t>(cfgMs, itemMs));
+}
+
 uint32_t MediaShowcaseBase::computeTurnSafetyTimeoutMs() const {
     const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
     uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    uint32_t perItemMs = configuredMaxStreamMs(cfg) + 45000U;
+    uint32_t perItemMs = effectiveMaxStreamMs(cfg) + 45000U;
     return std::max<uint32_t>(45000U, perItemMs * budget);
 }
 
@@ -758,7 +840,7 @@ bool MediaShowcaseBase::startWorkerTask() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return true;
     m_taskAlive.store(true, std::memory_order_release);
-    uint32_t stackBytes = m_hasPsram ? 8192U : 4608U;
+    uint32_t stackBytes = m_hasPsram ? 8192U : 5632U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
@@ -962,6 +1044,7 @@ bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
         float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
         if (totDur < 2.0f) totDur = 2.0f;
         outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+        m_activeItemStreamMaxMs.store(outStreamMaxMs, std::memory_order_relaxed);
 
         posterB64 = cardObj["poster_rgb565_b64"] | "";
     }
@@ -1102,60 +1185,61 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
 
             size_t pos = 0U;
+            const size_t scratchCap = m_ioScratchCap;
             m_ioScratch[0] = '\0';
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"transport\":\"mqtt_tcp\",\"width\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_width\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, posterW);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_height\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, posterH);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
-            appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, effFps);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
-            appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "{\"dmd_id\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, m_sessionId);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"client_ip\":\"");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"udp_ip\":\"");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"transport\":\"mqtt_tcp\",\"width\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, m_width);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"height\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, m_height);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_width\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, posterW);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_height\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, posterH);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"udp_port\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, localUdpPort);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"lang\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"domains\":{\"");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, domain);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\":{\"systems\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.systems);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"genres\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.genres);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"decades\":");
+            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.decades);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_type\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoType);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"show_poster\":");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showPoster ? "true" : "false");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_synopsis\":");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showSynopsis ? "true" : "false");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"text_scroll_speed\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.textScrollSpeed);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"jacket_panorama\":");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.jacketPanorama ? "true" : "false");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"marquee_panorama\":");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.marqueePanorama ? "true" : "false");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"snapshot_panorama_count\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.snapshotPanoramaCount);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_video\":");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showVideo ? "true" : "false");
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_max_duration_s\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.videoMaxDurationS);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_fps\":");
+            appendUintToBuf(m_ioScratch, scratchCap, pos, effFps);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_mode\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoMode);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"color_boost\":\"");
+            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.colorBoost);
+            appendRawToBuf(m_ioScratch, scratchCap, pos, "\"}}}");
 
-            if (net::sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES)) {
+            if (net::sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, scratchCap)) {
                 m_lastPublishedCfgGen = startGen;
             }
         }
@@ -1226,7 +1310,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
                 char* payloadBuf = nullptr;
                 bool freePayloadAfter = false;
-                if (payloadLen + 1U <= IO_SCRATCH_BYTES) {
+                if (m_ioScratch && (payloadLen + 1U) <= m_ioScratchCap) {
                     payloadBuf = m_ioScratch;
                 } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
                     payloadBuf = primaryRxBuf;
@@ -1351,7 +1435,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
             localIpBuf,
             localIpBuf
         );
-        net::sendMqttPublishPacket(mqttCli, eventsTopic, startCardCmd, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
+        net::sendMqttPublishPacket(mqttCli, eventsTopic, startCardCmd, false, m_wantActive, m_ioScratch, m_ioScratchCap);
         net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
     }
 
@@ -1465,50 +1549,51 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
 
     size_t pos = 0U;
+    const size_t scratchCap = m_ioScratchCap;
     m_ioScratch[0] = '\0';
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"client_id\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_width\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, pw);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_height\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ph);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"systems\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"include_poster\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"include_synopsis\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, effFps);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"lang\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "{\"client_id\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, m_sessionId);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"width\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, m_width);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"height\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, m_height);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_width\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, pw);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_height\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, ph);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"systems\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.systems);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"genres\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.genres);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"decades\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.decades);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_type\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoType);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"include_poster\":");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showPoster ? "true" : "false");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"include_synopsis\":");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showSynopsis ? "true" : "false");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"text_scroll_speed\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.textScrollSpeed);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"jacket_panorama\":");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.jacketPanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"marquee_panorama\":");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.marqueePanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"snapshot_panorama_count\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.snapshotPanoramaCount);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_video\":");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showVideo ? "true" : "false");
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_fps\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, effFps);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_max_duration_s\":");
+    appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.videoMaxDurationS);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_mode\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoMode);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"color_boost\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.colorBoost);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"lang\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
+    appendRawToBuf(m_ioScratch, scratchCap, pos, "\"}");
 
     {
         char cfgUrl[160];
@@ -1525,12 +1610,14 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
     char unifiedStreamPath[224] = "";
-    char posterPathBuf[224] = "";
-    CardSnapshot nextCard;
-    bool parsedReady = false;
-    bool serverWarming = false;
+    uint32_t cardWaitMs = 4500U;
     {
-        char nextUrl[192];
+        char posterPathBuf[224] = "";
+        CardSnapshot nextCard;
+        bool parsedReady = false;
+        bool serverWarming = false;
+        {
+            char nextUrl[192];
         snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
         auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
         if (!nextResp.ok()) {
@@ -1543,6 +1630,10 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
         size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
         size_t respBytes = nextResp.contentLength();
+        if (!rxBuf && m_ioScratch && respBytes > 0U && (respBytes + 1U) <= m_ioScratchCap) {
+            rxBuf = m_ioScratch;
+            rxCap = m_ioScratchCap;
+        }
 
         auto extractNextRoot = [&](JsonObjectConst rootObj) {
             const char* status = rootObj["status"] | "warming";
@@ -1560,6 +1651,12 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
                 JsonObjectConst assetsObj = item["assets"].as<JsonObjectConst>();
                 copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
                 copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                float totDur = item["stream_duration_s"] | (item["total_stream_duration_s"] | 8.0f);
+                if (totDur < 2.0f) totDur = 2.0f;
+                m_activeItemStreamMaxMs.store(
+                    static_cast<uint32_t>((totDur + 4.0f) * 1000.0f),
+                    std::memory_order_relaxed
+                );
                 const char* posterB64 = item["poster_rgb565_b64"] | "";
                 size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
                 if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
@@ -1657,18 +1754,18 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     m_phaseStartedAtMs = millis();
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
-    uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(nextCard.synopsis));
-    uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
-    uint32_t cardWaitMs = 4500U;
-    if (cfg.showSynopsis && synGlyphs > 0U) {
-        uint32_t textW = synGlyphs * 6U;
-        uint32_t availW = static_cast<uint32_t>(
-            engines::showcase::ShowcaseCardRenderer::computeCardTextViewportWidth(m_width, m_height, cfg.showPoster)
-        );
-        if (textW > availW) {
-            uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
-            uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
-            if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+        uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(nextCard.synopsis));
+        uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+        if (cfg.showSynopsis && synGlyphs > 0U) {
+            uint32_t textW = synGlyphs * 6U;
+            uint32_t availW = static_cast<uint32_t>(
+                engines::showcase::ShowcaseCardRenderer::computeCardTextViewportWidth(m_width, m_height, cfg.showPoster)
+            );
+            if (textW > availW) {
+                uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
+                uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
+                if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+            }
         }
     }
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
@@ -1693,6 +1790,25 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
     if (!serverUrl || !streamPath || streamPath[0] == '\0') {
         return false;
+    }
+
+    // Blank the entire Info Card to pure black BEFORE clearing/repurposing `m_poster565` so the
+    // mini-jacket never visibly vanishes inside a still-displayed Card while opening the stream.
+    blankCardBeforeStream();
+    if (m_posterAliasesFrame && m_frame565) {
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+            m_frameSeq.fetch_add(1U, std::memory_order_acq_rel);
+        }
+        waitRenderBlitQuiescent();
+        if (m_liveCard.hasPoster) {
+            m_seq.fetch_add(1U, std::memory_order_acq_rel);
+            m_liveCard.hasPoster = false;
+            m_seq.fetch_add(1U, std::memory_order_release);
+        }
+        memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+            m_frameSeq.fetch_add(1U, std::memory_order_release);
+        }
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
@@ -1730,10 +1846,10 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     params.clientId = m_sessionId;
     params.logTag = "Showcase";
     params.ownerId = net::OWNER_SHOWCASE;
-    params.wsCredits = m_hasPsram ? 12U : 4U;
+    params.wsCredits = m_hasPsram ? 8U : 2U;
     params.panelWidth = m_width;
     params.panelHeight = m_height;
-    params.configuredStreamMs = configuredMaxStreamMs(cfg);
+    params.configuredStreamMs = effectiveMaxStreamMs(cfg);
     params.maxFramePixels = m_framePixels;
     params.frameBuf0 = m_frame565;
     params.frameBuf1 = m_frame565Back;
@@ -1822,6 +1938,10 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return static_cast<const ShowcaseStreamCtx*>(raw)->self->m_presentedStreamFrames.load(std::memory_order_acquire);
     };
 
+    params.onNextFrameDueMs = [](void* raw, uint32_t dueMs) {
+        static_cast<ShowcaseStreamCtx*>(raw)->self->m_nextStreamFrameDueMs.store(dueMs, std::memory_order_relaxed);
+    };
+
     return net::DmdzStreamClient::stream(params);
 }
 
@@ -1891,6 +2011,8 @@ void MediaShowcaseBase::update(EngineContext* context) {
             m_lastScrollStepMs = now;
             m_dirty = true;
         }
+    } else if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
+        // Hold clean black cut with zero redraw spin while Core 0 establishes the stream socket.
     } else if (!m_renderCard.hasData) {
         if ((now - m_lastScrollStepMs) >= 30U) {
             m_lastScrollStepMs = now;
@@ -1948,37 +2070,69 @@ void MediaShowcaseBase::render(EngineContext* context) {
         ~BlitSeqGuard() {
             seq.fetch_add(1U, std::memory_order_release);
         }
-    } blitGuard{m_renderBlitSeq};
+    };
 
     uint32_t elapsedMs = millis() - m_activatedAtMs;
     Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
+    if (curPhase == Phase::StreamBlank) {
+        BlitSeqGuard blitGuard{m_renderBlitSeq};
+        s->clear(0);
+        m_dirty = false;
+        m_renderedNewFrame = true;
+        m_blankPresentedSeq.fetch_add(1U, std::memory_order_release);
+        return;
+    }
+
     if (curPhase == Phase::LiveStream) {
         const uint16_t* framePtr = m_publishedFramePtr.load(std::memory_order_acquire);
         if (m_renderCard.hasVideoFrame && framePtr != nullptr) {
-            uint32_t fSeq1 = m_frameSeq.load(std::memory_order_acquire);
+            const uint32_t fSeq1 = m_frameSeq.load(std::memory_order_acquire);
             if ((fSeq1 & 1U) != 0U) {
+                m_dirty = false;
+                m_renderedNewFrame = false;
+                return;
+            }
+            BlitSeqGuard blitGuard{m_renderBlitSeq};
+            const uint32_t fSeq2 = m_frameSeq.load(std::memory_order_acquire);
+            const uint16_t* framePtr2 = m_publishedFramePtr.load(std::memory_order_acquire);
+            if ((fSeq2 & 1U) != 0U || framePtr2 == nullptr) {
+                m_dirty = false;
                 m_renderedNewFrame = false;
                 return;
             }
             if (s->width() != static_cast<int>(m_width) || s->height() != static_cast<int>(m_height)) {
                 s->clear(0);
             }
-            s->blit565(framePtr, 0, 0, m_width, m_height);
-            m_lastRenderedFrameSeq = fSeq1;
-            m_consumedFrameSeq.store(fSeq1, std::memory_order_release);
+            s->blit565(framePtr2, 0, 0, m_width, m_height);
+            m_lastRenderedFrameSeq = fSeq2;
+            m_consumedFrameSeq.store(fSeq2, std::memory_order_release);
             m_presentedStreamFrames.fetch_add(1, std::memory_order_relaxed);
+            m_dirty = false;
+            m_renderedNewFrame = true;
+            return;
+        }
+    }
+
+    if (m_posterAliasesFrame && m_renderCard.hasPoster &&
+        (m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
+    }
+
+    BlitSeqGuard blitGuard{m_renderBlitSeq};
+    if (curPhase == Phase::LiveStream) {
+        s->clear(0);
+        if (m_renderCard.hasData) {
+            drawCardPhase(s, m_renderCard, elapsedMs);
         } else {
-            s->clear(0);
-            if (m_renderCard.hasData) {
-                drawCardPhase(s, m_renderCard, elapsedMs);
-            } else {
-                drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
-            }
+            drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
         }
     } else {
         if (m_posterAliasesFrame && m_renderCard.hasPoster &&
             (m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
+            m_dirty = false;
             m_renderedNewFrame = false;
             return;
         }

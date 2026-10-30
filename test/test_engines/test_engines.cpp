@@ -666,10 +666,14 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
             drawWaitingPixelArt(s, 128, 32, elapsedMs);
         }
         void simulateFramePublish(uint16_t color, uint32_t seq) {
+            if (!m_frame565) {
+                TEST_ASSERT_TRUE(acquireStepCFrameBuffer());
+            }
             TEST_ASSERT_NOT_NULL(m_frame565);
             for (size_t i = 0; i < m_framePixels; ++i) {
                 m_frame565[i] = color;
             }
+            m_publishedFramePtr.store(m_frame565, std::memory_order_release);
             m_seq.fetch_add(1, std::memory_order_acq_rel);
             m_liveCard.hasVideoFrame = true;
             m_seq.fetch_add(1, std::memory_order_release);
@@ -682,9 +686,30 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
         void writeFirstPixelRaw(uint16_t color) {
             if (m_frame565) m_frame565[0] = color;
         }
+        void simulateCardWithPoster(uint16_t posterColor) {
+            TEST_ASSERT_NOT_NULL(m_poster565);
+            for (size_t i = 0; i < (32U * 32U); ++i) {
+                m_poster565[i] = posterColor;
+            }
+            m_seq.fetch_add(1U, std::memory_order_acq_rel);
+            snprintf(m_liveCard.title, sizeof(m_liveCard.title), "MATRIX");
+            snprintf(m_liveCard.badge, sizeof(m_liveCard.badge), "MOVIE");
+            m_liveCard.posterW = 32U;
+            m_liveCard.posterH = 32U;
+            m_liveCard.hasData = true;
+            m_liveCard.hasPoster = true;
+            m_liveCard.hasVideoFrame = false;
+            m_seq.fetch_add(1U, std::memory_order_release);
+            m_statusState.store(0U, std::memory_order_release);
+            m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+        }
+        void invokeBlankCardBeforeStream() { blankCardBeforeStream(); }
+        bool liveHasPoster() const { return m_liveCard.hasPoster; }
+        uint16_t firstPosterPixel() const { return m_poster565 ? m_poster565[0] : 0U; }
         bool isEngineDirty() const { return m_dirty; }
         uint32_t consumedSeq() const { return m_consumedFrameSeq.load(std::memory_order_acquire); }
         uint32_t presentedCount() const { return m_presentedStreamFrames.load(std::memory_order_acquire); }
+        uint32_t renderBlitSeqVal() const { return m_renderBlitSeq.load(std::memory_order_acquire); }
     };
 
     StreamSurface128x32 surf0;
@@ -717,8 +742,34 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
     TEST_ASSERT_FALSE(diff0vs1);
     TEST_ASSERT_TRUE(diff0vs2);
 
+    // 1b. Imperceptible Card -> Stream transition: `blankCardBeforeStream()` clears the ENTIRE
+    //     Card display to black (`0x0000`) BEFORE `hasPoster` or jacket pixels are cleared!
+    surf0.clear(0U);
+    eng.simulateCardWithPoster(0xF81FU);
+    eng.update(&ctx);
+    eng.render(&ctx);
+    TEST_ASSERT_TRUE(eng.hasNewFrame());
+    bool hadLitCardPixels = false;
+    for (size_t i = 0; i < 128U * 32U; ++i) {
+        if (surf0.pixels[i] != 0U) {
+            hadLitCardPixels = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(hadLitCardPixels);
+    eng.invokeBlankCardBeforeStream();
+    TEST_ASSERT_TRUE(eng.liveHasPoster());
+    TEST_ASSERT_EQUAL_HEX16(0xF81FU, eng.firstPosterPixel());
+    eng.update(&ctx);
+    eng.render(&ctx);
+    TEST_ASSERT_TRUE(eng.hasNewFrame());
+    for (size_t i = 0; i < 128U * 32U; ++i) {
+        TEST_ASSERT_EQUAL_HEX16(0x0000U, surf0.pixels[i]);
+    }
+
     // 2. Tear-free `m_frameSeq` / `m_consumedFrameSeq` handoff: an `ODD` sequence during `render()`
-    //    must preserve `m_dirty == true` instead of permanently dropping the frame!
+    //    must skip `BlitSeqGuard` (zero `seq_cst` traffic), clear `m_dirty` so Core 1 does not busy-spin,
+    //    and re-arm `m_dirty` in `update()` once Core 0 publishes `EVEN`!
     surf0.clear(0x001F);
     surf0.present();
     eng.simulateFramePublish(0xF800, 2U); // Complete Frame #1 (`EVEN` seq = 2)
@@ -726,18 +777,23 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
     TEST_ASSERT_TRUE(eng.isEngineDirty());
 
     // Simulate Core 0 starting Frame #2 (`ODD` seq = 3) microseconds before Core 1 `render()` runs
+    const uint32_t blitSeqBeforeOdd = eng.renderBlitSeqVal();
     eng.setFrameSeqRaw(3U);
     eng.writeFirstPixelRaw(0x07E0);
     eng.render(&ctx);
     TEST_ASSERT_FALSE(eng.hasNewFrame());
-    TEST_ASSERT_TRUE(eng.isEngineDirty());       // Must stay dirty for the very next Core 1 tick!
+    TEST_ASSERT_FALSE(eng.isEngineDirty()); // Cleared so Core 1 sleeps cleanly while Core 0 decodes
+    TEST_ASSERT_EQUAL_UINT32(blitSeqBeforeOdd, eng.renderBlitSeqVal()); // Zero `seq_cst` atomic increments!
     TEST_ASSERT_EQUAL_HEX16(0x001F, surf0.pixels[0]); // Previous canvas untouched while ODD!
 
-    // Core 0 finishes Frame #2 (`EVEN` seq = 4) -> next Core 1 `render()` blits immediately!
+    // Core 0 finishes Frame #2 (`EVEN` seq = 4) -> `update()` re-arms `m_dirty` and `render()` blits immediately!
     eng.simulateFramePublish(0x07E0, 4U);
+    eng.update(&ctx);
+    TEST_ASSERT_TRUE(eng.isEngineDirty());
     eng.render(&ctx);
     TEST_ASSERT_TRUE(eng.hasNewFrame());
     TEST_ASSERT_FALSE(eng.isEngineDirty());
+    TEST_ASSERT_EQUAL_UINT32(blitSeqBeforeOdd + 2U, eng.renderBlitSeqVal());
     TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[0]);
     TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[128 * 32 - 1]);
     TEST_ASSERT_EQUAL_UINT32(4U, eng.consumedSeq());
@@ -845,6 +901,23 @@ void test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capac
     ));
     TEST_ASSERT_EQUAL_STRING(longId, parsedItemId);
     TEST_ASSERT_TRUE(hasStream);
+
+    // 3. Server-reported long trailer (`stream_duration_s = 61.0s` -> `streamMaxMs = 65000 ms`)
+    //    must override default `8s` `videoMaxDurationS` in `computeTurnSafetyTimeoutMs()` (`>= 110000 ms`)
+    //    so `RotationManager` never evicts `movie_showcase` mid-trailer!
+    char longMovieJson[384];
+    snprintf(
+        longMovieJson,
+        sizeof(longMovieJson),
+        "{\"ready\":true,\"item_id\":\"pkg_movies_long_trailer\",\"card\":{\"title\":\"Interstellar\",\"year\":\"2014\","
+        "\"badge\":\"MOVIE\",\"synopsis\":\"Sci-fi epic.\",\"has_panoramas\":true,\"has_video\":true,\"stream_duration_s\":61.0}}"
+    );
+    uint32_t longStreamMaxMs = 0;
+    TEST_ASSERT_TRUE(movieEng.parseReadyPayloadInPlaceBuf(
+        longMovieJson, false, parsedItemId, sizeof(parsedItemId), hasStream, longStreamMaxMs, warming
+    ));
+    TEST_ASSERT_EQUAL_UINT32(65000U, longStreamMaxMs);
+    TEST_ASSERT_EQUAL_UINT32(110000U, movieEng.computeTurnSafetyTimeoutMs());
 }
 
 void test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection() {

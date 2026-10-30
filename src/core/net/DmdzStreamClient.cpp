@@ -291,6 +291,21 @@ bool parseEndpointHostAndPort(
 }
 
 bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
+    struct DueResetGuard {
+        void (*fn)(void*, uint32_t);
+        void* ctx;
+        DueResetGuard(void (*cb)(void*, uint32_t), void* c) : fn(cb), ctx(c) {
+            if (fn) {
+                fn(ctx, 0U);
+            }
+        }
+        ~DueResetGuard() {
+            if (fn) {
+                fn(ctx, 0U);
+            }
+        }
+    } dueResetGuard{params.onNextFrameDueMs, params.userCtx};
+
     if (!params.serverUrl || !params.streamPath || params.streamPath[0] == '\0' ||
         !params.frameBuf0 || params.maxFramePixels == 0U) {
         return false;
@@ -586,12 +601,15 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
 
     ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
 
-    size_t preBufferedOff = bodyStart;
-    size_t preBufferedEnd = scratchUsed;
+    const size_t initialRawLen = (scratchUsed > bodyStart) ? (scratchUsed - bodyStart) : 0U;
     const char* lastReadFailReason = "idle_body";
     uint16_t pendingWsCredits = 0U;
-    const uint8_t clampedWsCredits = (params.wsCredits < 1U) ? 1U : (params.wsCredits > 16U ? 16U : params.wsCredits);
-    const uint8_t ackBatch = (clampedWsCredits >= 8U) ? 4U : ((clampedWsCredits >= 2U) ? 2U : 1U);
+    const uint8_t clampedWsCredits = clampWsCredits(params.wsCredits);
+    const uint8_t ackBatch = computeWsAckBatch(clampedWsCredits);
+
+    StreamByteRing rxRing;
+    bool streamEof = false;
+    uint8_t rawRxBuf[520];
 
     auto flushWsControlAndCredits = [&](bool forceAllCredits) -> bool {
         if (!isWebSocket) {
@@ -605,8 +623,13 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 return false;
             }
         }
-        const uint16_t minToSend = forceAllCredits ? 1U : static_cast<uint16_t>(ackBatch);
-        while (pendingWsCredits >= minToSend) {
+        while (canFlushWsCredits(
+                   pendingWsCredits,
+                   ackBatch,
+                   forceAllCredits,
+                   rxRing.size(),
+                   rxRing.freeBytes(),
+                   rxRing.capacity())) {
             const uint8_t batch = (pendingWsCredits > 16U) ? 16U : static_cast<uint8_t>(pendingWsCredits);
             uint8_t ackFrame[22];
             const size_t ackLen = core::drawing::DmdzWsDemuxer::buildMaskedCreditAckFrame(batch, ackFrame);
@@ -619,131 +642,262 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         return true;
     };
 
-    auto readExactStreamBody = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
+    auto feedRawBytesToRing = [&](const uint8_t* rawSrc, size_t rawLen) -> bool {
         if (isWebSocket) {
-            size_t got = 0U;
-            uint32_t lastProg = millis();
-            while (got < wantLen) {
-                const StreamStopReason sr = checkStop();
-                if (sr != StreamStopReason::Continue) {
-                    lastReadFailReason = stopReasonLabel(sr);
+            size_t off = 0U;
+            while (off < rawLen && !streamEof) {
+                const size_t contig = rxRing.contiguousWriteCap();
+                if (contig == 0U) {
+                    lastReadFailReason = "decode_err";
                     return false;
                 }
-                if (preBufferedOff < preBufferedEnd) {
-                    size_t consumed = 0U;
-                    uint8_t creditsToAck = 0U;
-                    const size_t produced = wsDemux.decode(
-                        reinterpret_cast<const uint8_t*>(ioScratch + preBufferedOff),
-                        preBufferedEnd - preBufferedOff,
-                        consumed,
-                        dst + got,
-                        wantLen - got,
-                        creditsToAck
-                    );
-                    preBufferedOff += consumed;
-                    got += produced;
-                    pendingWsCredits = static_cast<uint16_t>(pendingWsCredits + creditsToAck);
-                    if (wsDemux.hasError()) {
-                        lastReadFailReason = "decode_err";
-                        return false;
-                    }
-                    if ((wsDemux.hasPendingPong() || pendingWsCredits >= ackBatch) &&
-                        !flushWsControlAndCredits(false)) {
-                        return false;
-                    }
-                    if (got >= wantLen) {
-                        return true;
-                    }
-                    if (wsDemux.isClosed()) {
-                        lastReadFailReason = "eof_early";
-                        return false;
-                    }
-                    if (preBufferedOff < preBufferedEnd && consumed > 0U) {
-                        continue;
-                    }
+                size_t consumed = 0U;
+                uint8_t creditsToAck = 0U;
+                const size_t produced = wsDemux.decode(
+                    rawSrc + off,
+                    rawLen - off,
+                    consumed,
+                    rxRing.writePtr(),
+                    contig,
+                    creditsToAck
+                );
+                off += consumed;
+                if (produced > 0U) {
+                    rxRing.commitWrite(produced);
                 }
-                preBufferedOff = 0U;
-                preBufferedEnd = 0U;
-                int r = lwip_recv(fd, ioScratch, scratchCap, MSG_DONTWAIT);
+                pendingWsCredits = static_cast<uint16_t>(pendingWsCredits + creditsToAck);
+                if (wsDemux.hasError()) {
+                    lastReadFailReason = "decode_err";
+                    return false;
+                }
+                if (wsDemux.hasPendingPong() && !flushWsControlAndCredits(false)) {
+                    return false;
+                }
+                if (wsDemux.isClosed()) {
+                    streamEof = true;
+                    break;
+                }
+                if (consumed == 0U && produced == 0U) {
+                    lastReadFailReason = "decode_err";
+                    return false;
+                }
+            }
+            return flushWsControlAndCredits(false);
+        }
+
+        if (isChunked) {
+            size_t off = 0U;
+            while (off < rawLen && !streamEof) {
+                const size_t contig = rxRing.contiguousWriteCap();
+                if (contig == 0U) {
+                    lastReadFailReason = "decode_err";
+                    return false;
+                }
+                size_t consumed = 0U;
+                const size_t produced = chunkDec.decode(
+                    rawSrc + off,
+                    rawLen - off,
+                    consumed,
+                    rxRing.writePtr(),
+                    contig
+                );
+                off += consumed;
+                if (produced > 0U) {
+                    rxRing.commitWrite(produced);
+                }
+                if (chunkDec.hasError()) {
+                    lastReadFailReason = "decode_err";
+                    return false;
+                }
+                if (chunkDec.isDone()) {
+                    streamEof = true;
+                    break;
+                }
+                if (consumed == 0U && produced == 0U) {
+                    lastReadFailReason = "decode_err";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        rxRing.push(rawSrc, rawLen);
+        return true;
+    };
+
+    // Transition `ioScratch` from Phase 1 HTTP/101 headers into Phase 2 circular `StreamByteRing`
+    // holding already-demuxed stream payload bytes.
+    if (!isWebSocket && !isChunked) {
+        rxRing.initFromSlice(reinterpret_cast<uint8_t*>(ioScratch), scratchCap, bodyStart, initialRawLen);
+    } else {
+        rxRing.init(reinterpret_cast<uint8_t*>(ioScratch), scratchCap);
+        if (initialRawLen > 0U) {
+            const size_t rawStart = scratchCap - initialRawLen;
+            memmove(ioScratch + rawStart, ioScratch + bodyStart, initialRawLen);
+            size_t rawOff = 0U;
+            while (rawOff < initialRawLen && !streamEof) {
+                const size_t rem = initialRawLen - rawOff;
+                const size_t step = (rem < sizeof(rawRxBuf)) ? rem : sizeof(rawRxBuf);
+                memcpy(rawRxBuf, ioScratch + rawStart + rawOff, step);
+                rawOff += step;
+                if (!feedRawBytesToRing(rawRxBuf, step)) {
+                    closeStreamSocket(true);
+                    return false;
+                }
+            }
+        }
+    }
+
+    auto drainNonBlockingToRing = [&]() -> bool {
+        while (!streamEof && !rxRing.full()) {
+            const StreamStopReason sr = checkStop();
+            if (sr != StreamStopReason::Continue) {
+                lastReadFailReason = stopReasonLabel(sr);
+                return false;
+            }
+            if (!isWebSocket && !isChunked) {
+                const size_t contig = rxRing.contiguousWriteCap();
+                const size_t toRead = (contig < 1024U) ? contig : 1024U;
+                int r = lwip_recv(fd, rxRing.writePtr(), toRead, MSG_DONTWAIT);
                 if (r > 0) {
-                    preBufferedEnd = static_cast<size_t>(r);
-                    lastProg = millis();
+                    rxRing.commitWrite(static_cast<size_t>(r));
                     continue;
                 }
                 if (r == 0) {
-                    lastReadFailReason = "eof_early";
-                    return false;
+                    streamEof = true;
+                    break;
                 }
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    lastSockErrno = errno;
-                    lastReadFailReason = "sock_err";
-                    return false;
+                if (errno == EINTR) {
+                    continue;
                 }
-                if ((pendingWsCredits > 0U || wsDemux.hasPendingPong()) &&
-                    !flushWsControlAndCredits(true)) {
-                    return false;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
                 }
-                r = lwip_recv(fd, ioScratch, scratchCap, 0);
-                if (r > 0) {
-                    preBufferedEnd = static_cast<size_t>(r);
-                    lastProg = millis();
-                } else if (r == 0) {
-                    lastReadFailReason = "eof_early";
-                    return false;
-                } else {
-                    lastSockErrno = errno;
-                    if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
-                        lastReadFailReason = "sock_err";
-                        return false;
-                    }
-                    if ((millis() - lastProg) >= maxIdleMs) {
-                        lastReadFailReason = "idle_body";
-                        return false;
-                    }
-                }
+                lastSockErrno = errno;
+                lastReadFailReason = "sock_err";
+                return false;
             }
+
+            const size_t space = rxRing.freeBytes();
+            const size_t toRead = (space < sizeof(rawRxBuf)) ? space : sizeof(rawRxBuf);
+            int r = lwip_recv(fd, rawRxBuf, toRead, MSG_DONTWAIT);
+            if (r > 0) {
+                if (!feedRawBytesToRing(rawRxBuf, static_cast<size_t>(r))) {
+                    return false;
+                }
+                continue;
+            }
+            if (r == 0) {
+                streamEof = true;
+                break;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            }
+            lastSockErrno = errno;
+            lastReadFailReason = "sock_err";
+            return false;
+        }
+        return true;
+    };
+
+    auto pumpSocketToRing = [&](uint32_t maxWaitMs) -> bool {
+        if (!drainNonBlockingToRing()) {
+            return false;
+        }
+        if (maxWaitMs == 0U || streamEof || rxRing.full()) {
             return true;
         }
+        const StreamStopReason sr = checkStop();
+        if (sr != StreamStopReason::Continue) {
+            lastReadFailReason = stopReasonLabel(sr);
+            return false;
+        }
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv;
+        tv.tv_sec = static_cast<long>(maxWaitMs / 1000U);
+        tv.tv_usec = static_cast<long>((maxWaitMs % 1000U) * 1000U);
+        int sel = lwip_select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (sel < 0) {
+            if (errno == EINTR) {
+                return true;
+            }
+            lastSockErrno = errno;
+            lastReadFailReason = "sock_err";
+            return false;
+        }
+        if (sel > 0 && FD_ISSET(fd, &rfds)) {
+            return drainNonBlockingToRing();
+        }
+        return true;
+    };
 
-        if (!isChunked) {
-            size_t got = 0U;
-            if (preBufferedOff < preBufferedEnd) {
-                size_t avail = preBufferedEnd - preBufferedOff;
-                size_t take = (avail < wantLen) ? avail : wantLen;
-                memcpy(dst, ioScratch + preBufferedOff, take);
-                preBufferedOff += take;
-                got += take;
-            }
-            uint32_t lastProg = millis();
-            while (got < wantLen) {
-                const StreamStopReason sr = checkStop();
-                if (sr != StreamStopReason::Continue) {
-                    lastReadFailReason = stopReasonLabel(sr);
-                    return false;
-                }
-                int r = lwip_recv(fd, dst + got, wantLen - got, 0);
-                if (r > 0) {
-                    got += static_cast<size_t>(r);
-                    lastProg = millis();
-                } else if (r == 0) {
-                    lastReadFailReason = "eof_early";
-                    return false;
-                } else {
-                    lastSockErrno = errno;
-                    if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
-                        lastReadFailReason = "sock_err";
-                        return false;
-                    }
-                    if ((millis() - lastProg) >= maxIdleMs) {
-                        lastReadFailReason = "idle_body";
-                        return false;
-                    }
-                }
-            }
+    auto ensureRingBytes = [&](size_t minBytes, uint32_t maxIdleMs) -> bool {
+        if (minBytes > rxRing.capacity()) {
+            minBytes = rxRing.capacity();
+        }
+        if (rxRing.size() >= minBytes) {
             return true;
         }
+        uint32_t lastProg = millis();
+        while (rxRing.size() < minBytes) {
+            const StreamStopReason sr = checkStop();
+            if (sr != StreamStopReason::Continue) {
+                lastReadFailReason = stopReasonLabel(sr);
+                return false;
+            }
+            const size_t before = rxRing.size();
+            if (!pumpSocketToRing(0U)) {
+                return false;
+            }
+            if (rxRing.size() > before) {
+                lastProg = millis();
+                if (rxRing.size() >= minBytes) {
+                    return true;
+                }
+                continue;
+            }
+            if (streamEof) {
+                lastReadFailReason = "eof_early";
+                return false;
+            }
+            if (isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+                if (!flushWsControlAndCredits(true)) {
+                    return false;
+                }
+            }
+            const uint32_t elapsed = millis() - lastProg;
+            if (elapsed >= maxIdleMs) {
+                lastReadFailReason = "idle_body";
+                return false;
+            }
+            const uint32_t waitMs = std::min<uint32_t>(20U, maxIdleMs - elapsed);
+            if (!pumpSocketToRing(waitMs)) {
+                return false;
+            }
+            if (rxRing.size() > before) {
+                lastProg = millis();
+            } else if (streamEof && rxRing.size() < minBytes) {
+                lastReadFailReason = "eof_early";
+                return false;
+            }
+        }
+        return true;
+    };
 
+    auto readExactStreamBody = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
         size_t got = 0U;
+        if (!rxRing.empty() && wantLen > 0U) {
+            got += rxRing.pop(dst, wantLen);
+        }
+        if (got >= wantLen) {
+            return true;
+        }
         uint32_t lastProg = millis();
         while (got < wantLen) {
             const StreamStopReason sr = checkStop();
@@ -751,48 +905,41 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 lastReadFailReason = stopReasonLabel(sr);
                 return false;
             }
-            if (preBufferedOff < preBufferedEnd) {
-                size_t consumed = 0U;
-                size_t produced = chunkDec.decode(
-                    reinterpret_cast<const uint8_t*>(ioScratch + preBufferedOff),
-                    preBufferedEnd - preBufferedOff,
-                    consumed,
-                    dst + got,
-                    wantLen - got
-                );
-                preBufferedOff += consumed;
-                got += produced;
-                if (chunkDec.hasError()) {
-                    lastReadFailReason = "decode_err";
-                    return false;
-                }
+            if (!pumpSocketToRing(0U)) {
+                return false;
+            }
+            if (!rxRing.empty()) {
+                got += rxRing.pop(dst + got, wantLen - got);
+                lastProg = millis();
                 if (got >= wantLen) {
                     return true;
                 }
-                if (chunkDec.isDone()) {
-                    lastReadFailReason = "eof_early";
+                continue;
+            }
+            if (streamEof) {
+                lastReadFailReason = "eof_early";
+                return false;
+            }
+            if (isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+                if (!flushWsControlAndCredits(true)) {
                     return false;
                 }
             }
-            preBufferedOff = 0U;
-            preBufferedEnd = 0U;
-            int r = lwip_recv(fd, ioScratch, scratchCap, 0);
-            if (r > 0) {
-                preBufferedEnd = static_cast<size_t>(r);
+            const uint32_t elapsed = millis() - lastProg;
+            if (elapsed >= maxIdleMs) {
+                lastReadFailReason = "idle_body";
+                return false;
+            }
+            const uint32_t waitMs = std::min<uint32_t>(20U, maxIdleMs - elapsed);
+            if (!pumpSocketToRing(waitMs)) {
+                return false;
+            }
+            if (!rxRing.empty()) {
+                got += rxRing.pop(dst + got, wantLen - got);
                 lastProg = millis();
-            } else if (r == 0) {
+            } else if (streamEof) {
                 lastReadFailReason = "eof_early";
                 return false;
-            } else {
-                lastSockErrno = errno;
-                if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
-                    lastReadFailReason = "sock_err";
-                    return false;
-                }
-                if ((millis() - lastProg) >= maxIdleMs) {
-                    lastReadFailReason = "idle_body";
-                    return false;
-                }
             }
         }
         return true;
@@ -846,6 +993,10 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         std::max<uint32_t>(params.configuredStreamMs + 4000U, (headerExpectedMs * 2U) + 4500U)
     );
     const uint32_t streamStartMs = millis();
+    const size_t minFreeForCredit = effectiveWsCreditMinFreeBytes(rxRing.capacity());
+    const size_t safePrebufCap = (rxRing.capacity() > minFreeForCredit)
+        ? (rxRing.capacity() - minFreeForCredit)
+        : rxRing.capacity();
 
     uint32_t scheduleT0 = 0U;
     uint32_t publishedOnClock = 0U;
@@ -871,58 +1022,79 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             break;
         }
 
-        // 1. Wait for the next frame's first payload byte before locking `dstBuf`.
-        uint8_t firstFrameByte = 0U;
-        bool hasFirstFrameByte = false;
-        if (isWebSocket || isChunked) {
-            if (!readExactStreamBody(&firstFrameByte, 1U, 3500U)) {
-                endReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_wait" : lastReadFailReason;
-                break;
+        // 1. For frames after Frame 0, pace on the monotonic presentation clock BEFORE locking
+        //    `dstBuf`, continuously pumping incoming Wi-Fi packets into `rxRing` so `esp_wifi` +
+        //    lwIP RX buffers stay drained and Frame `f` is ready in RAM at `due`.
+        if (publishedOnClock > 0U) {
+            const uint32_t due = dueMsFor(publishedOnClock);
+            if (params.onNextFrameDueMs) {
+                params.onNextFrameDueMs(params.userCtx, (due != 0U) ? due : 1U);
             }
-            hasFirstFrameByte = true;
-        } else if (preBufferedOff >= preBufferedEnd) {
-            uint32_t waitT0 = millis();
-            bool socketReadable = false;
-            while (checkStop() == StreamStopReason::Continue &&
-                   (millis() - streamStartMs) < maxAllowedMs &&
-                   (millis() - waitT0) < 3500U) {
-                fd_set rfds;
-                FD_ZERO(&rfds);
-                FD_SET(fd, &rfds);
-                struct timeval tv = {0, 20000};
-                int sel = lwip_select(fd + 1, &rfds, nullptr, nullptr, &tv);
-                if (sel > 0 && FD_ISSET(fd, &rfds)) {
-                    socketReadable = true;
+            bool abortPacing = false;
+            while (true) {
+                const StreamStopReason sr = checkStop();
+                if (sr != StreamStopReason::Continue) {
+                    endReason = stopReasonLabel(sr);
+                    abortPacing = true;
                     break;
                 }
-                if (sel < 0 && errno != EINTR) {
-                    lastSockErrno = errno;
-                    endReason = "sock_err";
+                if ((millis() - streamStartMs) >= maxAllowedMs) {
+                    endReason = "cap";
+                    abortPacing = true;
                     break;
                 }
-            }
-            if (!socketReadable) {
-                if (strcmp(endReason, "eof") == 0) {
-                    const StreamStopReason sr = checkStop();
-                    if (sr != StreamStopReason::Continue) {
-                        endReason = stopReasonLabel(sr);
-                    } else if ((millis() - streamStartMs) >= maxAllowedMs) {
-                        endReason = "cap";
-                    } else {
-                        endReason = "idle_wait";
+                const int32_t remMs = static_cast<int32_t>(due - millis());
+                if (remMs <= 0) {
+                    break;
+                }
+                if (!streamEof && !rxRing.full()) {
+                    const uint32_t sliceMs = (remMs > 10) ? 10U : static_cast<uint32_t>(remMs);
+                    if (!pumpSocketToRing(sliceMs)) {
+                        endReason = lastReadFailReason;
+                        abortPacing = true;
+                        break;
                     }
+                } else {
+                    const uint32_t sleepMs = (remMs > 10) ? 10U : static_cast<uint32_t>(remMs);
+                    vTaskDelay(pdMS_TO_TICKS(sleepMs > 1U ? (sleepMs - 1U) : 1U));
                 }
+            }
+            if (abortPacing) {
                 break;
             }
         }
 
-        // Drain pending Wi-Fi RX buffer bytes into `ioScratch` prior to Core 1 handoff wait.
-        if (preBufferedOff >= preBufferedEnd) {
-            preBufferedOff = 0U;
-            preBufferedEnd = 0U;
-            int pref = lwip_recv(fd, ioScratch, scratchCap, MSG_DONTWAIT);
-            if (pref > 0) {
-                preBufferedEnd = static_cast<size_t>(pref);
+        // 2. Ensure Frame `f`'s compressed bytes (up to `safePrebufCap`) are already buffered in
+        //    `rxRing` BEFORE locking `dstBuf` ODD, keeping the Core 1 seqlock ODD window < 0.5 ms.
+        if (parsedHdr.isDmdz) {
+            if (!ensureRingBytes(2U, 5000U)) {
+                endReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_wait" : lastReadFailReason;
+                break;
+            }
+            uint8_t peekLen[2] = {0U, 0U};
+            rxRing.peek(peekLen, 2U, 0U);
+            const uint16_t nextPayloadLen = static_cast<uint16_t>(peekLen[0]) |
+                                            (static_cast<uint16_t>(peekLen[1]) << 8);
+            const size_t wantPrebuf = std::min<size_t>(
+                static_cast<size_t>(2U) + static_cast<size_t>(nextPayloadLen),
+                safePrebufCap
+            );
+            if (!ensureRingBytes(wantPrebuf, 5000U)) {
+                endReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_len" : lastReadFailReason;
+                break;
+            }
+        } else {
+            const size_t wantPrebuf = std::min<size_t>(frameBytes, safePrebufCap);
+            if (!ensureRingBytes(wantPrebuf, 5000U)) {
+                endReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_wait" : lastReadFailReason;
+                break;
+            }
+        }
+
+        if (!streamEof && !rxRing.full()) {
+            if (!pumpSocketToRing(0U)) {
+                endReason = lastReadFailReason;
+                break;
             }
         }
 
@@ -930,12 +1102,13 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             ? params.frameBuf0
             : (((f & 1U) == 0U) ? params.frameBuf0 : params.frameBuf1);
 
-        // 2. Caller pre-write hook (Core 1 handoff wait + ODD seqlock barrier when single-buffered).
+        // 3. Caller pre-write hook (Core 1 handoff check + ODD seqlock barrier when single-buffered).
         if (params.onBeginFrameWrite) {
             params.onBeginFrameWrite(params.userCtx, f, dstBuf, singleBuffer, safeFps);
         }
 
-        // 3. Receive and decode the frame into `dstBuf`.
+        // 4. Decode Frame `f` from `rxRing` into `dstBuf` (pure RAM-to-RAM for frames <= `safePrebufCap`;
+        //    oversized frames seamlessly stream remaining bytes via `readExactStreamBody`).
         bool okFrame = false;
         const char* frameFailReason = "idle_body";
         if (parsedHdr.isDmdz) {
@@ -944,88 +1117,89 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 memcpy(dstBuf, prevBuf, frameBytes);
             }
             uint8_t lenBytes[2] = {0U, 0U};
-            bool lenOk = false;
-            if (hasFirstFrameByte) {
-                lenBytes[0] = firstFrameByte;
-                lenOk = readExactStreamBody(lenBytes + 1U, 1U, 3500U);
-            } else {
-                lenOk = readExactStreamBody(lenBytes, 2U, 3500U);
-            }
-            if (!lenOk) {
+            if (!readExactStreamBody(lenBytes, 2U, 5000U)) {
                 frameFailReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_len" : lastReadFailReason;
             } else {
                 const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) |
                                             (static_cast<uint16_t>(lenBytes[1]) << 8);
-                dmdzDec.beginFrame(payloadLen);
-                uint8_t decChunk[384];
-                size_t rem = payloadLen;
-                okFrame = true;
-                while (rem > 0U) {
-                    const size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
-                    if (!readExactStreamBody(decChunk, take, 3500U)) {
-                        frameFailReason = lastReadFailReason;
-                        okFrame = false;
-                        break;
+                if (!dmdzDec.beginFrame(payloadLen)) {
+                    frameFailReason = "decode_err";
+                } else {
+                    size_t rem = payloadLen;
+                    okFrame = true;
+                    while (rem > 0U) {
+                        if (rxRing.empty() && !ensureRingBytes(1U, 5000U)) {
+                            frameFailReason = lastReadFailReason;
+                            okFrame = false;
+                            break;
+                        }
+                        const size_t contig = rxRing.contiguousReadCap();
+                        const size_t take = (rem < contig) ? rem : contig;
+                        if (take == 0U) {
+                            frameFailReason = "idle_body";
+                            okFrame = false;
+                            break;
+                        }
+                        if (!dmdzDec.feed(rxRing.readPtr(), take, dstBuf)) {
+                            frameFailReason = "decode_err";
+                            okFrame = false;
+                            break;
+                        }
+                        rxRing.consumeRead(take);
+                        rem -= take;
+                        if (rem > 0U && rxRing.empty() && isWebSocket &&
+                            (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+                            if (!flushWsControlAndCredits(true)) {
+                                frameFailReason = lastReadFailReason;
+                                okFrame = false;
+                                break;
+                            }
+                        }
                     }
-                    if (!dmdzDec.feed(decChunk, take, dstBuf)) {
+                    if (okFrame && !dmdzDec.finishFrame()) {
                         frameFailReason = "decode_err";
                         okFrame = false;
-                        break;
                     }
-                    rem -= take;
-                }
-                if (okFrame && !dmdzDec.finishFrame()) {
-                    frameFailReason = "decode_err";
-                    okFrame = false;
                 }
             }
         } else {
-            uint8_t* frameDst = reinterpret_cast<uint8_t*>(dstBuf);
-            if (hasFirstFrameByte) {
-                frameDst[0] = firstFrameByte;
-                okFrame = (frameBytes == 1U) || readExactStreamBody(frameDst + 1U, frameBytes - 1U, 3500U);
-            } else {
-                okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
-            }
+            okFrame = readExactStreamBody(reinterpret_cast<uint8_t*>(dstBuf), frameBytes, 5000U);
             if (!okFrame) {
                 frameFailReason = lastReadFailReason;
             }
         }
 
-        if (okFrame && isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
-            if (!flushWsControlAndCredits(true)) {
-                okFrame = false;
-                frameFailReason = lastReadFailReason;
-            }
-        }
-
-        // 4. Hold the completed frame until its presentation timestamp on the monotonic client clock.
         if (okFrame) {
-            const uint32_t now = millis();
-            if (publishedOnClock == 0U) {
-                scheduleT0 = now;
+            const StreamStopReason srBeforePub = checkStop();
+            if (srBeforePub != StreamStopReason::Continue) {
+                okFrame = false;
+                frameFailReason = stopReasonLabel(srBeforePub);
             } else {
-                const uint32_t due = dueMsFor(publishedOnClock);
-                const int32_t lagMs = static_cast<int32_t>(now - due);
-                if (lagMs > static_cast<int32_t>(1000U / safeFps)) {
-                    scheduleT0 = now - static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
-                    ++lateFrames;
+                const uint32_t now = millis();
+                if (publishedOnClock == 0U) {
+                    scheduleT0 = now;
                 } else {
-                    while (checkStop() == StreamStopReason::Continue &&
-                           static_cast<int32_t>(due - millis()) > 0) {
-                        const uint32_t rem = due - millis();
-                        vTaskDelay(pdMS_TO_TICKS(rem > 2U ? (rem - 1U) : 1U));
+                    const uint32_t due = dueMsFor(publishedOnClock);
+                    const int32_t lagMs = static_cast<int32_t>(now - due);
+                    if (lagMs > static_cast<int32_t>(1000U / safeFps)) {
+                        scheduleT0 = now - static_cast<uint32_t>(
+                            (static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps
+                        );
+                        ++lateFrames;
+                    }
+                }
+                if (params.onNextFrameDueMs) {
+                    if (static_cast<uint32_t>(f) + 1U < static_cast<uint32_t>(totalFrames)) {
+                        const uint32_t nextDue = dueMsFor(publishedOnClock + 1U);
+                        params.onNextFrameDueMs(params.userCtx, (nextDue != 0U) ? nextDue : 1U);
+                    } else {
+                        params.onNextFrameDueMs(params.userCtx, 0U);
                     }
                 }
             }
-            const StreamStopReason srAfterHold = checkStop();
-            if (srAfterHold != StreamStopReason::Continue) {
-                okFrame = false;
-                frameFailReason = stopReasonLabel(srAfterHold);
-            }
         }
 
-        // 5. Caller post-write hook (publish EVEN seqlock / trigger Late Preemption on Frame 0).
+        // 5. Immediately publish EVEN seqlock with zero post-decode delay!
         if (params.onFinishFrameWrite) {
             params.onFinishFrameWrite(params.userCtx, f, dstBuf, w, h, okFrame, singleBuffer);
         }
@@ -1033,6 +1207,13 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             const StreamStopReason sr = checkStop();
             endReason = (sr != StreamStopReason::Continue) ? stopReasonLabel(sr) : frameFailReason;
             break;
+        }
+
+        if (isWebSocket && (static_cast<uint32_t>(f) + 1U < static_cast<uint32_t>(totalFrames))) {
+            if (!flushWsControlAndCredits(false)) {
+                endReason = lastReadFailReason;
+                break;
+            }
         }
 
         ++framesRead;
@@ -1054,6 +1235,15 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     closeStreamSocket(true);
     if (framesRead > 0U) {
         ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
+        if (params.getPresentedFrames) {
+            const uint32_t tailWaitBudgetMs = std::min<uint32_t>(16U, 1000U / safeFps);
+            const uint32_t tailT0 = millis();
+            while (checkStop() == StreamStopReason::Continue &&
+                   params.getPresentedFrames(params.userCtx) < static_cast<uint32_t>(framesRead) &&
+                   (millis() - tailT0) < tailWaitBudgetMs) {
+                vTaskDelay(1);
+            }
+        }
     }
     {
         const uint32_t durMs = std::max<uint32_t>(1U, millis() - streamStartMs);
