@@ -93,6 +93,8 @@ public:
         m_presentedFrames.store(0U, std::memory_order_release);
     }
 
+    void waitRenderBlitQuiescent() const;
+
     uint16_t surfaceWidth() const { return m_width; }
     uint16_t surfaceHeight() const { return m_height; }
 
@@ -106,6 +108,7 @@ private:
     std::atomic<uint16_t> m_frameH{0};
     std::atomic<uint32_t> m_frameSeq{0};
     std::atomic<uint32_t> m_consumedFrameSeq{0};
+    std::atomic<uint32_t> m_renderBlitSeq{0};
     std::atomic<uint32_t> m_presentedFrames{0};
     std::atomic<bool> m_displayEngaged{false};
 
@@ -272,9 +275,11 @@ private:
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
     static constexpr size_t STREAM_IO_SCRATCH_BYTES = 1472U;
+    static constexpr size_t PSRAM_STREAM_IO_SCRATCH_BYTES = 8192U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     uint16_t* m_streamFrames[2] = {nullptr, nullptr};
     char* m_streamIoScratch = nullptr;
+    size_t m_streamIoScratchCap = 0;
     size_t m_streamFramePixels = 0;
 
     static void showcaseWorkerTaskFunc(void* param);

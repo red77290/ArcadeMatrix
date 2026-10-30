@@ -375,7 +375,7 @@ void RotationManager::switchToModule(int index) {
           }
           if (evictedOutgoing) {
               uint32_t waitStart = millis();
-              while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 120U) {
+              while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 400U) {
                   vTaskDelay(pdMS_TO_TICKS(5));
               }
           }

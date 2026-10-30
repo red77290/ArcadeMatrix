@@ -215,6 +215,20 @@ const uint8_t DmdzWsDemuxer::kMaskedCloseFrame[6] = {
     0x88U, 0x80U, 0x37U, 0xFAU, 0x21U, 0x3DU
 };
 
+size_t DmdzWsDemuxer::buildMaskedCreditAckFrame(uint8_t creditCount, uint8_t outFrame[22]) {
+    if (!outFrame || creditCount == 0U) {
+        return 0U;
+    }
+    const uint8_t n = (creditCount <= 16U) ? creditCount : 16U;
+    outFrame[0] = 0x82U; // FIN + Opcode BINARY (0x2)
+    outFrame[1] = static_cast<uint8_t>(0x80U | n);
+    memcpy(outFrame + 2, kMaskKey, 4U);
+    for (uint8_t i = 0U; i < n; ++i) {
+        outFrame[6U + i] = static_cast<uint8_t>(0x41U ^ kMaskKey[i & 3U]);
+    }
+    return static_cast<size_t>(6U + n);
+}
+
 bool buildDmdzWebSocketPath(
     const char* rawPath,
     const char* clientId,

@@ -141,6 +141,17 @@ void InGameShowcaseEngine::update(EngineContext* context) {
     }
 }
 
+void InGameShowcaseEngine::waitRenderBlitQuiescent() const {
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#if defined(ESP32) && !defined(UNIT_TEST)
+    uint32_t t0 = millis();
+    while ((m_renderBlitSeq.load(std::memory_order_seq_cst) & 1U) != 0U &&
+           (millis() - t0) < 50U) {
+        vTaskDelay(1);
+    }
+#endif
+}
+
 void InGameShowcaseEngine::render(EngineContext* context) {
     if (!m_dirty) {
         m_renderedNewFrame = false;
@@ -151,6 +162,16 @@ void InGameShowcaseEngine::render(EngineContext* context) {
         m_renderedNewFrame = false;
         return;
     }
+
+    struct BlitSeqGuard {
+        std::atomic<uint32_t>& seq;
+        explicit BlitSeqGuard(std::atomic<uint32_t>& sRef) : seq(sRef) {
+            seq.fetch_add(1U, std::memory_order_seq_cst);
+        }
+        ~BlitSeqGuard() {
+            seq.fetch_add(1U, std::memory_order_release);
+        }
+    } blitGuard{m_renderBlitSeq};
 
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
     if ((seq & 1U) != 0U) {
@@ -513,7 +534,7 @@ void FrontendSyncEngine::ensureShowcaseWorkerRunning() {
     const uint32_t stackBytes = hasPsram ? 6144U : 4608U;
     m_workerStopRequested.store(false, std::memory_order_release);
     m_workerExited.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 1, &m_showcaseWorkerHandle, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 2, &m_showcaseWorkerHandle, 0) != pdPASS) {
         m_showcaseWorkerHandle = nullptr;
         m_workerExited.store(true, std::memory_order_release);
     }
@@ -920,9 +941,12 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
     if (hasPsram) {
         m_streamFrames[0] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_streamFrames[1] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_streamIoScratch = static_cast<char*>(heap_caps_malloc(STREAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        if (!m_streamIoScratch) {
+        m_streamIoScratch = static_cast<char*>(heap_caps_malloc(PSRAM_STREAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (m_streamIoScratch) {
+            m_streamIoScratchCap = PSRAM_STREAM_IO_SCRATCH_BYTES;
+        } else {
             m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
+            m_streamIoScratchCap = m_streamIoScratch ? STREAM_IO_SCRATCH_BYTES : 0U;
         }
     } else {
         // Classic ESP32 (`esp32dev`): allocate a single 8 KB frame buffer (`m_streamFrames[0]`) + 1.4 KB I/O
@@ -930,18 +954,20 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
         size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         if (frameBytes <= 16384U &&
-            free8 >= (frameBytes + STREAM_IO_SCRATCH_BYTES + 4608U) &&
+            free8 >= (frameBytes + STREAM_IO_SCRATCH_BYTES + 2560U) &&
             largest8 >= frameBytes) {
             m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
             if (m_streamFrames[0]) {
                 m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
+                m_streamIoScratchCap = m_streamIoScratch ? STREAM_IO_SCRATCH_BYTES : 0U;
             }
         }
     }
 #else
     m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
     m_streamFrames[1] = static_cast<uint16_t*>(malloc(frameBytes));
-    m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
+    m_streamIoScratch = static_cast<char*>(malloc(PSRAM_STREAM_IO_SCRATCH_BYTES));
+    m_streamIoScratchCap = m_streamIoScratch ? PSRAM_STREAM_IO_SCRATCH_BYTES : 0U;
 #endif
 
     if (!m_streamFrames[0] || !m_streamIoScratch) {
@@ -949,6 +975,7 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
             free(m_streamIoScratch);
             m_streamIoScratch = nullptr;
         }
+        m_streamIoScratchCap = 0U;
         if (m_streamFrames[1]) {
             free(m_streamFrames[1]);
             m_streamFrames[1] = nullptr;
@@ -973,6 +1000,7 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
     m_wantsInGameDisplay.store(false, std::memory_order_release);
     if (m_inGameEngine) {
         m_inGameEngine->clearFrame();
+        m_inGameEngine->waitRenderBlitQuiescent();
 #if defined(ESP32) && !defined(UNIT_TEST)
         for (int i = 0; i < 50 && m_inGameEngine->isDisplayEngaged(); ++i) {
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -985,6 +1013,7 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
         free(m_streamIoScratch);
         m_streamIoScratch = nullptr;
     }
+    m_streamIoScratchCap = 0U;
     for (int i = 1; i >= 0; --i) {
         if (m_streamFrames[i]) {
             free(m_streamFrames[i]);
@@ -1079,7 +1108,7 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     params.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
     params.logTag = "RetroFrontend";
     params.ownerId = net::OWNER_INGAME_SYNC;
-    params.wsCredits = hasPsram ? 8U : 2U;
+    params.wsCredits = hasPsram ? 12U : 4U;
     params.panelWidth = expectedW;
     params.panelHeight = expectedH;
     params.configuredStreamMs = configuredStreamMs;
@@ -1087,7 +1116,7 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     params.frameBuf0 = m_streamFrames[0];
     params.frameBuf1 = m_streamFrames[1];
     params.ioScratch = m_streamIoScratch;
-    params.ioScratchCap = STREAM_IO_SCRATCH_BYTES;
+    params.ioScratchCap = m_streamIoScratchCap;
     params.userCtx = &cbCtx;
     params.checkStop = checkStopFn;
 
@@ -1095,19 +1124,22 @@ bool FrontendSyncEngine::streamReadyItemOnce(
         (void)dstBuf;
         auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
         InGameShowcaseEngine* eng = c->self->m_inGameEngine;
-        if (!singleBuffer || !eng || frameIdx == 0U) {
+        if (!singleBuffer || !eng) {
             return;
         }
-        const uint32_t handoffBudgetMs = std::max<uint32_t>(frameIdx == 1U ? 36U : 18U, 1000U / safeFps);
-        const uint32_t handoffT0 = millis();
-        while (!c->self->m_workerStopRequested.load(std::memory_order_acquire) &&
-               c->self->m_playSessionToken.load(std::memory_order_acquire) == c->expectedToken &&
-               (c->hasPsram || !WebUiSyncEngine::isRequested()) &&
-               eng->consumedFrameSeq() != eng->currentFrameSeq() &&
-               (millis() - handoffT0) < handoffBudgetMs) {
-            vTaskDelay(1);
+        if (frameIdx > 0U) {
+            const uint32_t handoffBudgetMs = std::max<uint32_t>(frameIdx == 1U ? 36U : 18U, 1000U / safeFps);
+            const uint32_t handoffT0 = millis();
+            while (!c->self->m_workerStopRequested.load(std::memory_order_acquire) &&
+                   c->self->m_playSessionToken.load(std::memory_order_acquire) == c->expectedToken &&
+                   (c->hasPsram || !WebUiSyncEngine::isRequested()) &&
+                   eng->consumedFrameSeq() != eng->currentFrameSeq() &&
+                   (millis() - handoffT0) < handoffBudgetMs) {
+                vTaskDelay(1);
+            }
         }
         eng->beginFrameUpdate();
+        eng->waitRenderBlitQuiescent();
     };
 
     params.onFinishFrameWrite = [](
@@ -1122,8 +1154,11 @@ bool FrontendSyncEngine::streamReadyItemOnce(
         auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
         InGameShowcaseEngine* eng = c->self->m_inGameEngine;
         if (!okFrame) {
-            if (singleBuffer && eng) {
-                eng->endFrameUpdateWithoutPublish();
+            if (singleBuffer) {
+                if (eng) {
+                    eng->clearFrame();
+                }
+                c->self->m_wantsInGameDisplay.store(false, std::memory_order_release);
             }
             return;
         }

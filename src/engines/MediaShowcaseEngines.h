@@ -130,6 +130,7 @@ protected:
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
     static constexpr size_t IO_SCRATCH_BYTES = 1472;
+    static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 8192;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
     enum class Phase : uint8_t {
@@ -182,11 +183,14 @@ protected:
     std::atomic<uint32_t> m_consumedFrameSeq{0};
     std::atomic<uint32_t> m_renderBlitSeq{0};
     std::atomic<uint32_t> m_presentedStreamFrames{0};
+    std::atomic<const uint16_t*> m_publishedFramePtr{nullptr};
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr;
     uint16_t* m_frame565 = nullptr;
+    uint16_t* m_frame565Back = nullptr;
     char* m_ioScratch = nullptr;
     char* m_psramMqttRx = nullptr;
+    size_t m_ioScratchCap = 0;
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     bool m_posterAliasesFrame = false;

@@ -100,6 +100,12 @@ public:
     // Masked RFC 6455 CLOSE frame (`0` payload bytes).
     static const uint8_t kMaskedCloseFrame[6];
 
+    /**
+     * @brief Builds a single masked RFC 6455 binary frame carrying `1..16` `'A'` (`0x41`) credit ACK bytes.
+     *        Coalescing ACKs cuts half-duplex Wi-Fi TX packet rate without delaying server sliding-window refills.
+     */
+    static size_t buildMaskedCreditAckFrame(uint8_t creditCount, uint8_t outFrame[22]);
+
     void reset();
 
     size_t decode(

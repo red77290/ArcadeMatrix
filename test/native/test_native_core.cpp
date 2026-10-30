@@ -5,6 +5,7 @@
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
 #include "core/I18n.h"
+#include "core/drawing/Hub75BulkEncoder.h"
 #include "core/drawing/Hub75DmaLayout.h"
 #include "core/drawing/DmdzStreamDecoder.h"
 #include "core/net/DmdzStreamClient.h"
@@ -2825,6 +2826,64 @@ void test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits(void) {
     TEST_ASSERT_TRUE(chunkDec.hasError());
 }
 
+void test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack(void) {
+    using core::drawing::DmdzWsDemuxer;
+
+    // 1. Verify full 256-entry CIE 1931 LUT reaches `maxAllowed` at full brightness across all depths
+    //    (guards against truncated CIE tables wrapping indices 208..255 to 0).
+    const uint8_t depths[] = {2, 4, 5, 6, 7, 8};
+    for (uint8_t d : depths) {
+        uint8_t lutR[32] = {0};
+        uint8_t lutG[64] = {0};
+        uint8_t lutB[32] = {0};
+        Hub75BulkEncoder::generateLuts(d, lutR, lutG, lutB);
+        const uint8_t maxVal = static_cast<uint8_t>((1U << d) - 1U);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutB[0]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutG[63]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutB[31]);
+
+        for (int i = 1; i < 32; ++i) {
+            TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[i], lutB[i]);
+        }
+        for (int i = 1; i < 64; ++i) {
+            TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+        }
+    }
+
+    // 2. At 4-bit and 5-bit depth, 100% of neutral RGB565 greys (`r5 == b5 == g6 >> 1`, including odd `g6`)
+    //    must map to exact `R == G == B` (zero green/magenta tint), and dark cinema shadows (`r5 = 5 -> c8 = 41`)
+    //    must preserve non-zero gradation instead of crushing to black.
+    for (uint8_t lowDepth : {static_cast<uint8_t>(4), static_cast<uint8_t>(5)}) {
+        uint8_t lutR[32] = {0};
+        uint8_t lutG[64] = {0};
+        uint8_t lutB[32] = {0};
+        Hub75BulkEncoder::generateLuts(lowDepth, lutR, lutG, lutB);
+        for (int k = 0; k < 32; ++k) {
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutB[k]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k + 1]);
+        }
+        TEST_ASSERT_TRUE(lutR[5] >= 1U);
+    }
+
+    // 3. Coalesced WebSocket credit ACK frames (`1..16` `'A'` bytes in a single masked RFC 6455 binary frame)
+    uint8_t ackBuf[22] = {0};
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(0U, ackBuf)));
+    TEST_ASSERT_EQUAL_UINT32(10U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(4U, ackBuf)));
+    TEST_ASSERT_EQUAL_UINT8(0x82U, ackBuf[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x84U, ackBuf[1]);
+    for (uint8_t i = 0U; i < 4U; ++i) {
+        TEST_ASSERT_EQUAL_UINT8('A', static_cast<uint8_t>(ackBuf[6U + i] ^ DmdzWsDemuxer::kMaskKey[i & 3U]));
+    }
+    // Clamp > 16 to 16 bytes
+    TEST_ASSERT_EQUAL_UINT32(22U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(99U, ackBuf)));
+    TEST_ASSERT_EQUAL_UINT8(0x90U, ackBuf[1]);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2917,6 +2976,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
     RUN_TEST(test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder);
     RUN_TEST(test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits);
+    RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack);
 
     return UNITY_END();
 }

@@ -22,7 +22,7 @@ void Core0LifecycleDispatcher::begin() {
             "Lifecycle0",
             3072,
             this,
-            1,
+            2,
             &_lifecycleTaskHandle,
             0 // Core 0
         );

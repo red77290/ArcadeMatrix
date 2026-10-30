@@ -362,6 +362,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     }
 
     int fd = -1;
+    int lastSockErrno = 0;
     auto closeStreamSocket = [&](bool abortWithRst) {
         if (fd >= 0) {
             if (abortWithRst) {
@@ -383,6 +384,32 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             }
         }
     } sockGuard{fd};
+
+    auto sendAllBytes = [&](const void* rawBuf, size_t totalLen, uint32_t maxSendMs = 1500U) -> bool {
+        const uint8_t* ptr = static_cast<const uint8_t*>(rawBuf);
+        size_t sent = 0U;
+        const uint32_t t0 = millis();
+        while (sent < totalLen) {
+            if (checkStop() != StreamStopReason::Continue) {
+                return false;
+            }
+            int w = lwip_send(fd, ptr + sent, totalLen - sent, 0);
+            if (w > 0) {
+                sent += static_cast<size_t>(w);
+            } else if (w == 0) {
+                return false;
+            } else {
+                lastSockErrno = errno;
+                if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK && lastSockErrno != EINTR) {
+                    return false;
+                }
+                if ((millis() - t0) >= maxSendMs) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
 
     auto openAndReadResponseHeaders = [&](size_t reqBytes, size_t& outScratchUsed, size_t& outBodyStart) -> bool {
         outScratchUsed = 0U;
@@ -411,7 +438,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 fd_set wfds;
                 FD_ZERO(&wfds);
                 FD_SET(fd, &wfds);
-                struct timeval tv = {0, 80000};
+                struct timeval tv = {0, 40000};
                 int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
                 if (sel > 0 && FD_ISSET(fd, &wfds)) {
                     int soErr = -1;
@@ -429,13 +456,12 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         }
 
         lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-        struct timeval rcvTv = {0, 80000}; // 80 ms slice keeps cancellation & WebUI preemption snappy
-        struct timeval sndTv = {1, 0};
+        struct timeval rcvTv = {0, 40000};  // 40 ms slice keeps rotation shutdown & WebUI preemption fast
+        struct timeval sndTv = {0, 120000}; // 120 ms per send slice inside sendAllBytes
         lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
         lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
 
-        if (reqBytes == 0U || reqBytes >= scratchCap ||
-            lwip_send(fd, ioScratch, reqBytes, 0) != static_cast<int>(reqBytes)) {
+        if (reqBytes == 0U || reqBytes >= scratchCap || !sendAllBytes(ioScratch, reqBytes, 1500U)) {
             closeStreamSocket(true);
             return false;
         }
@@ -563,35 +589,38 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     size_t preBufferedOff = bodyStart;
     size_t preBufferedEnd = scratchUsed;
     const char* lastReadFailReason = "idle_body";
-    int lastSockErrno = 0;
+    uint16_t pendingWsCredits = 0U;
+    const uint8_t clampedWsCredits = (params.wsCredits < 1U) ? 1U : (params.wsCredits > 16U ? 16U : params.wsCredits);
+    const uint8_t ackBatch = (clampedWsCredits >= 8U) ? 4U : ((clampedWsCredits >= 2U) ? 2U : 1U);
+
+    auto flushWsControlAndCredits = [&](bool forceAllCredits) -> bool {
+        if (!isWebSocket) {
+            return true;
+        }
+        while (wsDemux.hasPendingPong()) {
+            uint8_t pongFrame[131];
+            const size_t pongLen = wsDemux.takePendingPongFrame(pongFrame);
+            if (pongLen > 0U && !sendAllBytes(pongFrame, pongLen, 1000U)) {
+                lastReadFailReason = "sock_err";
+                return false;
+            }
+        }
+        const uint16_t minToSend = forceAllCredits ? 1U : static_cast<uint16_t>(ackBatch);
+        while (pendingWsCredits >= minToSend) {
+            const uint8_t batch = (pendingWsCredits > 16U) ? 16U : static_cast<uint8_t>(pendingWsCredits);
+            uint8_t ackFrame[22];
+            const size_t ackLen = core::drawing::DmdzWsDemuxer::buildMaskedCreditAckFrame(batch, ackFrame);
+            if (ackLen > 0U && !sendAllBytes(ackFrame, ackLen, 1000U)) {
+                lastReadFailReason = "sock_err";
+                return false;
+            }
+            pendingWsCredits = static_cast<uint16_t>(pendingWsCredits - batch);
+        }
+        return true;
+    };
 
     auto readExactStreamBody = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
         if (isWebSocket) {
-            auto flushWsControlAndCredits = [&](uint8_t creditsToAck) -> bool {
-                while (wsDemux.hasPendingPong()) {
-                    uint8_t pongFrame[131];
-                    const size_t pongLen = wsDemux.takePendingPongFrame(pongFrame);
-                    if (pongLen > 0U &&
-                        lwip_send(fd, pongFrame, pongLen, 0) != static_cast<int>(pongLen)) {
-                        lastSockErrno = errno;
-                        lastReadFailReason = "sock_err";
-                        return false;
-                    }
-                }
-                for (uint8_t c = 0U; c < creditsToAck; ++c) {
-                    if (lwip_send(
-                            fd,
-                            core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame,
-                            sizeof(core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame),
-                            0) != static_cast<int>(sizeof(core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame))) {
-                        lastSockErrno = errno;
-                        lastReadFailReason = "sock_err";
-                        return false;
-                    }
-                }
-                return true;
-            };
-
             size_t got = 0U;
             uint32_t lastProg = millis();
             while (got < wantLen) {
@@ -613,11 +642,13 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                     );
                     preBufferedOff += consumed;
                     got += produced;
+                    pendingWsCredits = static_cast<uint16_t>(pendingWsCredits + creditsToAck);
                     if (wsDemux.hasError()) {
                         lastReadFailReason = "decode_err";
                         return false;
                     }
-                    if (!flushWsControlAndCredits(creditsToAck)) {
+                    if ((wsDemux.hasPendingPong() || pendingWsCredits >= ackBatch) &&
+                        !flushWsControlAndCredits(false)) {
                         return false;
                     }
                     if (got >= wantLen) {
@@ -633,7 +664,26 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 }
                 preBufferedOff = 0U;
                 preBufferedEnd = 0U;
-                int r = lwip_recv(fd, ioScratch, scratchCap, 0);
+                int r = lwip_recv(fd, ioScratch, scratchCap, MSG_DONTWAIT);
+                if (r > 0) {
+                    preBufferedEnd = static_cast<size_t>(r);
+                    lastProg = millis();
+                    continue;
+                }
+                if (r == 0) {
+                    lastReadFailReason = "eof_early";
+                    return false;
+                }
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    lastSockErrno = errno;
+                    lastReadFailReason = "sock_err";
+                    return false;
+                }
+                if ((pendingWsCredits > 0U || wsDemux.hasPendingPong()) &&
+                    !flushWsControlAndCredits(true)) {
+                    return false;
+                }
+                r = lwip_recv(fd, ioScratch, scratchCap, 0);
                 if (r > 0) {
                     preBufferedEnd = static_cast<size_t>(r);
                     lastProg = millis();
@@ -788,7 +838,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         dmdzDec.init(w, h);
     }
 
-    const bool singleBuffer = (params.frameBuf1 == nullptr) || parsedHdr.isDmdz;
+    const bool singleBuffer = (params.frameBuf1 == nullptr);
     const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(fps));
     const uint32_t headerExpectedMs = (static_cast<uint32_t>(totalFrames) * 1000U) / safeFps;
     const uint32_t maxAllowedMs = std::min<uint32_t>(
@@ -866,6 +916,16 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             }
         }
 
+        // Drain pending Wi-Fi RX buffer bytes into `ioScratch` prior to Core 1 handoff wait.
+        if (preBufferedOff >= preBufferedEnd) {
+            preBufferedOff = 0U;
+            preBufferedEnd = 0U;
+            int pref = lwip_recv(fd, ioScratch, scratchCap, MSG_DONTWAIT);
+            if (pref > 0) {
+                preBufferedEnd = static_cast<size_t>(pref);
+            }
+        }
+
         uint16_t* dstBuf = singleBuffer
             ? params.frameBuf0
             : (((f & 1U) == 0U) ? params.frameBuf0 : params.frameBuf1);
@@ -879,6 +939,10 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         bool okFrame = false;
         const char* frameFailReason = "idle_body";
         if (parsedHdr.isDmdz) {
+            if (!singleBuffer && f > 0U) {
+                const uint16_t* prevBuf = ((f & 1U) == 0U) ? params.frameBuf1 : params.frameBuf0;
+                memcpy(dstBuf, prevBuf, frameBytes);
+            }
             uint8_t lenBytes[2] = {0U, 0U};
             bool lenOk = false;
             if (hasFirstFrameByte) {
@@ -893,7 +957,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) |
                                             (static_cast<uint16_t>(lenBytes[1]) << 8);
                 dmdzDec.beginFrame(payloadLen);
-                uint8_t decChunk[128];
+                uint8_t decChunk[384];
                 size_t rem = payloadLen;
                 okFrame = true;
                 while (rem > 0U) {
@@ -924,6 +988,13 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
             }
             if (!okFrame) {
+                frameFailReason = lastReadFailReason;
+            }
+        }
+
+        if (okFrame && isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+            if (!flushWsControlAndCredits(true)) {
+                okFrame = false;
                 frameFailReason = lastReadFailReason;
             }
         }
@@ -974,11 +1045,10 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     }
 
     if (isWebSocket && framesRead == totalFrames && fd >= 0) {
-        (void)lwip_send(
-            fd,
+        (void)sendAllBytes(
             core::drawing::DmdzWsDemuxer::kMaskedCloseFrame,
             sizeof(core::drawing::DmdzWsDemuxer::kMaskedCloseFrame),
-            0
+            250U
         );
     }
     closeStreamSocket(true);
@@ -1052,7 +1122,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     if (parsedHdr.isDmdz) {
         dmdzDec.init(w, h);
     }
-    const bool singleBuffer = (params.frameBuf1 == nullptr) || parsedHdr.isDmdz;
+    const bool singleBuffer = (params.frameBuf1 == nullptr);
     const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(parsedHdr.fps));
 
     uint16_t framesRead = 0U;
@@ -1066,6 +1136,10 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         }
         bool okFrame = false;
         if (parsedHdr.isDmdz) {
+            if (!singleBuffer && f > 0U) {
+                const uint16_t* prevBuf = ((f & 1U) == 0U) ? params.frameBuf1 : params.frameBuf0;
+                memcpy(dstBuf, prevBuf, frameBytes);
+            }
             uint8_t lenBytes[2] = {0U, 0U};
             if (readExactStreamForUnitTest(st, lenBytes, 2U, params.checkStop, params.userCtx)) {
                 const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) |

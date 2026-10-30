@@ -398,6 +398,7 @@ void AppRuntime::initialize() {
         if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
             LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+            WiFi.setSleep(false);
             LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
             const ip_addr_t* dhcpDns = dns_getserver(0);
             ip_addr_t routerDns;
