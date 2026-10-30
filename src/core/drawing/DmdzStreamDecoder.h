@@ -84,7 +84,8 @@ bool buildDmdzWebSocketPath(
     const char* rawPath,
     const char* clientId,
     char* outWsPath,
-    size_t outCap
+    size_t outCap,
+    uint8_t credits = 2U
 );
 
 /**

@@ -7,6 +7,7 @@
 #include "core/I18n.h"
 #include "core/drawing/Hub75DmaLayout.h"
 #include "core/drawing/DmdzStreamDecoder.h"
+#include "core/net/DmdzStreamClient.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
@@ -2710,6 +2711,120 @@ void test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder(void) {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), actual.data(), expected.size());
 }
 
+void test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits(void) {
+    using namespace core::drawing;
+
+    // 1. `buildDmdzWebSocketPath` In-Game Showcase `purge=false` + PSRAM `credits=8` + clamping
+    char wsPath[256] = "";
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream?purge=false&paced=1&codec=dmdz1",
+        "esp32_ab12_games_128x32_sync",
+        wsPath,
+        sizeof(wsPath),
+        8U
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/pkg_games_42.dmdz?purge=false&client_id=esp32_ab12_games_128x32_sync&credits=8",
+        wsPath
+    );
+
+    // Default `credits=2` omits `&credits=` for zero wire overhead on `ESP32_STD`
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream?purge=false&paced=1&codec=dmdz1",
+        "esp32_sync",
+        wsPath,
+        sizeof(wsPath),
+        2U
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/pkg_games_42.dmdz?purge=false&client_id=esp32_sync",
+        wsPath
+    );
+
+    // Clamping `credits` to `[1, 16]`
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/movies/stream/pkg_movies_9.rgb565.stream",
+        "esp32_s3",
+        wsPath,
+        sizeof(wsPath),
+        99U
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/movies/ws/pkg_movies_9.dmdz?purge=true&client_id=esp32_s3&credits=16",
+        wsPath
+    );
+
+    // 2. `net::parseEndpointHostAndPort`
+    char host[64] = "";
+    uint16_t port = 0U;
+    bool isHttps = false;
+    TEST_ASSERT_TRUE(net::parseEndpointHostAndPort(
+        "http://192.168.1.40:8890/api/v1/health",
+        80U,
+        host,
+        sizeof(host),
+        port,
+        &isHttps
+    ));
+    TEST_ASSERT_EQUAL_STRING("192.168.1.40", host);
+    TEST_ASSERT_EQUAL_UINT16(8890U, port);
+    TEST_ASSERT_FALSE(isHttps);
+
+    TEST_ASSERT_TRUE(net::parseEndpointHostAndPort(
+        "https://showcase.example.org/stream",
+        443U,
+        host,
+        sizeof(host),
+        port,
+        &isHttps
+    ));
+    TEST_ASSERT_EQUAL_STRING("showcase.example.org", host);
+    TEST_ASSERT_EQUAL_UINT16(443U, port);
+    TEST_ASSERT_TRUE(isHttps);
+
+    // 3. `net::hasChunkedTransferEncoding`
+    TEST_ASSERT_TRUE(net::hasChunkedTransferEncoding(
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: gzip, Chunked\r\nX-DMD-Paced: 1"
+    ));
+    TEST_ASSERT_FALSE(net::hasChunkedTransferEncoding(
+        "HTTP/1.1 200 OK\r\nContent-Length: 8208\r\nX-DMD-Paced: 1"
+    ));
+
+    // 4. `net::HttpChunkedDecoder` across extensions & tiny slices
+    const char* rawChunked =
+        "5;ext=abc\r\nHello\r\n"
+        "7\r\n, DMDZ!\r\n"
+        "0\r\n\r\n";
+    net::HttpChunkedDecoder chunkDec;
+    char outStr[32] = {0};
+    size_t outPos = 0U;
+    size_t srcPos = 0U;
+    const size_t rawLen = strlen(rawChunked);
+    while (srcPos < rawLen && !chunkDec.isDone()) {
+        size_t consumed = 0U;
+        size_t step = std::min<size_t>(3U, rawLen - srcPos);
+        size_t prod = chunkDec.decode(
+            reinterpret_cast<const uint8_t*>(rawChunked + srcPos),
+            step,
+            consumed,
+            reinterpret_cast<uint8_t*>(outStr + outPos),
+            2U
+        );
+        TEST_ASSERT_FALSE(chunkDec.hasError());
+        srcPos += consumed;
+        outPos += prod;
+    }
+    TEST_ASSERT_TRUE(chunkDec.isDone());
+    TEST_ASSERT_EQUAL_UINT32(12U, static_cast<uint32_t>(outPos));
+    TEST_ASSERT_EQUAL_STRING("Hello, DMDZ!", outStr);
+
+    chunkDec.reset();
+    size_t badConsumed = 0U;
+    uint8_t dummy[8];
+    chunkDec.decode(reinterpret_cast<const uint8_t*>("ZZ\r\n"), 4U, badConsumed, dummy, sizeof(dummy));
+    TEST_ASSERT_TRUE(chunkDec.hasError());
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2801,6 +2916,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds);
     RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
     RUN_TEST(test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder);
+    RUN_TEST(test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits);
 
     return UNITY_END();
 }

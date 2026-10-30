@@ -77,6 +77,22 @@ public:
         return m_displayEngaged.load(std::memory_order_acquire);
     }
 
+    uint32_t currentFrameSeq() const {
+        return m_frameSeq.load(std::memory_order_acquire);
+    }
+
+    uint32_t consumedFrameSeq() const {
+        return m_consumedFrameSeq.load(std::memory_order_acquire);
+    }
+
+    uint32_t presentedFrames() const {
+        return m_presentedFrames.load(std::memory_order_relaxed);
+    }
+
+    void resetStreamTelemetry() {
+        m_presentedFrames.store(0U, std::memory_order_release);
+    }
+
     uint16_t surfaceWidth() const { return m_width; }
     uint16_t surfaceHeight() const { return m_height; }
 
@@ -89,6 +105,8 @@ private:
     std::atomic<uint16_t> m_frameW{0};
     std::atomic<uint16_t> m_frameH{0};
     std::atomic<uint32_t> m_frameSeq{0};
+    std::atomic<uint32_t> m_consumedFrameSeq{0};
+    std::atomic<uint32_t> m_presentedFrames{0};
     std::atomic<bool> m_displayEngaged{false};
 
     uint32_t m_lastRenderedSeq = 0;
@@ -253,8 +271,10 @@ private:
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
+    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 1472U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     uint16_t* m_streamFrames[2] = {nullptr, nullptr};
+    char* m_streamIoScratch = nullptr;
     size_t m_streamFramePixels = 0;
 
     static void showcaseWorkerTaskFunc(void* param);
@@ -269,10 +289,12 @@ private:
     void freeStreamBuffersSafely();
     bool streamReadyItemOnce(
         const char* resolvedServerUrl,
+        const char* syncClientId,
         const char* itemId,
         uint32_t jobToken,
         uint16_t expectedW,
-        uint16_t expectedH
+        uint16_t expectedH,
+        uint32_t configuredStreamMs
     );
     static void deleteShowcaseQueueItemHttp(
         const char* resolvedServerUrl,

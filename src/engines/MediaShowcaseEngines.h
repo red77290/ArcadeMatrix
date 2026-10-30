@@ -6,71 +6,23 @@
 #include <freertos/task.h>
 #endif
 #include "../../include/core/EngineContract.h"
+#include "../core/net/DmdzStreamClient.h"
+#include "showcase/ShowcaseCardRenderer.h"
 
 class IDrawingSurface;
 
-enum class ShowcaseDomainId : uint8_t {
-    Games = 0,
-    Movies = 1,
-    Series = 2,
-    Anime = 3
-};
-
-/**
- * @struct HttpChunkedDecoder
- * @brief Zero-heap streaming RFC 9112 HTTP/1.1 `Transfer-Encoding: chunked` decoder.
- *        Strips `<hex>[;ext]\r\n` headers and `\r\n` trailers in bulk `memcpy` slices
- *        when a server or reverse proxy omits `Content-Length`.
- */
-struct HttpChunkedDecoder {
-    enum class State : uint8_t {
-        SizeHex = 0,
-        SizeExt = 1,
-        SizeLf = 2,
-        Payload = 3,
-        PayloadCr = 4,
-        PayloadLf = 5,
-        Done = 6,
-        Error = 7
-    };
-
-    State state = State::SizeHex;
-    size_t chunkRem = 0;
-    uint8_t hexDigits = 0;
-
-    void reset() {
-        state = State::SizeHex;
-        chunkRem = 0;
-        hexDigits = 0;
-    }
-
-    bool isDone() const { return state == State::Done; }
-    bool hasError() const { return state == State::Error; }
-
-    size_t decode(
-        const uint8_t* src,
-        size_t srcLen,
-        size_t& outSrcConsumed,
-        uint8_t* dst,
-        size_t dstCap
-    );
-};
+using ShowcaseDomainId = engines::showcase::ShowcaseDomainId;
+using HttpChunkedDecoder = net::HttpChunkedDecoder;
 
 /**
  * @class MediaShowcaseBase
- * @brief Shared V3.0 base implementation for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
+ * @brief Shared V3.0 orchestrator for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
  *        RetroGamesEngine, MovieShowcaseEngine, SeriesShowcaseEngine, and AnimeShowcaseEngine.
  *
- * Strictly enforces all 20 real-time architectural invariants + V3.0 requirements:
- * - Zero dynamic allocation and zero mutex on the Core 1 hot path (update / render).
- * - Strict Consume-Once & Zero Media Cache on the DMD: never caches or replays items when
- *   the server goes offline (MQTT LWT `online:false`, UDP watchdog timeout, or HTTP error).
- * - Dedicated MQTT Broker Config (`use_showcase_broker` auto-deriving `<server_ip>:1883`,
- *   or `mqtt_broker_source` `global` / `custom`).
- * - Dual-transport Core 0 worker (`mqtt_tcp` real-time `DMDS` TCP streaming + `http_poll` fallback).
- * - 4 Creative Procedural Pixel-Art "Waiting for Content" Animations on Core 1.
- * - Quiescent, allocation-free deactivation (`deactivate()` / `shutdownForDestruction()`)
- *   reclaiming all transient buffers before the next engine initializes.
+ * Delegates single-responsibility concerns to dedicated reusable modules:
+ * - Scoped zero-heap MQTT 3.1.1 control session: `net::RawMqttSocket` (`src/core/net/RawMqttSocket.*`)
+ * - Credit-acked WebSocket `DMDZ` + Paced HTTP `DMDZ`/`DMDS` stream client: `net::DmdzStreamClient` (`src/core/net/DmdzStreamClient.*`)
+ * - Core 1 UTF-8 pixel-font, waiting pixel-art & adaptive Card layouts: `engines::showcase::ShowcaseCardRenderer` (`src/engines/showcase/ShowcaseCardRenderer.*`)
  */
 class MediaShowcaseBase : public IEngine {
 public:
@@ -128,18 +80,6 @@ public:
     bool isFinished() const override;
     bool evictOnInactiveLowMemory() const override { return true; }
 
-    /**
-     * @brief Zero-copy in-place parser for an MQTT `ready` JSON payload (`dmd_showcase/clients/{id}/{domain}/ready`).
-     *        Exposed for deterministic native/embedded unit testing of large base64 poster payloads
-     *        and duplicate/aliased stream metadata keys (`stream_fps`/`fps`, `stream_duration_s`/`total_stream_duration_s`).
-     * @param jsonBuf Mutable null-terminated JSON buffer (modified in-place by ArduinoJson zero-copy mode).
-     * @param showPoster Whether inline `poster_rgb565_b64` should be decoded into `m_poster565`.
-     * @param outItemId Receives the parsed `item_id` (or `card.id`).
-     * @param outHasStream Receives true if `has_panoramas` or `has_video` is set.
-     * @param outStreamMaxMs Receives the computed stream watchdog timeout in milliseconds.
-     * @param outExplicitWarming Receives true if the payload is a valid `{"ready": false}` message.
-     * @return true if a valid `{"ready": true, "card": {...}}` item was parsed into `m_liveCard`.
-     */
     bool parseReadyPayloadInPlaceBuf(
         char* jsonBuf,
         bool showPoster,
@@ -159,50 +99,34 @@ public:
         bool& outExplicitWarming
     );
 
-    /**
-     * @brief Counts rendered UTF-8 glyphs (folding NFD combining accents and expanding `œ`/`Œ` ligatures to 2 columns).
-     */
-    static size_t countUtf8Glyphs(const char* utf8);
+    static size_t countUtf8Glyphs(const char* utf8) {
+        return engines::showcase::ShowcaseCardRenderer::countUtf8Glyphs(utf8);
+    }
 
-    /**
-     * @brief Copies a comma-separated filter token list into a bounded buffer without ever
-     *        truncating mid-token. If `src` exceeds `cap - 1`, truncates cleanly at the last
-     *        complete comma boundary so partial system/genre IDs are never sent to Showcase.
-     */
     static void copySafeCsvTokens(char* dst, size_t cap, const char* src);
 
-    /**
-     * @brief Clamps requested `video_fps` to the supported Showcase protocol range (`8..60` FPS).
-     *        Over paced TCP (`mqtt_tcp` / `http_poll`), `128x32` RGB565 up to 60 FPS is governed
-     *        cleanly by TCP window backpressure without legacy UDP packet-rate clamping.
-     */
     static uint8_t resolveEffectiveVideoFps(uint8_t requestedFps, bool hasPsram) {
         (void)hasPsram;
         return requestedFps < 8U ? 8U : (requestedFps > 60U ? 60U : requestedFps);
     }
 
-    /**
-     * @brief Requires 3 consecutive transport failures before transitioning to `NetworkOffline` (`2`),
-     *        preventing transient LAN/Wi-Fi retries from flashing a false offline banner on the DMD.
-     */
     static bool shouldReportNetworkOffline(uint8_t consecutiveFailures) {
         return consecutiveFailures >= 3U;
     }
 
-    /**
-     * @brief Case-insensitive check for `Transfer-Encoding: ...chunked...` in raw HTTP headers.
-     */
-    static bool hasChunkedTransferEncoding(const char* rawHeaders);
+    static bool hasChunkedTransferEncoding(const char* rawHeaders) {
+        return net::hasChunkedTransferEncoding(rawHeaders);
+    }
 
     static constexpr size_t MAX_SYSTEMS_FILTER_LEN = 560;
     static constexpr size_t MAX_FILTER_LEN = 192;
 
 protected:
     static constexpr size_t MAX_URL_LEN = 96;
-    static constexpr size_t MAX_TITLE_LEN = 80;
-    static constexpr size_t MAX_BADGE_LEN = 12;
+    static constexpr size_t MAX_TITLE_LEN = engines::showcase::ShowcaseCardData::MAX_TITLE_LEN;
+    static constexpr size_t MAX_BADGE_LEN = engines::showcase::ShowcaseCardData::MAX_BADGE_LEN;
     static constexpr size_t MAX_META_LEN = 16;
-    static constexpr size_t MAX_SYNOPSIS_LEN = 256;
+    static constexpr size_t MAX_SYNOPSIS_LEN = engines::showcase::ShowcaseCardData::MAX_SYNOPSIS_LEN;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
     static constexpr size_t IO_SCRATCH_BYTES = 1472;
@@ -240,19 +164,7 @@ protected:
         char colorBoost[16] = "auto";
     };
 
-    struct CardSnapshot {
-        char title[MAX_TITLE_LEN] = "";
-        char year[8] = "";
-        char badge[MAX_BADGE_LEN] = "";
-        char rating[8] = "";
-        char synopsis[MAX_SYNOPSIS_LEN] = "";
-        uint16_t badgeColor565 = 0xFD20;
-        uint16_t posterW = 32;
-        uint16_t posterH = 32;
-        bool hasData = false;
-        bool hasPoster = false;
-        bool hasVideoFrame = false;
-    };
+    using CardSnapshot = engines::showcase::ShowcaseCardData;
 
     ShowcaseDomainId m_domain;
     IDrawingSurface* m_surface = nullptr;
@@ -260,23 +172,21 @@ protected:
     uint16_t m_height = 32;
     bool m_hasPsram = false;
 
-    // Double-buffered configuration (written on cold path, read by Core 0 & Core 1)
     ConfigSlot m_cfg[2];
     std::atomic<uint8_t> m_cfgIdx{0};
     std::atomic<uint32_t> m_cfgGen{1};
 
-    // Session & Handoff state between Core 0 worker and Core 1 render loop
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
-    std::atomic<uint32_t> m_seq{0};              // Seqlock for CardSnapshot metadata
-    std::atomic<uint32_t> m_frameSeq{0};         // Tear-free frame seq: ODD while Core 0 writes m_frame565, EVEN when complete
-    std::atomic<uint32_t> m_consumedFrameSeq{0}; // Last EVEN frame seq blitted by Core 1 (prevents frame overwrite before blit)
-    std::atomic<uint32_t> m_renderBlitSeq{0};    // Wait-free Core 1 seqlock barrier around m_frame565 / m_poster565 reads
+    std::atomic<uint32_t> m_seq{0};
+    std::atomic<uint32_t> m_frameSeq{0};
+    std::atomic<uint32_t> m_consumedFrameSeq{0};
+    std::atomic<uint32_t> m_renderBlitSeq{0};
     std::atomic<uint32_t> m_presentedStreamFrames{0};
     CardSnapshot m_liveCard;
-    uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
-    uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
-    char* m_ioScratch = nullptr;     // Preallocated 1472 B SRAM scratch for MQTT TX/RX & HTTP stream headers
-    char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
+    uint16_t* m_poster565 = nullptr;
+    uint16_t* m_frame565 = nullptr;
+    char* m_ioScratch = nullptr;
+    char* m_psramMqttRx = nullptr;
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     bool m_posterAliasesFrame = false;
@@ -291,7 +201,7 @@ protected:
     std::atomic<bool> m_warmingFallback{false};
     std::atomic<bool> m_turnDone{false};
     std::atomic<uint8_t> m_phase{static_cast<uint8_t>(Phase::Card)};
-    std::atomic<uint8_t> m_statusState{3}; // 0=LiveReady, 1=ServerWarming, 2=NetworkOffline, 3=Unconfigured
+    std::atomic<uint8_t> m_statusState{3};
     std::atomic<uint8_t> m_rotationSlotCount{1};
     std::atomic<uint8_t> m_consecutiveWarmSkips{0};
     std::atomic<uint32_t> m_rotationBudget{1};
@@ -301,7 +211,6 @@ protected:
     TaskHandle_t m_task = nullptr;
 #endif
 
-    // Core 1 local render state (zero heap allocation)
     CardSnapshot m_renderCard;
     uint32_t m_activatedAtMs = 0;
     uint32_t m_phaseStartedAtMs = 0;
@@ -319,12 +228,22 @@ protected:
     bool m_dirty = true;
     bool m_renderedNewFrame = false;
 
-    const char* domainSlug() const;
-    const char* domainBadgeLabel() const;
-    uint16_t defaultAccent565() const;
-    static uint32_t synopsisPxPerSec(const char* speedStr);
+    const char* domainSlug() const {
+        return engines::showcase::ShowcaseCardRenderer::domainSlug(m_domain);
+    }
+    const char* domainBadgeLabel() const {
+        return engines::showcase::ShowcaseCardRenderer::domainBadgeLabel(m_domain);
+    }
+    uint16_t defaultAccent565() const {
+        return engines::showcase::ShowcaseCardRenderer::defaultAccent565(m_domain);
+    }
+    static uint32_t synopsisPxPerSec(const char* speedStr) {
+        return engines::showcase::ShowcaseCardRenderer::synopsisPxPerSec(speedStr);
+    }
     static uint32_t configuredMaxStreamMs(const ConfigSlot& cfg);
-    static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
+    static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH) {
+        engines::showcase::ShowcaseCardRenderer::computeCardPosterDims(panelW, panelH, outW, outH);
+    }
     static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
     bool allocateBuffers();
     void freeBuffers();
@@ -348,8 +267,12 @@ protected:
     bool streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath);
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
-    void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t stepPx);
-    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t scrollPx);
+    void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t stepPx) {
+        engines::showcase::ShowcaseCardRenderer::drawScrollingLine(s, text, minX, maxX, y, color, stepPx);
+    }
+    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t scrollPx) {
+        engines::showcase::ShowcaseCardRenderer::drawSinglePassSynopsis(s, text, minX, maxX, y, color, scrollPx);
+    }
 };
 
 class RetroGamesEngine : public MediaShowcaseBase {
