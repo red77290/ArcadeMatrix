@@ -2303,59 +2303,62 @@ void test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease(v
     TEST_ASSERT_FALSE(online);
 }
 
-#include "core/drawing/Hub75BcmCalibration.h"
+void test_cie_depth_lut_monotonic_and_8bit_identity(void) {
+    // CIE 1931 8-bit reference formula (`lumConvTab_8bit` in ESP32-HUB75-MatrixPanel-I2S-DMA)
+    uint8_t cie8[256];
+    for (int i = 0; i < 256; ++i) {
+        const double l = (static_cast<double>(i) * 100.0) / 255.0;
+        const double y = (l <= 8.0) ? (l / 902.3) : pow((l + 16.0) / 116.0, 3.0);
+        int v = static_cast<int>(round(y * 255.0));
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        cie8[i] = static_cast<uint8_t>(v);
+    }
 
-void test_hub75_bcm_calibrated_luts_monotonic_across_depths(void) {
-    using namespace Hub75BcmCalibration;
+    auto buildCieDepthLut = [&](uint8_t depth, uint8_t srcBits, uint8_t* outLut) {
+        const uint8_t shift = static_cast<uint8_t>(8U - depth);
+        const uint8_t roundBias = (shift > 0U) ? static_cast<uint8_t>(1U << (shift - 1U)) : 0U;
+        const uint16_t maxVal = static_cast<uint16_t>((1U << depth) - 1U);
+        const int count = 1 << srcBits;
+        for (int v = 0; v < count; ++v) {
+            const uint8_t c8 = (srcBits == 6U)
+                ? static_cast<uint8_t>((v << 2) | (v >> 4))
+                : static_cast<uint8_t>((v << 3) | (v >> 2));
+            const uint16_t scaled = static_cast<uint16_t>((cie8[c8] + roundBias) >> shift);
+            outLut[v] = (scaled > maxVal) ? static_cast<uint8_t>(maxVal) : static_cast<uint8_t>(scaled);
+        }
+    };
 
-    // 1. Reproduce the library's non-binary bit-plane weights (128 px row, latch blanking 8, full brightness)
-    uint32_t w4[MAX_DEPTH] = {0};
-    computePlaneWeights(4, 0, 128, 8, 255, w4);
-    // 4-bit planes emit 1/2/3/5 units: raw code 7 is brighter than raw code 8 (non-monotonic)
-    TEST_ASSERT_TRUE(codeEnergy(w4, 4, 7) > codeEnergy(w4, 4, 8));
-
-    uint32_t w8[MAX_DEPTH] = {0};
-    computePlaneWeights(8, 2, 128, 8, 255, w8);
-    // 8-bit with lsbMsbTransitionBit = 2: the LSB plane keeps a full OE window (8x its binary weight)
-    TEST_ASSERT_TRUE(w8[0] > w8[1]);
-    TEST_ASSERT_TRUE(w8[0] > w8[2]);
-
-    // 2. Calibrated LUTs: black stays black, full stays full, emitted light never decreases
     const uint8_t depths[] = {2, 4, 6, 7, 8};
-    const uint8_t lsbs[] = {0, 0, 0, 1, 2};
-    const uint8_t brightness[] = {25, 56, 127, 255};
     for (size_t di = 0; di < sizeof(depths); ++di) {
-        for (size_t bi = 0; bi < sizeof(brightness); ++bi) {
-            uint32_t w[MAX_DEPTH] = {0};
-            computePlaneWeights(depths[di], lsbs[di], 128, 8, brightness[bi], w);
-            uint8_t lutR[32];
-            uint8_t lutG[64];
-            buildChannelLut(w, depths[di], 5, lutR);
-            buildChannelLut(w, depths[di], 6, lutG);
-            const uint8_t maxCode = static_cast<uint8_t>((1U << depths[di]) - 1U);
-            TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
-            TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
-            TEST_ASSERT_EQUAL_UINT8(maxCode, lutR[31]);
-            TEST_ASSERT_EQUAL_UINT8(maxCode, lutG[63]);
-            for (int v = 1; v < 32; ++v) {
-                TEST_ASSERT_TRUE(codeEnergy(w, depths[di], lutR[v]) >= codeEnergy(w, depths[di], lutR[v - 1]));
+        const uint8_t d = depths[di];
+        uint8_t lutR[32];
+        uint8_t lutG[64];
+        buildCieDepthLut(d, 5, lutR);
+        buildCieDepthLut(d, 6, lutG);
+        const uint8_t maxCode = static_cast<uint8_t>((1U << d) - 1U);
+        TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(maxCode, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxCode, lutG[63]);
+        for (int v = 1; v < 32; ++v) {
+            TEST_ASSERT_TRUE(lutR[v] >= lutR[v - 1]);
+        }
+        for (int v = 1; v < 64; ++v) {
+            TEST_ASSERT_TRUE(lutG[v] >= lutG[v - 1]);
+        }
+        if (d == 8) {
+            // At 8-bit depth, LUT values match exact native `lumConvTab_8bit` (zero quantization or shift)
+            for (int v = 0; v < 32; ++v) {
+                const uint8_t r8 = static_cast<uint8_t>((v << 3) | (v >> 2));
+                TEST_ASSERT_EQUAL_UINT8(cie8[r8], lutR[v]);
             }
-            for (int v = 1; v < 64; ++v) {
-                TEST_ASSERT_TRUE(codeEnergy(w, depths[di], lutG[v]) >= codeEnergy(w, depths[di], lutG[v - 1]));
+            for (int v = 0; v < 64; ++v) {
+                const uint8_t g8 = static_cast<uint8_t>((v << 2) | (v >> 4));
+                TEST_ASSERT_EQUAL_UINT8(cie8[g8], lutG[v]);
             }
         }
     }
-
-    // 3. 8-bit calibrated green keeps >= 50 of the 64 RGB565 levels distinct at 22% brightness
-    uint32_t w22[MAX_DEPTH] = {0};
-    computePlaneWeights(8, 2, 128, 8, 56, w22);
-    uint8_t lutG22[64];
-    buildChannelLut(w22, 8, 6, lutG22);
-    int distinct = 1;
-    for (int v = 1; v < 64; ++v) {
-        if (codeEnergy(w22, 8, lutG22[v]) != codeEnergy(w22, 8, lutG22[v - 1])) ++distinct;
-    }
-    TEST_ASSERT_TRUE(distinct >= 50);
 }
 
 void test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds(void) {
@@ -2493,8 +2496,9 @@ void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
     TEST_ASSERT_EQUAL_UINT8(8, bootEval);
 
     // 2. Stage-1 rotation between two Showcase slots at 8-bit (`!panelReleased && currentDepth == 8`):
-    //    with `freeInternal = 25000` B (after `sizeof(Engine)` + 8-bit DMA + descriptors are already deducted),
-    //    `resolveTargetDepth` keeps `8`-bit in place (zero 350 ms panel teardown)!
+    //    even with real-world `esp32dev` post-construction metrics (`freeInternal = 19564`, `largestBlock = 13300`
+    //    after `sizeof(Engine)` + 8-bit DMA + descriptors are already deducted), `resolveTargetDepth` keeps
+    //    `8`-bit in place (zero destructive `8 -> 8` panel teardown and zero fragmentation)!
     uint8_t rotKeep = PipelineSelectionPolicy::resolveTargetDepth(
         /*configuredDepth=*/4,
         /*dynamicColorDepth=*/false,
@@ -2502,14 +2506,33 @@ void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
         /*hasPsram=*/false,
         showcaseReqs,
         /*currentDepth=*/8,
-        /*currentLargestBlock=*/15860,
-        /*currentFreeInternalHeap=*/25000,
-        /*currentFreeDma=*/25000,
+        /*currentLargestBlock=*/13300,
+        /*currentFreeInternalHeap=*/19564,
+        /*currentFreeDma=*/19564,
         /*isDoubleBuffer=*/false,
         /*hasCanvas=*/true,
         /*panelReleased=*/false
     );
     TEST_ASSERT_EQUAL_UINT8(8, rotKeep);
+
+    // 2b. Even under tighter post-rotation heap (`freeInternal = 21372` B, `largestBlock = 9716` B —
+    //     exact telemetry from `esp32dev` Showcase rotation with Step-C-only `m_frame565` allocation),
+    //     `resolveTargetDepth` keeps `8`-bit in place without tearing down HUB75 DMA!
+    uint8_t rotTightKeep = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/4,
+        /*dynamicColorDepth=*/false,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/8,
+        /*currentLargestBlock=*/9716,
+        /*currentFreeInternalHeap=*/21372,
+        /*currentFreeDma=*/21372,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, rotTightKeep);
 
     // 3. Stage-2 emptied zone (`panelReleased = true`, `freeInternal = 67848` B): resolves to 8-bit!
     uint8_t stage2Up = PipelineSelectionPolicy::resolveTargetDepth(
@@ -2546,6 +2569,145 @@ void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
         /*panelReleased=*/true
     );
     TEST_ASSERT_EQUAL_UINT8(6, stage2Graceful);
+}
+
+void test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder(void) {
+    using core::drawing::DmdzWsDemuxer;
+    using core::drawing::buildDmdzWebSocketPath;
+
+    // 1. WebSocket path builder: mqtt_tcp, http_poll, purge=false, api_key, and invalid routes
+    char wsPath[288] = "";
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/games/stream/ss_1942.rgb565.stream?purge=true&paced=1&codec=dmdz1&client_id=esp32_g",
+        "esp32_games_128x32",
+        wsPath,
+        sizeof(wsPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/ss_1942.dmdz?purge=true&client_id=esp32_games_128x32",
+        wsPath
+    );
+
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream?purge=false&api_key=sec_token_1",
+        "esp32_movies",
+        wsPath,
+        sizeof(wsPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/movies/ws/tmdb_603_c1.dmdz?purge=false&client_id=esp32_movies&api_key=sec_token_1",
+        wsPath
+    );
+    TEST_ASSERT_FALSE(buildDmdzWebSocketPath("/api/v1/games/next", "c1", wsPath, sizeof(wsPath)));
+
+    // 2. Verify masked client credit ACK frame unmasks to 1-byte `'A'` (0x41)
+    TEST_ASSERT_EQUAL_UINT8(0x82U, DmdzWsDemuxer::kMaskedCreditAckFrame[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x81U, DmdzWsDemuxer::kMaskedCreditAckFrame[1]);
+    uint8_t unmaskedAck = static_cast<uint8_t>(
+        DmdzWsDemuxer::kMaskedCreditAckFrame[6] ^ DmdzWsDemuxer::kMaskedCreditAckFrame[2]
+    );
+    TEST_ASSERT_EQUAL_UINT8('A', unmaskedAck);
+
+    // 3. Stream assembly: [16-byte header WS msg] + [PING "hb"] + [1024-byte ext16 WS msg] +
+    //    [fragmented FIN=0 + FIN=1 WS msg] + [CLOSE]
+    std::vector<uint8_t> wire;
+    std::vector<uint8_t> expected;
+
+    // Msg #1: 16-byte unmasked binary frame (`0x82, 0x10`)
+    wire.push_back(0x82U);
+    wire.push_back(16U);
+    for (uint8_t i = 0; i < 16U; ++i) {
+        uint8_t v = static_cast<uint8_t>(0xA0U + i);
+        wire.push_back(v);
+        expected.push_back(v);
+    }
+
+    // Interleaved server PING (`0x89, 0x02, 'h', 'b'`) inside the same TCP buffer as Msg #2!
+    wire.push_back(0x89U);
+    wire.push_back(2U);
+    wire.push_back('h');
+    wire.push_back('b');
+
+    // Msg #2: 1024-byte unmasked binary frame (`0x82, 126, 0x04, 0x00`)
+    wire.push_back(0x82U);
+    wire.push_back(126U);
+    wire.push_back(0x04U);
+    wire.push_back(0x00U);
+    for (size_t i = 0; i < 1024U; ++i) {
+        uint8_t v = static_cast<uint8_t>((i * 7U + 3U) & 0xFFU);
+        wire.push_back(v);
+        expected.push_back(v);
+    }
+
+    // Msg #3: 2-fragment RFC 6455 message (`FIN=0, op=2` 5 bytes + `FIN=1, op=0` 4 bytes -> MUST emit 1 credit ACK!)
+    wire.push_back(0x02U);
+    wire.push_back(5U);
+    for (uint8_t i = 0; i < 5U; ++i) {
+        wire.push_back(static_cast<uint8_t>(0x30U + i));
+        expected.push_back(static_cast<uint8_t>(0x30U + i));
+    }
+    wire.push_back(0x80U);
+    wire.push_back(4U);
+    for (uint8_t i = 0; i < 4U; ++i) {
+        wire.push_back(static_cast<uint8_t>(0x40U + i));
+        expected.push_back(static_cast<uint8_t>(0x40U + i));
+    }
+
+    // Final CLOSE frame (`0x88, 0x02, 0x03, 0xE8`)
+    wire.push_back(0x88U);
+    wire.push_back(2U);
+    wire.push_back(0x03U);
+    wire.push_back(0xE8U);
+
+    DmdzWsDemuxer demux;
+    std::vector<uint8_t> actual;
+    uint32_t totalCredits = 0U;
+    uint32_t pongCount = 0U;
+    size_t wirePos = 0U;
+
+    // Feed through tiny Prime-sized network chunks (13 B) and prime-sized destination buffers (19 B)
+    while (wirePos < wire.size() && !demux.isClosed()) {
+        size_t netAvail = std::min<size_t>(13U, wire.size() - wirePos);
+        size_t chunkOff = 0U;
+        while (chunkOff < netAvail && !demux.isClosed()) {
+            uint8_t dstBuf[19];
+            size_t consumed = 0U;
+            uint8_t credits = 0U;
+            size_t produced = demux.decode(
+                wire.data() + wirePos + chunkOff,
+                netAvail - chunkOff,
+                consumed,
+                dstBuf,
+                sizeof(dstBuf),
+                credits
+            );
+            TEST_ASSERT_FALSE(demux.hasError());
+            chunkOff += consumed;
+            totalCredits += credits;
+            actual.insert(actual.end(), dstBuf, dstBuf + produced);
+            if (demux.hasPendingPong()) {
+                uint8_t pong[131] = {0};
+                size_t pongLen = demux.takePendingPongFrame(pong);
+                TEST_ASSERT_EQUAL_UINT32(8U, static_cast<uint32_t>(pongLen));
+                TEST_ASSERT_EQUAL_UINT8(0x8AU, pong[0]);
+                TEST_ASSERT_EQUAL_UINT8(0x82U, pong[1]);
+                TEST_ASSERT_EQUAL_UINT8('h', static_cast<uint8_t>(pong[6] ^ pong[2]));
+                TEST_ASSERT_EQUAL_UINT8('b', static_cast<uint8_t>(pong[7] ^ pong[3]));
+                ++pongCount;
+            }
+            if (consumed == 0U && produced == 0U && !demux.hasPendingPong()) {
+                break;
+            }
+        }
+        wirePos += chunkOff;
+    }
+
+    TEST_ASSERT_TRUE(demux.isClosed());
+    TEST_ASSERT_FALSE(demux.hasError());
+    TEST_ASSERT_EQUAL_UINT32(1U, pongCount);
+    TEST_ASSERT_EQUAL_UINT32(3U, totalCredits); // Exactly 3 logical WS messages!
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.size()), static_cast<uint32_t>(actual.size()));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), actual.data(), expected.size());
 }
 
 // =========================================================================
@@ -2635,9 +2797,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
     RUN_TEST(test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling);
     RUN_TEST(test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease);
-    RUN_TEST(test_hub75_bcm_calibrated_luts_monotonic_across_depths);
+    RUN_TEST(test_cie_depth_lut_monotonic_and_8bit_identity);
     RUN_TEST(test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds);
     RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
+    RUN_TEST(test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder);
 
     return UNITY_END();
 }

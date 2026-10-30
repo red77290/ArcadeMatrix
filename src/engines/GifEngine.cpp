@@ -256,7 +256,11 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
     if (config) onConfigChanged(config);
     else {
         m_configuredFolders = { "all" };
-        rebuildActivePlaylists();
+        // On non-PSRAM boards, defer SD directory enumeration until `activate()` or `playDefaultPlaylists()`
+        // so the idle global preemption instance does not pin ~1.4 KB of playlist String vectors at boot.
+        if (m_hasPsram) {
+            rebuildActivePlaylists();
+        }
     }
     return EngineError::OK;
 }
@@ -1020,6 +1024,9 @@ String GifEngine::sanitizePlaylistPath(String p) {
 }
 
 void GifEngine::playDefaultPlaylists(int numGifs) {
+    if (defaultPlaylists.empty() && !m_configuredFolders.empty()) {
+        rebuildActivePlaylists();
+    }
     if (defaultPlaylists.empty()) return;
     pendingPlaylists = defaultPlaylists;
     hasPendingPlaylists = true;

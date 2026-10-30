@@ -57,6 +57,7 @@ public:
     String resolveMarqueeFile();
 
 private:
+    bool ensureGifEngine();
     bool downloadUrlWithResizeCheck(const String& targetUrl, String& outDestPath);
 
     int panelWidth;

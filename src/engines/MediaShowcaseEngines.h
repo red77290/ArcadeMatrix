@@ -82,14 +82,8 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
-    void resume() override {
-        m_lastRenderedCardSeq = 0xFFFFFFFFU;
-        m_lastRenderedFrameSeq = 0xFFFFFFFFU;
-        m_lastRenderedPhase = 0xFFU;
-        m_cardLastTickMs = millis();
-        m_dirty = true;
-        m_renderedNewFrame = false;
-    }
+    void pause() override;
+    void resume() override;
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
@@ -224,6 +218,7 @@ protected:
         char transportMode[16] = "mqtt_tcp";
         char mqttBrokerSource[12] = "global";
         char mqttCustomUrl[MAX_URL_LEN] = "";
+        char globalMqttHost[64] = "";
         char lang[8] = "system";
         char textScrollSpeed[12] = "4";
         char videoMode[16] = "auto_action";
@@ -231,6 +226,7 @@ protected:
         char genres[MAX_FILTER_LEN] = "";
         char decades[MAX_FILTER_LEN] = "";
         char videoType[16] = "any";
+        uint16_t globalMqttPort = 1883;
         uint8_t snapshotPanoramaCount = 0;
         uint8_t videoMaxDurationS = 8;
         uint8_t videoFps = 20;
@@ -274,6 +270,7 @@ protected:
     std::atomic<uint32_t> m_seq{0};              // Seqlock for CardSnapshot metadata
     std::atomic<uint32_t> m_frameSeq{0};         // Tear-free frame seq: ODD while Core 0 writes m_frame565, EVEN when complete
     std::atomic<uint32_t> m_consumedFrameSeq{0}; // Last EVEN frame seq blitted by Core 1 (prevents frame overwrite before blit)
+    std::atomic<uint32_t> m_renderBlitSeq{0};    // Wait-free Core 1 seqlock barrier around m_frame565 / m_poster565 reads
     std::atomic<uint32_t> m_presentedStreamFrames{0};
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
@@ -283,6 +280,7 @@ protected:
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     bool m_posterAliasesFrame = false;
+    bool m_pausedByPreemption = false;
     uint32_t m_mqttConnSeq = 0;
     uint32_t m_lastPublishedCfgGen = 0;
     uint8_t m_consecutiveNetFailures = 0;
@@ -330,9 +328,12 @@ protected:
     static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
     bool allocateBuffers();
     void freeBuffers();
+    bool acquireStepCFrameBuffer();
+    void releaseStepCFrameBuffer();
+    void waitRenderBlitQuiescent() const;
     void clearLiveCardState();
     void finishTurnItem();
-    void startWorkerTask();
+    bool startWorkerTask();
     void stopWorkerTaskBounded(uint32_t timeoutMs);
     static void workerTaskEntry(void* arg);
     void runWorkerLoop();

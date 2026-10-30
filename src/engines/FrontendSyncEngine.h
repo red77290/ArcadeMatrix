@@ -193,6 +193,8 @@ private:
     uint16_t m_activeBrokerPort = 1883;
     char m_activeMarqueePath[128] = "";
     bool m_wasShowingInGame = false;
+    bool m_mappingsLoaded = false;
+    unsigned long m_lastBrokerCacheCheckMs = 0;
 
     std::atomic<bool> isReconnecting{false};
     std::atomic<bool> stopReconnectRequested{false};
@@ -250,12 +252,14 @@ private:
 
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
+    std::atomic<bool> m_workerWakeLatch{false};
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     uint16_t* m_streamFrames[2] = {nullptr, nullptr};
     size_t m_streamFramePixels = 0;
 
     static void showcaseWorkerTaskFunc(void* param);
     void showcaseWorkerLoop();
+    void ensureShowcaseWorkerRunning();
     void stopReconnectTask();
     void applyBrokerTransport(bool fromShowcase, const char* host, uint16_t port);
     void syncWorkerConfigSlot();
