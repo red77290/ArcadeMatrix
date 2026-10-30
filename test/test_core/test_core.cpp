@@ -2968,9 +2968,16 @@ void test_hub75_bulk_encoder_multi_depth_and_edge_colors(void) {
         TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
         TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
 
-        TEST_ASSERT_TRUE(lutR[31] <= maxAllowed);
-        TEST_ASSERT_TRUE(lutG[63] <= maxAllowed);
-        TEST_ASSERT_TRUE(lutB[31] <= maxAllowed);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutG[63]);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutB[31]);
+
+        if (d <= 5U) {
+            for (int k = 0; k < 32; ++k) {
+                TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k]);
+                TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k + 1]);
+            }
+        }
 
         // Monotonic check
         for (int i = 1; i < 32; ++i) {

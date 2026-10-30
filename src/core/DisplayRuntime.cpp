@@ -1,4 +1,5 @@
 #include "DisplayRuntime.h"
+#include "drawing/Hub75DmaLayout.h"
 #include "drawing/IDrawingSurface.h"
 #include "drawing/PipelineSelectionPolicy.h"
 #include "core/EngineRegistry.h"
@@ -493,14 +494,14 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     // frees the DMA sandbox first and evaluates the exact coalesced emptied zone.
     const bool tlsNeedsCleanWindow = reqs.needsTls && !hasPsram;
     const size_t currentDmaBytes = (currentDepth > 0)
-        ? DmaMemoryLayout::calculateTotalBytes(totalWidth, matrixCfg.height, currentDepth, isDbl)
+        ? Hub75DmaLayout::calculateBytes(totalWidth, matrixCfg.height, currentDepth, isDbl, true)
         : 0U;
     const bool upgradeWorthProbing = !forceMinimalWebUiSyncDepth &&
         hasEngineDepthOverride &&
         currentDepth > 0 &&
         currentDepth < effectiveConfigDepth &&
         stage1Target < effectiveConfigDepth &&
-        (freeInternal + currentDmaBytes >= 56000U);
+        (freeInternal + currentDmaBytes >= 44000U);
     const bool needTeardown = m_matrixEngine && (targetDepth != currentDepth || tlsNeedsCleanWindow || upgradeWorthProbing);
     if (needTeardown) {
         if (m_surface) {

@@ -288,39 +288,49 @@ bool MediaShowcaseBase::allocateBuffers() {
     if (m_hasPsram) {
         m_poster565 = static_cast<uint16_t*>(heap_caps_malloc(posterBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        m_frame565Back = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_psramMqttRx = static_cast<char*>(heap_caps_malloc(PSRAM_MQTT_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        m_ioScratch = static_cast<char*>(heap_caps_malloc(PSRAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (m_ioScratch) {
+            m_ioScratchCap = PSRAM_IO_SCRATCH_BYTES;
+        } else {
+            m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
+            m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
+        }
         if (!m_poster565) {
             m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         }
-        m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
         if (!m_frame565) {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
     } else {
         m_frame565 = nullptr;
+        m_frame565Back = nullptr;
         m_posterAliasesFrame = false;
         m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
+        m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
     }
 #else
     m_hasPsram = true;
     m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+    m_frame565Back = static_cast<uint16_t*>(malloc(frameBytes));
     m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     m_posterAliasesFrame = false;
-    m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
+    m_ioScratch = static_cast<char*>(malloc(PSRAM_IO_SCRATCH_BYTES));
+    m_ioScratchCap = m_ioScratch ? PSRAM_IO_SCRATCH_BYTES : 0U;
     m_psramMqttRx = static_cast<char*>(malloc(PSRAM_MQTT_RX_BYTES));
 #endif
 
     if (m_frame565) {
         memset(m_frame565, 0, frameBytes);
     }
-    if (m_poster565) {
-        m_posterCapBytes = posterBytes;
-        if (!m_posterAliasesFrame) {
-            memset(m_poster565, 0, posterBytes);
-        }
-    } else {
-        m_posterCapBytes = 0U;
+    if (m_frame565Back) {
+        memset(m_frame565Back, 0, frameBytes);
+    }
+    m_posterCapBytes = posterBytes;
+    if (m_poster565 && !m_posterAliasesFrame) {
+        memset(m_poster565, 0, posterBytes);
     }
     if (m_ioScratch) {
         m_ioScratch[0] = '\0';
@@ -351,9 +361,22 @@ bool MediaShowcaseBase::acquireStepCFrameBuffer() {
         return false;
     }
 #if defined(ESP32) && !defined(UNIT_TEST)
+    if (!m_hasPsram && m_poster565 != nullptr && !m_posterAliasesFrame) {
+        // Card Step B has finished: reclaim the 2 KB poster buffer before allocating the
+        // 8 KB video frame buffer so adjacent SRAM blocks coalesce and Wi-Fi RX keeps +2 KB headroom.
+        if (m_liveCard.hasPoster) {
+            m_seq.fetch_add(1U, std::memory_order_acq_rel);
+            m_liveCard.hasPoster = false;
+            m_seq.fetch_add(1U, std::memory_order_release);
+        }
+        uint16_t* oldPoster = m_poster565;
+        m_poster565 = nullptr;
+        waitRenderBlitQuiescent();
+        free(oldPoster);
+    }
     if (!m_hasPsram &&
         (frameBytes > 16384U ||
-         showcaseFree8BitHeap() < (frameBytes + 4096U) ||
+         showcaseFree8BitHeap() < (frameBytes + 2560U) ||
          showcaseLargest8BitBlock() < frameBytes)) {
         LOGW("Showcase", "Step C frame buffer skipped (%u B): free8=%u largest8=%u",
              static_cast<unsigned>(frameBytes),
@@ -377,8 +400,9 @@ void MediaShowcaseBase::releaseStepCFrameBuffer() {
     }
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
     if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-        m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+        m_frameSeq.fetch_add(1U, std::memory_order_acq_rel);
     }
+    m_publishedFramePtr.store(nullptr, std::memory_order_release);
     if (m_liveCard.hasVideoFrame) {
         m_seq.fetch_add(1, std::memory_order_acq_rel);
         m_liveCard.hasVideoFrame = false;
@@ -391,9 +415,19 @@ void MediaShowcaseBase::releaseStepCFrameBuffer() {
     if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
         m_frameSeq.fetch_add(1, std::memory_order_release);
     }
+    if (m_wantActive.load(std::memory_order_acquire) &&
+        !m_poster565 &&
+        !m_posterAliasesFrame &&
+        m_posterCapBytes > 0U) {
+        m_poster565 = static_cast<uint16_t*>(malloc(m_posterCapBytes));
+        if (m_poster565) {
+            memset(m_poster565, 0, m_posterCapBytes);
+        }
+    }
 }
 
 void MediaShowcaseBase::freeBuffers() {
+    m_publishedFramePtr.store(nullptr, std::memory_order_release);
     waitRenderBlitQuiescent();
     if (m_psramMqttRx) {
         free(m_psramMqttRx);
@@ -403,6 +437,7 @@ void MediaShowcaseBase::freeBuffers() {
         free(m_ioScratch);
         m_ioScratch = nullptr;
     }
+    m_ioScratchCap = 0U;
     if (m_poster565) {
         if (!m_posterAliasesFrame) {
             free(m_poster565);
@@ -410,6 +445,10 @@ void MediaShowcaseBase::freeBuffers() {
         m_poster565 = nullptr;
     }
     m_posterAliasesFrame = false;
+    if (m_frame565Back) {
+        free(m_frame565Back);
+        m_frame565Back = nullptr;
+    }
     if (m_frame565) {
         free(m_frame565);
         m_frame565 = nullptr;
@@ -419,6 +458,7 @@ void MediaShowcaseBase::freeBuffers() {
 }
 
 void MediaShowcaseBase::clearLiveCardState() {
+    m_publishedFramePtr.store(nullptr, std::memory_order_release);
     m_seq.fetch_add(1, std::memory_order_acq_rel);
     m_liveCard.hasData = false;
     m_liveCard.hasPoster = false;
@@ -640,7 +680,9 @@ void MediaShowcaseBase::deactivate() {
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SHOWCASE);
     stopWorkerTaskBounded(1500);
     clearLiveCardState();
-    freeBuffers();
+    if (!m_taskAlive.load(std::memory_order_acquire)) {
+        freeBuffers();
+    }
     m_dirty = false;
     m_renderedNewFrame = false;
 }
@@ -650,10 +692,13 @@ bool MediaShowcaseBase::shutdownForDestruction() {
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SHOWCASE);
     stopWorkerTaskBounded(2000);
     clearLiveCardState();
-    freeBuffers();
+    const bool stopped = !m_taskAlive.load(std::memory_order_acquire);
+    if (stopped) {
+        freeBuffers();
+    }
     m_dirty = false;
     m_renderedNewFrame = false;
-    return !m_taskAlive.load(std::memory_order_acquire);
+    return stopped;
 }
 
 uint32_t MediaShowcaseBase::configuredMaxStreamMs(const ConfigSlot& cfg) {
@@ -719,7 +764,7 @@ bool MediaShowcaseBase::startWorkerTask() {
         "ShowcaseWkr",
         stackBytes,
         this,
-        1,
+        2,
         &m_task,
         0
     );
@@ -923,7 +968,11 @@ bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
 
     size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
     if (showPoster && !m_poster565 && posterB64[0] != '\0') {
-        allocateBuffers();
+        if (m_ioScratch != nullptr && m_posterCapBytes >= expectedPosterBytes && m_posterCapBytes > 0U) {
+            m_poster565 = static_cast<uint16_t*>(malloc(m_posterCapBytes));
+        } else if (jsonBuf != m_ioScratch) {
+            allocateBuffers();
+        }
     }
     if (showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes) {
         if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
@@ -1681,15 +1730,15 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     params.clientId = m_sessionId;
     params.logTag = "Showcase";
     params.ownerId = net::OWNER_SHOWCASE;
-    params.wsCredits = m_hasPsram ? 8U : 2U;
+    params.wsCredits = m_hasPsram ? 12U : 4U;
     params.panelWidth = m_width;
     params.panelHeight = m_height;
     params.configuredStreamMs = configuredMaxStreamMs(cfg);
     params.maxFramePixels = m_framePixels;
     params.frameBuf0 = m_frame565;
-    params.frameBuf1 = nullptr;
+    params.frameBuf1 = m_frame565Back;
     params.ioScratch = m_ioScratch;
-    params.ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
+    params.ioScratchCap = m_ioScratch ? m_ioScratchCap : 0U;
     params.userCtx = &ctx;
 
     params.checkStop = [](void* raw) -> net::StreamStopReason {
@@ -1706,24 +1755,28 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return net::StreamStopReason::Continue;
     };
 
-    params.onBeginFrameWrite = [](void* raw, uint16_t frameIdx, uint16_t* dstBuf, bool /*singleBuffer*/, uint32_t safeFps) {
+    params.onBeginFrameWrite = [](void* raw, uint16_t frameIdx, uint16_t* dstBuf, bool singleBuffer, uint32_t safeFps) {
         auto* self = static_cast<ShowcaseStreamCtx*>(raw)->self;
+        if (singleBuffer) {
 #if defined(ESP32) && !defined(UNIT_TEST)
-        if (frameIdx > 0U) {
-            const uint32_t handoffBudgetMs = std::max<uint32_t>(18U, 1000U / safeFps);
-            const uint32_t handoffT0 = millis();
-            while (self->m_wantActive.load(std::memory_order_acquire) &&
-                   !shouldYieldShowcaseToWebUi(self->m_hasPsram) &&
-                   self->m_consumedFrameSeq.load(std::memory_order_acquire) != self->m_frameSeq.load(std::memory_order_relaxed) &&
-                   (millis() - handoffT0) < handoffBudgetMs) {
-                vTaskDelay(1);
+            if (frameIdx > 0U) {
+                const uint32_t handoffBudgetMs = std::max<uint32_t>(18U, 1000U / safeFps);
+                const uint32_t handoffT0 = millis();
+                while (self->m_wantActive.load(std::memory_order_acquire) &&
+                       !shouldYieldShowcaseToWebUi(self->m_hasPsram) &&
+                       self->m_consumedFrameSeq.load(std::memory_order_acquire) != self->m_frameSeq.load(std::memory_order_relaxed) &&
+                       (millis() - handoffT0) < handoffBudgetMs) {
+                    vTaskDelay(1);
+                }
             }
-        }
 #else
-        (void)safeFps;
+            (void)safeFps;
 #endif
-        if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-            self->m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+            if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+                self->m_frameSeq.fetch_add(1U, std::memory_order_acq_rel);
+            }
+            // Wait for any in-flight Core 1 `blit565` to finish before mutating `dstBuf` in-place.
+            self->waitRenderBlitQuiescent();
         }
         if (frameIdx == 0U && self->m_posterAliasesFrame) {
             if (self->m_liveCard.hasPoster) {
@@ -1736,14 +1789,25 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     };
 
-    params.onFinishFrameWrite = [](void* raw, uint16_t /*frameIdx*/, const uint16_t* /*dstBuf*/, uint16_t /*w*/, uint16_t /*h*/, bool okFrame, bool /*singleBuffer*/) {
+    params.onFinishFrameWrite = [](void* raw, uint16_t /*frameIdx*/, const uint16_t* dstBuf, uint16_t /*w*/, uint16_t /*h*/, bool okFrame, bool singleBuffer) {
         auto* self = static_cast<ShowcaseStreamCtx*>(raw)->self;
-        if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-            self->m_frameSeq.fetch_add(1, std::memory_order_release);
-        }
         if (!okFrame) {
+            if (singleBuffer) {
+                self->m_publishedFramePtr.store(nullptr, std::memory_order_release);
+                if (self->m_liveCard.hasVideoFrame) {
+                    self->m_seq.fetch_add(1U, std::memory_order_acq_rel);
+                    self->m_liveCard.hasVideoFrame = false;
+                    self->m_seq.fetch_add(1U, std::memory_order_release);
+                }
+                if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+                    self->m_frameSeq.fetch_sub(1U, std::memory_order_release);
+                }
+            }
             return;
         }
+        self->m_publishedFramePtr.store(dstBuf, std::memory_order_release);
+        const uint32_t curSeq = self->m_frameSeq.load(std::memory_order_relaxed);
+        self->m_frameSeq.store((curSeq & 1U) ? (curSeq + 1U) : (curSeq + 2U), std::memory_order_release);
         if (!self->m_liveCard.hasVideoFrame) {
             self->m_seq.fetch_add(1, std::memory_order_acq_rel);
             self->m_liveCard.hasVideoFrame = true;
@@ -1890,7 +1954,7 @@ void MediaShowcaseBase::render(EngineContext* context) {
     Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
     if (curPhase == Phase::LiveStream) {
-        uint16_t* framePtr = m_frame565;
+        const uint16_t* framePtr = m_publishedFramePtr.load(std::memory_order_acquire);
         if (m_renderCard.hasVideoFrame && framePtr != nullptr) {
             uint32_t fSeq1 = m_frameSeq.load(std::memory_order_acquire);
             if ((fSeq1 & 1U) != 0U) {
@@ -1906,7 +1970,11 @@ void MediaShowcaseBase::render(EngineContext* context) {
             m_presentedStreamFrames.fetch_add(1, std::memory_order_relaxed);
         } else {
             s->clear(0);
-            drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
+            if (m_renderCard.hasData) {
+                drawCardPhase(s, m_renderCard, elapsedMs);
+            } else {
+                drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
+            }
         }
     } else {
         if (m_posterAliasesFrame && m_renderCard.hasPoster &&

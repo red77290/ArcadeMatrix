@@ -91,6 +91,7 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "FeedPayloads.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "DataSession.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "CompatibilityEvaluator.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "drawing", "Hub75BulkEncoder.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "PipelineSelectionPolicy.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "DmdzStreamDecoder.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "DmdzStreamClient.cpp"),
