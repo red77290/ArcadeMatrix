@@ -472,11 +472,15 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     // Total new internal DRAM required to safely run the incoming engine
     size_t totalNewRamNeeded = baseSystemReserve + engineDynamicRam + audioReserve;
     // When retaining an already-allocated HUB75 panel in place (`!panelReleased && candidate == currentDepth`)
-    // for a `preferredColorDepth` engine (Showcase), both `sizeof(Engine)` (~3.7 KB) and the 8-bit HUB75
-    // `lldesc_t` descriptor chain (~7.5 KB) are ALREADY deducted from `currentFreeInternalHeap`; only
-    // `activate()` buffers + OS/LwIP socket headroom (8 KB) remain to be allocated.
-    constexpr size_t SYSTEM_KEEP_DEPTH_RESERVE = 8192U;
+    // for a `preferredColorDepth` engine (Showcase), both `sizeof(Engine)` (~3.9 KB) and the 8-bit HUB75
+    // `lldesc_t` descriptor chain (~7.5 KB) are ALREADY deducted from `currentFreeInternalHeap`; `activate()`
+    // only allocates the Core 0 worker stack (4.6 KB), poster (2 KB), and I/O scratch (1.4 KB), while
+    // `m_frame565` (8 KB) is allocated strictly just-in-time during Step C streaming.
+    constexpr size_t SYSTEM_KEEP_DEPTH_RESERVE = 3584U;
     size_t totalKeepNeeded = SYSTEM_KEEP_DEPTH_RESERVE + engineDynamicRam + audioReserve;
+    size_t keepContiguousNeeded = (reqs.internalContiguousBytes > 2048U)
+        ? (reqs.internalContiguousBytes - 2048U)
+        : reqs.internalContiguousBytes;
 
     // Query PSRAM headroom if present (ESP32-S3)
     size_t freePsram = 0;
@@ -550,11 +554,16 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         }
         int64_t estimatedDma = (int64_t)currentFreeDma + deltaMem;
 
-        size_t reqFreeThreshold = (!panelReleased && reqs.preferredColorDepth > 0 && !reqs.needsTls && candidate == currentDepth)
+        const bool keepCurrentShowcaseDepth =
+            (!panelReleased && reqs.preferredColorDepth > 0 && !reqs.needsTls && candidate == currentDepth);
+        size_t reqFreeThreshold = keepCurrentShowcaseDepth
             ? totalKeepNeeded
             : totalNewRamNeeded;
+        size_t reqBlockThreshold = keepCurrentShowcaseDepth
+            ? keepContiguousNeeded
+            : minContiguousNeeded;
         bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)reqFreeThreshold);
-        bool blockOk = (currentLargestBlock == 0) || (estimatedBlock >= (int64_t)minContiguousNeeded);
+        bool blockOk = (currentLargestBlock == 0) || (estimatedBlock >= (int64_t)reqBlockThreshold);
         bool dmaOk = (currentFreeDma == 0) || (estimatedDma >= (int64_t)minDmaNeeded);
         bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + 65536));
 

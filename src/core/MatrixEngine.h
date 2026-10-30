@@ -47,7 +47,7 @@ class Hub75PresentationBackend;
  * Additionally, FastMatrixPanel provides `blitCanvas565()` to stream an entire RGB565 canvas
  * directly into the back-buffer DMA plane words using sequential row bursts, and an optimized
  * `drawPixel()` that performs proper CIE 1931 bit-depth scaling to prevent color wrapping
- * at every depth, through LUTs calibrated against the library's real bit-plane light weights.
+ * when colorDepth < 8.
  */
 class FastMatrixPanel : public MatrixPanel_I2S_DMA {
 public:
@@ -61,16 +61,9 @@ public:
     /// the back buffer is 1 at that point.
     void setBuffering(bool doubleBuffered);
     void noteFlip() { if (m_double) m_back ^= 1; }
-    void rememberBrightness8(uint8_t b);
+    void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
     uint8_t getBrightness8() const { return m_brightness8; }
     size_t getDmaAllocatedBytes() const;
-    /**
-     * @brief Rebuilds the RGB565 channel LUTs for `depth` bit planes.
-     *        Values are calibrated against the library's real bit-plane light weights
-     *        (descriptor repeats x OE window, see Hub75BcmCalibration) so emitted brightness is
-     *        monotonic and CIE-correct at every depth, including the LSB planes the library
-     *        over/under-weights below `lsbMsbTransitionBit`.
-     */
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();

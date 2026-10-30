@@ -716,6 +716,35 @@ inline size_t showcaseLargest8BitBlock() {
 #endif
 
 #if defined(ESP32) && !defined(UNIT_TEST)
+void formatRandomWsKeyBase64(char outKey[25]) {
+    static constexpr char kB64Table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t nonce[16];
+    for (int w = 0; w < 4; ++w) {
+        const uint32_t rnd = esp_random();
+        nonce[w * 4 + 0] = static_cast<uint8_t>(rnd & 0xFFU);
+        nonce[w * 4 + 1] = static_cast<uint8_t>((rnd >> 8) & 0xFFU);
+        nonce[w * 4 + 2] = static_cast<uint8_t>((rnd >> 16) & 0xFFU);
+        nonce[w * 4 + 3] = static_cast<uint8_t>((rnd >> 24) & 0xFFU);
+    }
+    size_t o = 0;
+    for (int i = 0; i < 15; i += 3) {
+        const uint32_t v = (static_cast<uint32_t>(nonce[i]) << 16) |
+                           (static_cast<uint32_t>(nonce[i + 1]) << 8) |
+                           static_cast<uint32_t>(nonce[i + 2]);
+        outKey[o++] = kB64Table[(v >> 18) & 0x3FU];
+        outKey[o++] = kB64Table[(v >> 12) & 0x3FU];
+        outKey[o++] = kB64Table[(v >> 6) & 0x3FU];
+        outKey[o++] = kB64Table[v & 0x3FU];
+    }
+    const uint32_t last = static_cast<uint32_t>(nonce[15]) << 16;
+    outKey[o++] = kB64Table[(last >> 18) & 0x3FU];
+    outKey[o++] = kB64Table[(last >> 12) & 0x3FU];
+    outKey[o++] = '=';
+    outKey[o++] = '=';
+    outKey[o] = '\0';
+}
+
 size_t encodeMqttRemainingLength(uint8_t* out, size_t remLen) {
     size_t idx = 0;
     do {
@@ -727,38 +756,268 @@ size_t encodeMqttRemainingLength(uint8_t* out, size_t remLen) {
     return idx;
 }
 
-// Writes all `len` bytes to `cli`, retrying cleanly across transient LwIP `EAGAIN` (`errno: 11`)
-// TCP send-buffer backpressure instead of dropping control packets silently.
+/**
+ * @brief Zero-heap, zero-TIME_WAIT stack MQTT TCP socket replacing Arduino `WiFiClient`.
+ *        Eliminates the 1,460 B `WiFiClientRxBuffer` heap allocation and reclaims LwIP `tcp_pcb`s
+ *        synchronously via `SO_LINGER {1, 0}` so `LargestBlock` never fragments across rotations.
+ */
+struct RawMqttSocket {
+    int fd = -1;
+    uint8_t rxBuf[128] = {0};
+    size_t rxOff = 0;
+    size_t rxEnd = 0;
+    bool peerClosed = false;
+
+    ~RawMqttSocket() {
+        closeAbort();
+    }
+
+    bool connected() const {
+        return (fd >= 0) && !peerClosed;
+    }
+
+    void closeAbort() {
+        if (fd >= 0) {
+            struct linger lin = {1, 0};
+            lwip_setsockopt(fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+            lwip_close(fd);
+            fd = -1;
+        }
+        rxOff = 0;
+        rxEnd = 0;
+        peerClosed = true;
+    }
+
+    bool connectHost(
+        const char* host,
+        uint16_t port,
+        const std::atomic<bool>& wantActive,
+        uint32_t timeoutMs
+    ) {
+        closeAbort();
+        peerClosed = false;
+        if (!host || host[0] == '\0' || port == 0) {
+            peerClosed = true;
+            return false;
+        }
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        if (inet_aton(host, &addr.sin_addr) == 0) {
+            IPAddress resolvedIp;
+            if (showcaseFree8BitHeap() < 5120U || !WiFi.hostByName(host, resolvedIp)) {
+                peerClosed = true;
+                return false;
+            }
+            addr.sin_addr.s_addr = static_cast<uint32_t>(resolvedIp);
+        }
+
+        fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (fd < 0) {
+            peerClosed = true;
+            return false;
+        }
+
+        int nodelay = 1;
+        lwip_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+        int flags = lwip_fcntl(fd, F_GETFL, 0);
+        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (rc < 0 && errno != EINPROGRESS) {
+            closeAbort();
+            return false;
+        }
+        if (rc != 0) {
+            uint32_t t0 = millis();
+            bool ok = false;
+            while ((millis() - t0) < timeoutMs && wantActive.load(std::memory_order_acquire)) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(fd, &wfds);
+                struct timeval tv = {0, 50000};
+                int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+                if (sel > 0 && FD_ISSET(fd, &wfds)) {
+                    int soErr = -1;
+                    socklen_t errLen = sizeof(soErr);
+                    if (lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) == 0 && soErr == 0) {
+                        ok = true;
+                    }
+                    break;
+                }
+                if (sel < 0 && errno != EINTR) {
+                    break;
+                }
+            }
+            if (!ok) {
+                closeAbort();
+                return false;
+            }
+        }
+
+        lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        struct timeval rcvTv = {0, 40000};
+        struct timeval sndTv = {0, 500000};
+        lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
+        lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
+        return true;
+    }
+
+    size_t available() {
+        size_t buffered = (rxEnd > rxOff) ? (rxEnd - rxOff) : 0U;
+        if (buffered >= 4U || fd < 0 || peerClosed) {
+            return buffered;
+        }
+        if (buffered > 0U && rxOff > 0U) {
+            memmove(rxBuf, rxBuf + rxOff, buffered);
+            rxOff = 0U;
+            rxEnd = buffered;
+        } else if (buffered == 0U) {
+            rxOff = 0U;
+            rxEnd = 0U;
+        }
+        if (rxEnd < sizeof(rxBuf)) {
+            int r = lwip_recv(fd, rxBuf + rxEnd, sizeof(rxBuf) - rxEnd, MSG_DONTWAIT);
+            if (r > 0) {
+                rxEnd += static_cast<size_t>(r);
+            } else if (r == 0) {
+                peerClosed = true;
+            } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                peerClosed = true;
+            }
+        }
+        return (rxEnd > rxOff) ? (rxEnd - rxOff) : 0U;
+    }
+
+    int readByte() {
+        if (rxOff >= rxEnd) {
+            (void)available();
+            if (rxOff >= rxEnd) {
+                return -1;
+            }
+        }
+        return static_cast<int>(rxBuf[rxOff++]);
+    }
+
+    bool readExact(
+        uint8_t* dst,
+        size_t len,
+        const std::atomic<bool>& wantActive,
+        uint32_t timeoutMs = 2000
+    ) {
+        size_t got = 0U;
+        if (rxOff < rxEnd && len > 0U) {
+            size_t avail = rxEnd - rxOff;
+            size_t take = (avail < len) ? avail : len;
+            memcpy(dst, rxBuf + rxOff, take);
+            rxOff += take;
+            got += take;
+        }
+        uint32_t lastProg = millis();
+        while (got < len) {
+            if (!wantActive.load(std::memory_order_acquire) || fd < 0 || peerClosed) {
+                return false;
+            }
+            const size_t rem = len - got;
+            if (rem >= sizeof(rxBuf)) {
+                int r = lwip_recv(fd, dst + got, rem, 0);
+                if (r > 0) {
+                    got += static_cast<size_t>(r);
+                    lastProg = millis();
+                    continue;
+                } else if (r == 0) {
+                    peerClosed = true;
+                    return false;
+                } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    peerClosed = true;
+                    return false;
+                }
+            } else {
+                rxOff = 0U;
+                rxEnd = 0U;
+                int r = lwip_recv(fd, rxBuf, sizeof(rxBuf), 0);
+                if (r > 0) {
+                    rxEnd = static_cast<size_t>(r);
+                    size_t take = (rxEnd < rem) ? rxEnd : rem;
+                    memcpy(dst + got, rxBuf, take);
+                    rxOff = take;
+                    got += take;
+                    lastProg = millis();
+                    continue;
+                } else if (r == 0) {
+                    peerClosed = true;
+                    return false;
+                } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    peerClosed = true;
+                    return false;
+                }
+            }
+            if ((millis() - lastProg) >= timeoutMs) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool drain(size_t len, const std::atomic<bool>& wantActive, uint32_t timeoutMs = 1500) {
+        uint8_t sink[64];
+        size_t rem = len;
+        while (rem > 0U) {
+            size_t chunk = (rem < sizeof(sink)) ? rem : sizeof(sink);
+            if (!readExact(sink, chunk, wantActive, timeoutMs)) {
+                return false;
+            }
+            rem -= chunk;
+        }
+        return true;
+    }
+
+    bool writeAll(
+        const uint8_t* data,
+        size_t len,
+        const std::atomic<bool>& wantActive,
+        uint32_t timeoutMs = 1200
+    ) {
+        if (!data || len == 0U) return true;
+        size_t sent = 0U;
+        uint32_t lastProg = millis();
+        while (sent < len) {
+            if (!wantActive.load(std::memory_order_acquire) || fd < 0 || peerClosed) {
+                return false;
+            }
+            int n = lwip_send(fd, data + sent, len - sent, 0);
+            if (n > 0) {
+                sent += static_cast<size_t>(n);
+                lastProg = millis();
+            } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if ((millis() - lastProg) >= timeoutMs) {
+                    return false;
+                }
+                vTaskDelay(pdMS_TO_TICKS(4));
+            } else {
+                peerClosed = true;
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 bool writeAllToClient(
-    WiFiClient& cli,
+    RawMqttSocket& cli,
     const uint8_t* data,
     size_t len,
     const std::atomic<bool>& wantActive,
     uint32_t timeoutMs = 1200
 ) {
-    if (!data || len == 0) return true;
-    size_t sent = 0;
-    uint32_t lastProgress = millis();
-    while (sent < len) {
-        if (!wantActive.load(std::memory_order_acquire) || !cli.connected()) {
-            return false;
-        }
-        size_t n = cli.write(data + sent, len - sent);
-        if (n > 0) {
-            sent += n;
-            lastProgress = millis();
-        } else {
-            if ((millis() - lastProgress) >= timeoutMs) {
-                return false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(5));
-        }
-    }
-    return true;
+    return cli.writeAll(data, len, wantActive, timeoutMs);
 }
 
 bool sendMqttPublishPacket(
-    WiFiClient& cli,
+    RawMqttSocket& cli,
     const char* topic,
     const char* payload,
     bool retain,
@@ -804,7 +1063,7 @@ bool sendMqttPublishPacket(
     return (pLen == 0) || writeAllToClient(cli, reinterpret_cast<const uint8_t*>(payload), pLen, wantActive);
 }
 
-bool sendMqttSubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
+bool sendMqttSubscribePacket(RawMqttSocket& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
     if (!cli.connected() || !topic) return false;
     uint16_t tLen = static_cast<uint16_t>(strlen(topic));
     size_t remLen = 2 + 2 + tLen + 1;
@@ -824,7 +1083,7 @@ bool sendMqttSubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic,
     return writeAllToClient(cli, pkt, off, wantActive);
 }
 
-bool sendMqttUnsubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
+bool sendMqttUnsubscribePacket(RawMqttSocket& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
     if (!cli.connected() || !topic) return false;
     uint16_t tLen = static_cast<uint16_t>(strlen(topic));
     size_t remLen = 2 + 2 + tLen;
@@ -843,7 +1102,7 @@ bool sendMqttUnsubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topi
     return writeAllToClient(cli, pkt, off, wantActive);
 }
 
-bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId, const std::atomic<bool>& wantActive) {
+bool sendMqttConnectPacket(RawMqttSocket& cli, const char* clientId, const std::atomic<bool>& wantActive) {
     if (!clientId) return false;
     uint16_t cidLen = static_cast<uint16_t>(strlen(clientId));
     size_t remLen = 10 + 2 + cidLen;
@@ -868,16 +1127,36 @@ inline bool shouldYieldShowcaseToWebUi(bool hasPsram) {
     return !hasPsram && WebUiSyncEngine::isRequested();
 }
 
-void sendMqttDisconnectAndStop(WiFiClient& cli, const std::atomic<bool>& wantActive) {
+void sendMqttDisconnectAndStop(RawMqttSocket& cli, const std::atomic<bool>& wantActive) {
     if (cli.connected()) {
         const uint8_t discPkt[2] = {0xE0, 0x00};
-        writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 200);
+        if (writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 150) &&
+            wantActive.load(std::memory_order_acquire)) {
+            // Let the broker receive MQTT DISCONNECT and initiate TCP FIN (~2 ms on LAN) before
+            // synchronous SO_LINGER reclamation so the broker never logs an unexpected reset.
+            uint8_t sink[16];
+            uint32_t t0 = millis();
+            while ((millis() - t0) < 20U && cli.fd >= 0 && !cli.peerClosed) {
+                fd_set rfds;
+                FD_ZERO(&rfds);
+                FD_SET(cli.fd, &rfds);
+                struct timeval tv = {0, 5000};
+                int sel = lwip_select(cli.fd + 1, &rfds, nullptr, nullptr, &tv);
+                if (sel > 0 && FD_ISSET(cli.fd, &rfds)) {
+                    int r = lwip_recv(cli.fd, sink, sizeof(sink), MSG_DONTWAIT);
+                    if (r <= 0) {
+                        cli.peerClosed = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
-    cli.stop();
+    cli.closeAbort();
 }
 
 bool connectMqttBrokerSession(
-    WiFiClient& cli,
+    RawMqttSocket& cli,
     const char* mqttHost,
     uint16_t mqttPort,
     const char* sessionId,
@@ -895,32 +1174,19 @@ bool connectMqttBrokerSession(
         vTaskDelay(pdMS_TO_TICKS(120));
         return false;
     }
-    cli.setTimeout(2);
-    if (!cli.connect(mqttHost, mqttPort, tcpTimeoutMs)) {
+    if (!cli.connectHost(mqttHost, mqttPort, wantActive, tcpTimeoutMs)) {
         return false;
     }
     char mqttConnectId[64];
     snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", sessionId, (++ioConnSeq) % 1000U);
     if (!sendMqttConnectPacket(cli, mqttConnectId, wantActive)) {
-        cli.stop();
+        cli.closeAbort();
         return false;
     }
-    uint32_t connWait = millis();
-    while (cli.available() < 4 && (millis() - connWait) < connAckTimeoutMs) {
-        if (!wantActive.load(std::memory_order_acquire)) {
-            cli.stop();
-            return false;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    if (cli.available() < 4) {
-        cli.stop();
-        return false;
-    }
-    uint8_t connAck[4];
-    cli.readBytes(connAck, 4);
-    if (connAck[0] != 0x20 || connAck[3] != 0x00) {
-        cli.stop();
+    uint8_t connAck[4] = {0};
+    if (!cli.readExact(connAck, 4, wantActive, connAckTimeoutMs) ||
+        connAck[0] != 0x20 || connAck[3] != 0x00) {
+        cli.closeAbort();
         return false;
     }
     return true;
@@ -1043,19 +1309,13 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
             return false;
         }
     }
-    {
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const auto& snap = guard.get();
-        if (snap.mqtt.broker.length() > 0) {
-            copySafeStr(outHost, hostCap, snap.mqtt.broker.c_str());
-            if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
-                return false;
-            }
-            outPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
-                ? static_cast<uint16_t>(snap.mqtt.port)
-                : 1883;
-            return true;
+    if (cfg.globalMqttHost[0] != '\0') {
+        copySafeStr(outHost, hostCap, cfg.globalMqttHost);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
+            return false;
         }
+        outPort = (cfg.globalMqttPort > 0) ? cfg.globalMqttPort : 1883;
+        return true;
     }
     if (hasServerUrl) {
         copySafeStr(outHost, hostCap, showcaseHost);
@@ -1095,27 +1355,14 @@ bool MediaShowcaseBase::allocateBuffers() {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
     } else {
-        // Classic ESP32 (`esp32dev`): allocate LARGEST contiguous block (`m_frame565` = 8,192 B on 128x32)
-        // FIRST and alias `m_poster565` into the start of `m_frame565` (Card phase and LiveStream phase are
-        // temporally disjoint), saving 2,048 B of internal 8-bit DRAM so HUB75 stays pinned at 8-bit depth.
-        if (frameBytes > 0 && frameBytes <= 16384U &&
-            showcaseFree8BitHeap() >= (frameBytes + 6144U) &&
-            showcaseLargest8BitBlock() >= frameBytes) {
-            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-        }
-        if (!m_frame565) {
-            LOGW("Showcase", "Frame buffer deferred (%u B): free8=%u maxAlloc8=%u",
-                 static_cast<unsigned>(frameBytes),
-                 static_cast<unsigned>(showcaseFree8BitHeap()),
-                 static_cast<unsigned>(showcaseLargest8BitBlock()));
-        }
-        if (m_frame565 && frameBytes >= posterBytes) {
-            m_poster565 = m_frame565;
-            m_posterAliasesFrame = true;
-        } else {
-            m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
-            m_posterAliasesFrame = false;
-        }
+        // Classic ESP32 (`esp32dev`): allocate ONLY the compact poster (`2,048 B` on 128x32) and I/O
+        // scratch (`1,472 B`) at `activate()` (`3.5 KB` total), leaving ~28 KB of internal 8-bit DRAM free
+        // so `ShowcaseWkr` (`4,608 B` stack) ALWAYS gets a clean contiguous block and Steps A & B run with
+        // abundant headroom. `m_frame565` (`8,192 B`) is allocated strictly just-in-time inside Step C
+        // (`acquireStepCFrameBuffer()`) and freed immediately when Step C exits (`releaseStepCFrameBuffer()`).
+        m_frame565 = nullptr;
+        m_posterAliasesFrame = false;
+        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     }
 #else
@@ -1147,8 +1394,71 @@ bool MediaShowcaseBase::allocateBuffers() {
     return (m_poster565 != nullptr);
 }
 
+void MediaShowcaseBase::waitRenderBlitQuiescent() const {
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#if defined(ESP32) && !defined(UNIT_TEST)
+    uint32_t t0 = millis();
+    while ((m_renderBlitSeq.load(std::memory_order_seq_cst) & 1U) != 0U &&
+           (millis() - t0) < 50U) {
+        vTaskDelay(1);
+    }
+#endif
+}
+
+bool MediaShowcaseBase::acquireStepCFrameBuffer() {
+    if (m_frame565 != nullptr) {
+        return true;
+    }
+    const size_t frameBytes = m_framePixels * sizeof(uint16_t);
+    if (frameBytes == 0U) {
+        return false;
+    }
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!m_hasPsram &&
+        (frameBytes > 16384U ||
+         showcaseFree8BitHeap() < (frameBytes + 4096U) ||
+         showcaseLargest8BitBlock() < frameBytes)) {
+        LOGW("Showcase", "Step C frame buffer skipped (%u B): free8=%u largest8=%u",
+             static_cast<unsigned>(frameBytes),
+             static_cast<unsigned>(showcaseFree8BitHeap()),
+             static_cast<unsigned>(showcaseLargest8BitBlock()));
+        return false;
+    }
+#endif
+    uint16_t* buf = static_cast<uint16_t*>(malloc(frameBytes));
+    if (!buf) {
+        return false;
+    }
+    memset(buf, 0, frameBytes);
+    m_frame565 = buf;
+    return true;
+}
+
+void MediaShowcaseBase::releaseStepCFrameBuffer() {
+    if (!m_frame565 || m_hasPsram) {
+        return;
+    }
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+    if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
+        m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (m_liveCard.hasVideoFrame) {
+        m_seq.fetch_add(1, std::memory_order_acq_rel);
+        m_liveCard.hasVideoFrame = false;
+        m_seq.fetch_add(1, std::memory_order_release);
+    }
+    uint16_t* oldBuf = m_frame565;
+    m_frame565 = nullptr;
+    waitRenderBlitQuiescent();
+    free(oldBuf);
+    if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
+        m_frameSeq.fetch_add(1, std::memory_order_release);
+    }
+}
+
 void MediaShowcaseBase::freeBuffers() {
-    // Free in LIFO order matching largest-first allocation so adjacent internal heap blocks coalesce cleanly
+    waitRenderBlitQuiescent();
+    // Free in LIFO order so adjacent internal heap blocks coalesce cleanly
     if (m_psramMqttRx) {
         free(m_psramMqttRx);
         m_psramMqttRx = nullptr;
@@ -1270,6 +1580,11 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         String cUrl = sc.mqtt_custom_url.isEmpty() ? config->getString("mqtt_custom_url", "") : sc.mqtt_custom_url;
         cUrl = normalizeMdnsEndpointUrl(cUrl, false);
         copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), cUrl.c_str());
+
+        copySafeStr(slot.globalMqttHost, sizeof(slot.globalMqttHost), snap.mqtt.broker.c_str());
+        slot.globalMqttPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
+            ? static_cast<uint16_t>(snap.mqtt.port)
+            : 1883;
     }
 
     copySafeStr(slot.lang, sizeof(slot.lang), config->getString("lang", "system").c_str());
@@ -1337,6 +1652,7 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
 }
 
 void MediaShowcaseBase::activate() {
+    m_pausedByPreemption = false;
     m_activatedAtMs = millis();
     m_phaseStartedAtMs = m_activatedAtMs;
     m_lastScrollStepMs = m_activatedAtMs;
@@ -1358,7 +1674,33 @@ void MediaShowcaseBase::activate() {
     if (!m_poster565 || !m_ioScratch || m_framePixels != wantPixels) {
         allocateBuffers();
     }
-    startWorkerTask();
+    if (!startWorkerTask()) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+        LOGE("Showcase", "Failed to spawn ShowcaseWkr (free8=%u largest8=%u); yielding rotation slot",
+             static_cast<unsigned>(showcaseFree8BitHeap()),
+             static_cast<unsigned>(showcaseLargest8BitBlock()));
+        m_statusState.store(2, std::memory_order_release);
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
+#endif
+    }
+}
+
+void MediaShowcaseBase::pause() {
+    m_pausedByPreemption = true;
+    deactivate();
+}
+
+void MediaShowcaseBase::resume() {
+    m_lastRenderedCardSeq = 0xFFFFFFFFU;
+    m_lastRenderedFrameSeq = 0xFFFFFFFFU;
+    m_lastRenderedPhase = 0xFFU;
+    m_dirty = true;
+    if (m_pausedByPreemption) {
+        m_pausedByPreemption = false;
+        activate();
+    }
 }
 
 void MediaShowcaseBase::deactivate() {
@@ -1426,20 +1768,20 @@ void MediaShowcaseBase::finishTurnItem() {
     }
 }
 
-void MediaShowcaseBase::startWorkerTask() {
+bool MediaShowcaseBase::startWorkerTask() {
     const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
     if (!cfg.enabled) {
         m_statusState.store(3, std::memory_order_release);
         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
             m_skipTurnImmediately.store(true, std::memory_order_release);
         }
-        return;
+        return true;
     }
     m_wantActive.store(true, std::memory_order_release);
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (m_taskAlive.load(std::memory_order_acquire)) return;
+    if (m_taskAlive.load(std::memory_order_acquire)) return true;
     m_taskAlive.store(true, std::memory_order_release);
-    uint32_t stackBytes = m_hasPsram ? 8192U : 5376U;
+    uint32_t stackBytes = m_hasPsram ? 8192U : 4608U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
@@ -1452,8 +1794,10 @@ void MediaShowcaseBase::startWorkerTask() {
     if (ok != pdPASS) {
         m_taskAlive.store(false, std::memory_order_release);
         m_task = nullptr;
+        return false;
     }
 #endif
+    return true;
 }
 
 void MediaShowcaseBase::stopWorkerTaskBounded(uint32_t timeoutMs) {
@@ -1766,11 +2110,12 @@ bool MediaShowcaseBase::runMqttUdpTurn(
 
     // =========================================================================
     // STEP A: Scoped Pre-Stream MQTT Session (Connect -> Retained Read -> Claim Card -> DISCONNECT)
-    // Closes and destroys `mqttCli` BEFORE Card scroll and TCP streaming so 0 TCP sockets remain open!
+    // Closes and destroys `mqttCli` via `SO_LINGER {1, 0}` BEFORE Card scroll and TCP streaming
+    // so 0 TCP sockets and 0 `TIME_WAIT` PCBs remain in internal DRAM!
     // =========================================================================
     {
         NetworkBudget::ScopedDmdNetActivity mqttAct(NetworkBudget::DmdNetActivity::Mqtt);
-        WiFiClient mqttCli;
+        RawMqttSocket mqttCli;
         if (!connectMqttBrokerSession(mqttCli, mqttHost, mqttPort, m_sessionId, m_mqttConnSeq, m_wantActive, 1500, 1000)) {
             if (!m_wantActive.load(std::memory_order_acquire)) {
                 return true;
@@ -1873,12 +2218,16 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                 break;
             }
             if (mqttCli.available() >= 2) {
-                uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
+                int rawHdr = mqttCli.readByte();
+                if (rawHdr < 0) {
+                    break;
+                }
+                uint8_t fixedHdr = static_cast<uint8_t>(rawHdr);
                 uint32_t remLen = 0;
                 uint32_t mult = 1;
                 for (int i = 0; i < 4; ++i) {
                     uint8_t b = 0;
-                    if (!readExactFromStream(mqttCli, &b, 1, m_wantActive, 1000)) break;
+                    if (!mqttCli.readExact(&b, 1, m_wantActive, 1000)) break;
                     remLen += static_cast<uint32_t>(b & 0x7F) * mult;
                     mult *= 128;
                     if ((b & 0x80) == 0) break;
@@ -1886,28 +2235,28 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                 const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 14336U;
                 if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= maxMqttPacketBytes) {
                     if (remLen > 0) {
-                        drainFromStream(mqttCli, remLen, m_wantActive, 1500);
+                        mqttCli.drain(remLen, m_wantActive, 1500);
                     }
                     continue;
                 }
 
                 uint8_t tLenBe[2];
-                if (!readExactFromStream(mqttCli, tLenBe, 2, m_wantActive, 1000)) {
+                if (!mqttCli.readExact(tLenBe, 2, m_wantActive, 1000)) {
                     break;
                 }
                 uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
                 if (static_cast<uint32_t>(tLen) + 2U > remLen) {
-                    drainFromStream(mqttCli, remLen - 2U, m_wantActive, 1000);
+                    mqttCli.drain(remLen - 2U, m_wantActive, 1000);
                     continue;
                 }
                 char topicBuf[112] = "";
                 size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
                 if (toReadT > 0) {
-                    readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
+                    mqttCli.readExact(reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
                 }
                 topicBuf[toReadT] = '\0';
                 if (tLen > toReadT) {
-                    drainFromStream(mqttCli, tLen - toReadT, m_wantActive, 1000);
+                    mqttCli.drain(tLen - toReadT, m_wantActive, 1000);
                 }
                 size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
 
@@ -1922,7 +2271,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                     freePayloadAfter = (payloadBuf != nullptr);
                 }
                 if (!payloadBuf) {
-                    drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
+                    mqttCli.drain(payloadLen, m_wantActive, 1500);
                     continue;
                 }
                 const bool borrowsFrameBuf = (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
@@ -1942,7 +2291,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(
                         m_frameSeq.fetch_add(1, std::memory_order_release);
                     }
                 };
-                if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
+                if (!mqttCli.readExact(reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
                     releaseBorrowedFrameBuf(false);
                     if (freePayloadAfter) free(payloadBuf);
                     break;
@@ -2075,27 +2424,17 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     }
 
     // =========================================================================
-    // STEP C: Zero-Heap TCP Stream Handoff (`DMDS` `.rgb565.stream`)
+    // STEP C: Credit-Acked WebSocket / Paced TCP Stream Handoff (`DMDZ` / `DMDS`)
+    // (`streamUnifiedRgb565Http` acquires & frees `m_frame565` via RAII on non-PSRAM ESP32)
     // =========================================================================
     if (m_wantActive.load(std::memory_order_acquire) &&
         !shouldYieldShowcaseToWebUi(m_hasPsram) &&
         m_cfgGen.load(std::memory_order_acquire) == startGen &&
-        itemHasStream) {
-        if (!m_frame565 && !m_hasPsram) {
-            size_t frameBytes = m_framePixels * sizeof(uint16_t);
-            if (frameBytes > 0 && frameBytes <= 16384U &&
-                showcaseFree8BitHeap() >= (frameBytes + 5120U) &&
-                showcaseLargest8BitBlock() >= frameBytes) {
-                m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-                if (m_frame565) {
-                    memset(m_frame565, 0, frameBytes);
-                }
-            }
-        }
-        if (m_frame565 && outHttpFallbackItemId && fallbackItemCap > 0) {
-            copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-            return true;
-        }
+        itemHasStream &&
+        outHttpFallbackItemId &&
+        fallbackItemCap > 0) {
+        copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+        return true;
     }
 
     finishTurnItem();
@@ -2281,6 +2620,14 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         };
 
         const bool rxBorrowsFrame = (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
+        bool freeRxBufAfter = false;
+        if (!rxBuf && respBytes > 0U && respBytes <= 12288U && showcaseLargest8BitBlock() >= (respBytes + 2048U)) {
+            rxBuf = static_cast<char*>(malloc(respBytes + 1U));
+            if (rxBuf) {
+                rxCap = respBytes + 1U;
+                freeRxBufAfter = true;
+            }
+        }
         if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap) {
             if (rxBorrowsFrame && (m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
                 m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
@@ -2305,7 +2652,15 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
                     m_frameSeq.fetch_add(1, std::memory_order_release);
                 }
             }
+            if (freeRxBufAfter) {
+                free(rxBuf);
+                rxBuf = nullptr;
+            }
         } else {
+            if (freeRxBufAfter && rxBuf) {
+                free(rxBuf);
+                rxBuf = nullptr;
+            }
             DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
             if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
                 extractNextRoot(nextDoc.as<JsonObjectConst>());
@@ -2369,21 +2724,10 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 #endif
     }
 
-    // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
-#if defined(ESP32) && !defined(UNIT_TEST)
-    if (!m_frame565 && !m_hasPsram && unifiedStreamPath[0] != '\0') {
-        size_t frameBytes = m_framePixels * sizeof(uint16_t);
-        if (frameBytes > 0 && frameBytes <= 16384U &&
-            ESP.getFreeHeap() >= (frameBytes + 8192U) &&
-            ESP.getMaxAllocHeap() >= frameBytes) {
-            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-            if (m_frame565) {
-                memset(m_frame565, 0, frameBytes);
-            }
-        }
-    }
-#endif
-    if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && m_frame565 && unifiedStreamPath[0] != '\0') {
+    // Phase 2 & 3: Stream unified `DMDZ` / `DMDS` into `m_frame565` (RAII-scoped on non-PSRAM ESP32)
+    if (m_wantActive.load(std::memory_order_acquire) &&
+        m_cfgGen.load(std::memory_order_acquire) == startGen &&
+        unifiedStreamPath[0] != '\0') {
         streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
     }
 
@@ -2510,17 +2854,36 @@ bool MediaShowcaseBase::hasChunkedTransferEncoding(const char* rawHeaders) {
 }
 
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
-    if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565 || !m_ioScratch) {
+    if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_ioScratch) {
         return false;
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
+    struct StepCFrameGuard {
+        MediaShowcaseBase* self;
+        bool releaseOnExit;
+        StepCFrameGuard(MediaShowcaseBase* s, bool rel) : self(s), releaseOnExit(rel) {}
+        ~StepCFrameGuard() {
+            if (releaseOnExit && self) {
+                self->releaseStepCFrameBuffer();
+            }
+        }
+    };
+    const bool acquiredTempFrame = (!m_hasPsram && m_frame565 == nullptr) ? acquireStepCFrameBuffer() : false;
+    StepCFrameGuard stepCGuard(this, acquiredTempFrame);
+    if (!m_frame565) {
+        return false;
+    }
+
     NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
 
-    // Zero-Heap ZeDMD-Grade Raw LwIP TCP Streamer:
-    // Bypasses `SecureHttpClient` / `HTTPClient` / `WiFiClient` (~10 KB DRAM saved on ESP32_STD)
-    // and pairs with Showcase `?paced=1` (`X-DMD-Paced: 1`, `Content-Length` raw binary `DMDS`) so
-    // `TCP_WND` stays 100% open with zero client-side sleep and zero `TCP ZeroWindow` stalls!
+    // Zero-Heap ZeDMD-Grade Credit-Acked WebSocket (`DMDZ`) + Paced TCP (`DMDZ`/`DMDS`) Streamer:
+    // - Primary path: upgrades `/api/v1/{domain}/ws/{item_id}.dmdz` with a 2-credit sliding window of
+    //   `<= 1,024 B` sub-packets (`<= 2,048 B` max in flight on Wi-Fi), eliminating proxy/NAT burst
+    //   losses (`gvproxy` / Docker Desktop) and LwIP `pcb->ooseq` internal DRAM exhaustion.
+    // - Fallback path: transparent HTTP `GET ...?paced=1&codec=dmdz1` on legacy servers.
+    // - Strict LIFO socket destruction (`SO_LINGER {1, 0}`) BEFORE `stepCGuard` frees `m_frame565`,
+    //   leaving 0 `TIME_WAIT` `tcp_pcb`s and 0 heap fragmentation across rotations.
     char resolvedHost[64] = "";
     uint16_t resolvedPort = 8890;
     const char* rawPath = streamPath;
@@ -2555,22 +2918,6 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    // Request `paced=1&codec=dmdz1` WITHOUT `drop_late=1` so Uvicorn serves an exact `Content-Length`
-    // lossless `DMDZ` v1 stream (or raw binary `DMDS` on legacy servers) with zero chunked framing.
-    char reqPath[288];
-    const bool hasQ = (strchr(rawPath, '?') != nullptr);
-    const bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
-    const bool hasCodec = (strstr(rawPath, "codec=") != nullptr);
-    if (hasPaced && hasCodec) {
-        copySafeStr(reqPath, sizeof(reqPath), rawPath);
-    } else if (hasPaced && !hasCodec) {
-        snprintf(reqPath, sizeof(reqPath), "%s%scodec=dmdz1", rawPath, hasQ ? "&" : "?");
-    } else if (!hasPaced && hasCodec) {
-        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1", rawPath, hasQ ? "&" : "?");
-    } else {
-        snprintf(reqPath, sizeof(reqPath), "%s%spaced=1&codec=dmdz1", rawPath, hasQ ? "&" : "?");
-    }
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -2583,11 +2930,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         addr.sin_addr.s_addr = static_cast<uint32_t>(resolvedIp);
     }
 
-    int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (fd < 0) {
-        return false;
-    }
-
+    int fd = -1;
     auto closeStreamSocket = [&](bool abortWithRst) {
         if (fd >= 0) {
             if (abortWithRst) {
@@ -2598,120 +2941,290 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             fd = -1;
         }
     };
+    struct SocketAbortGuard {
+        int& fdRef;
+        ~SocketAbortGuard() {
+            if (fdRef >= 0) {
+                struct linger lin = {1, 0};
+                lwip_setsockopt(fdRef, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+                lwip_close(fdRef);
+                fdRef = -1;
+            }
+        }
+    } sockGuard{fd};
 
-    int nodelay = 1;
-    lwip_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-
-    int flags = lwip_fcntl(fd, F_GETFL, 0);
-    lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-    int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
-    if (rc < 0 && errno != EINPROGRESS) {
+    auto openAndReadResponseHeaders = [&](size_t reqBytes, size_t& outScratchUsed, size_t& outBodyStart) -> bool {
+        outScratchUsed = 0U;
+        outBodyStart = 0U;
         closeStreamSocket(true);
-        return false;
-    }
-    if (rc != 0) {
-        uint32_t connT0 = millis();
-        bool connected = false;
-        while ((millis() - connT0) < 1500U &&
+
+        fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (fd < 0) {
+            return false;
+        }
+        int nodelay = 1;
+        lwip_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+        int flags = lwip_fcntl(fd, F_GETFL, 0);
+        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (rc < 0 && errno != EINPROGRESS) {
+            closeStreamSocket(true);
+            return false;
+        }
+        if (rc != 0) {
+            uint32_t connT0 = millis();
+            bool connected = false;
+            while ((millis() - connT0) < 1500U &&
+                   m_wantActive.load(std::memory_order_acquire) &&
+                   !shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(fd, &wfds);
+                struct timeval tv = {0, 80000};
+                int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+                if (sel > 0 && FD_ISSET(fd, &wfds)) {
+                    int soErr = -1;
+                    socklen_t errLen = sizeof(soErr);
+                    if (lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) == 0 && soErr == 0) {
+                        connected = true;
+                    }
+                    break;
+                }
+            }
+            if (!connected) {
+                closeStreamSocket(true);
+                return false;
+            }
+        }
+
+        lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        struct timeval rcvTv = {0, 80000}; // 80 ms slice keeps `deactivate()` & `WEBUI_SYNC` preemption snappy
+        struct timeval sndTv = {1, 0};
+        lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
+        lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
+
+        if (reqBytes == 0U || reqBytes >= IO_SCRATCH_BYTES ||
+            lwip_send(fd, m_ioScratch, reqBytes, 0) != static_cast<int>(reqBytes)) {
+            closeStreamSocket(true);
+            return false;
+        }
+        m_ioScratch[0] = '\0';
+
+        bool foundHeaderEnd = false;
+        uint32_t hdrT0 = millis();
+        while (!foundHeaderEnd &&
+               (millis() - hdrT0) < 3500U &&
                m_wantActive.load(std::memory_order_acquire) &&
                !shouldYieldShowcaseToWebUi(m_hasPsram)) {
-            fd_set wfds;
-            FD_ZERO(&wfds);
-            FD_SET(fd, &wfds);
-            struct timeval tv = {0, 80000};
-            int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
-            if (sel > 0 && FD_ISSET(fd, &wfds)) {
-                int soErr = -1;
-                socklen_t errLen = sizeof(soErr);
-                if (lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) == 0 && soErr == 0) {
-                    connected = true;
+            if (outScratchUsed >= IO_SCRATCH_BYTES - 1U) {
+                break;
+            }
+            int r = lwip_recv(fd, m_ioScratch + outScratchUsed, IO_SCRATCH_BYTES - 1U - outScratchUsed, 0);
+            if (r > 0) {
+                outScratchUsed += static_cast<size_t>(r);
+                m_ioScratch[outScratchUsed] = '\0';
+                char* sep = strstr(m_ioScratch, "\r\n\r\n");
+                if (sep != nullptr) {
+                    foundHeaderEnd = true;
+                    outBodyStart = static_cast<size_t>((sep - m_ioScratch) + 4);
+                    *sep = '\0';
+                }
+            } else if (r == 0) {
+                break;
+            } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                break;
+            }
+        }
+        return foundHeaderEnd;
+    };
+
+    char activePath[288] = "";
+    size_t scratchUsed = 0U;
+    size_t bodyStart = 0U;
+    bool isWebSocket = false;
+    bool serverPaced = false;
+    bool isChunked = false;
+    core::drawing::DmdzWsDemuxer wsDemux;
+    HttpChunkedDecoder chunkDec;
+
+    if (core::drawing::buildDmdzWebSocketPath(rawPath, m_sessionId, activePath, sizeof(activePath))) {
+        char wsKey[25];
+        formatRandomWsKeyBase64(wsKey);
+        int wsReqLen = snprintf(
+            m_ioScratch,
+            IO_SCRATCH_BYTES,
+            "GET %s HTTP/1.1\r\n"
+            "Host: %s:%u\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n",
+            activePath,
+            resolvedHost,
+            static_cast<unsigned>(resolvedPort),
+            wsKey
+        );
+        if (wsReqLen > 0 &&
+            static_cast<size_t>(wsReqLen) < IO_SCRATCH_BYTES &&
+            openAndReadResponseHeaders(static_cast<size_t>(wsReqLen), scratchUsed, bodyStart) &&
+            strncmp(m_ioScratch, "HTTP/1.1 101", 12) == 0) {
+            isWebSocket = true;
+            serverPaced = true;
+            wsDemux.reset();
+        } else {
+            closeStreamSocket(true);
+            if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                return false;
+            }
+        }
+    }
+
+    if (!isWebSocket) {
+        const bool hasQ = (strchr(rawPath, '?') != nullptr);
+        const bool hasPaced = (strstr(rawPath, "paced=") != nullptr);
+        const bool hasCodec = (strstr(rawPath, "codec=") != nullptr);
+        if (hasPaced && hasCodec) {
+            copySafeStr(activePath, sizeof(activePath), rawPath);
+        } else if (hasPaced && !hasCodec) {
+            snprintf(activePath, sizeof(activePath), "%s%scodec=dmdz1", rawPath, hasQ ? "&" : "?");
+        } else if (!hasPaced && hasCodec) {
+            snprintf(activePath, sizeof(activePath), "%s%spaced=1", rawPath, hasQ ? "&" : "?");
+        } else {
+            snprintf(activePath, sizeof(activePath), "%s%spaced=1&codec=dmdz1", rawPath, hasQ ? "&" : "?");
+        }
+
+        int reqLen = snprintf(
+            m_ioScratch,
+            IO_SCRATCH_BYTES,
+            "GET %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
+            activePath,
+            resolvedHost,
+            static_cast<unsigned>(resolvedPort)
+        );
+        if (reqLen <= 0 ||
+            static_cast<size_t>(reqLen) >= IO_SCRATCH_BYTES ||
+            !openAndReadResponseHeaders(static_cast<size_t>(reqLen), scratchUsed, bodyStart) ||
+            (strncmp(m_ioScratch, "HTTP/1.1 200", 12) != 0 && strncmp(m_ioScratch, "HTTP/1.0 200", 12) != 0)) {
+            LOGW("Showcase", "TCP stream HTTP rejected: path=%s status=%.40s", activePath, m_ioScratch);
+            closeStreamSocket(true);
+            return false;
+        }
+
+        for (const char* p = m_ioScratch; *p != '\0'; ++p) {
+            if ((*p == 'X' || *p == 'x') && strncasecmp(p, "x-dmd-paced:", 12) == 0) {
+                const char* v = p + 12;
+                while (*v == ' ' || *v == '\t') ++v;
+                if (*v == '1') {
+                    serverPaced = true;
                 }
                 break;
             }
         }
-        if (!connected) {
-            closeStreamSocket(true);
-            return false;
-        }
-    }
-
-    lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    struct timeval rcvTv = {0, 80000}; // 80 ms slice keeps `deactivate()` & `WEBUI_SYNC` preemption snappy
-    struct timeval sndTv = {1, 0};
-    lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcvTv, sizeof(rcvTv));
-    lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTv, sizeof(sndTv));
-
-    char reqBuf[384];
-    int reqLen = snprintf(
-        reqBuf,
-        sizeof(reqBuf),
-        "GET %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
-        reqPath,
-        resolvedHost,
-        static_cast<unsigned>(resolvedPort)
-    );
-    if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) != reqLen) {
-        closeStreamSocket(true);
-        return false;
-    }
-
-    // Read HTTP response header into `m_ioScratch` (`1,472` bytes preallocated)
-    size_t scratchUsed = 0;
-    size_t bodyStart = 0;
-    bool foundHeaderEnd = false;
-    uint32_t hdrT0 = millis();
-    while (!foundHeaderEnd &&
-           (millis() - hdrT0) < 3500U &&
-           m_wantActive.load(std::memory_order_acquire) &&
-           !shouldYieldShowcaseToWebUi(m_hasPsram)) {
-        if (scratchUsed >= IO_SCRATCH_BYTES - 1U) {
-            break;
-        }
-        int r = lwip_recv(fd, m_ioScratch + scratchUsed, IO_SCRATCH_BYTES - 1U - scratchUsed, 0);
-        if (r > 0) {
-            scratchUsed += static_cast<size_t>(r);
-            m_ioScratch[scratchUsed] = '\0';
-            char* sep = strstr(m_ioScratch, "\r\n\r\n");
-            if (sep != nullptr) {
-                foundHeaderEnd = true;
-                bodyStart = static_cast<size_t>((sep - m_ioScratch) + 4);
-                *sep = '\0';
-            }
-        } else if (r == 0) {
-            break;
-        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            break;
-        }
-    }
-
-    if (!foundHeaderEnd ||
-        (strncmp(m_ioScratch, "HTTP/1.1 200", 12) != 0 && strncmp(m_ioScratch, "HTTP/1.0 200", 12) != 0)) {
-        LOGW("Showcase", "TCP stream HTTP rejected: path=%s status=%.40s", reqPath, m_ioScratch);
-        closeStreamSocket(true);
-        return false;
+        isChunked = hasChunkedTransferEncoding(m_ioScratch);
     }
 
     net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
 
-    bool serverPaced = false;
-    for (const char* p = m_ioScratch; *p != '\0'; ++p) {
-        if ((*p == 'X' || *p == 'x') && strncasecmp(p, "x-dmd-paced:", 12) == 0) {
-            const char* v = p + 12;
-            while (*v == ' ' || *v == '\t') ++v;
-            if (*v == '1') {
-                serverPaced = true;
-            }
-            break;
-        }
-    }
-    const bool isChunked = hasChunkedTransferEncoding(m_ioScratch);
-    HttpChunkedDecoder chunkDec;
-
     size_t preBufferedOff = bodyStart;
     size_t preBufferedEnd = scratchUsed;
+    const char* lastReadFailReason = "idle_body";
+    int lastSockErrno = 0;
 
     auto readExactStreamBody = [&](uint8_t* dst, size_t wantLen, uint32_t maxIdleMs) -> bool {
+        if (isWebSocket) {
+            auto flushWsControlAndCredits = [&](uint8_t creditsToAck) -> bool {
+                while (wsDemux.hasPendingPong()) {
+                    uint8_t pongFrame[131];
+                    const size_t pongLen = wsDemux.takePendingPongFrame(pongFrame);
+                    if (pongLen > 0U &&
+                        lwip_send(fd, pongFrame, pongLen, 0) != static_cast<int>(pongLen)) {
+                        lastSockErrno = errno;
+                        lastReadFailReason = "sock_err";
+                        return false;
+                    }
+                }
+                for (uint8_t c = 0U; c < creditsToAck; ++c) {
+                    if (lwip_send(
+                            fd,
+                            core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame,
+                            sizeof(core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame),
+                            0) != static_cast<int>(sizeof(core::drawing::DmdzWsDemuxer::kMaskedCreditAckFrame))) {
+                        lastSockErrno = errno;
+                        lastReadFailReason = "sock_err";
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            size_t got = 0U;
+            uint32_t lastProg = millis();
+            while (got < wantLen) {
+                if (!m_wantActive.load(std::memory_order_acquire)) {
+                    lastReadFailReason = "deactivated";
+                    return false;
+                }
+                if (shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                    lastReadFailReason = "webui";
+                    return false;
+                }
+                if (preBufferedOff < preBufferedEnd) {
+                    size_t consumed = 0U;
+                    uint8_t creditsToAck = 0U;
+                    const size_t produced = wsDemux.decode(
+                        reinterpret_cast<const uint8_t*>(m_ioScratch + preBufferedOff),
+                        preBufferedEnd - preBufferedOff,
+                        consumed,
+                        dst + got,
+                        wantLen - got,
+                        creditsToAck
+                    );
+                    preBufferedOff += consumed;
+                    got += produced;
+                    if (wsDemux.hasError()) {
+                        lastReadFailReason = "decode_err";
+                        return false;
+                    }
+                    if (!flushWsControlAndCredits(creditsToAck)) {
+                        return false;
+                    }
+                    if (got >= wantLen) {
+                        return true;
+                    }
+                    if (wsDemux.isClosed()) {
+                        lastReadFailReason = "eof_early";
+                        return false;
+                    }
+                    if (preBufferedOff < preBufferedEnd && consumed > 0U) {
+                        continue;
+                    }
+                }
+                preBufferedOff = 0U;
+                preBufferedEnd = 0U;
+                int r = lwip_recv(fd, m_ioScratch, IO_SCRATCH_BYTES, 0);
+                if (r > 0) {
+                    preBufferedEnd = static_cast<size_t>(r);
+                    lastProg = millis();
+                } else if (r == 0) {
+                    lastReadFailReason = "eof_early";
+                    return false;
+                } else {
+                    lastSockErrno = errno;
+                    if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
+                        lastReadFailReason = "sock_err";
+                        return false;
+                    }
+                    if ((millis() - lastProg) >= maxIdleMs) {
+                        lastReadFailReason = "idle_body";
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         if (!isChunked) {
             size_t got = 0;
             if (preBufferedOff < preBufferedEnd) {
@@ -2723,7 +3236,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             }
             uint32_t lastProg = millis();
             while (got < wantLen) {
-                if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                if (!m_wantActive.load(std::memory_order_acquire)) {
+                    lastReadFailReason = "deactivated";
+                    return false;
+                }
+                if (shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                    lastReadFailReason = "webui";
                     return false;
                 }
                 int r = lwip_recv(fd, dst + got, wantLen - got, 0);
@@ -2731,12 +3249,16 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                     got += static_cast<size_t>(r);
                     lastProg = millis();
                 } else if (r == 0) {
+                    lastReadFailReason = "eof_early";
                     return false;
                 } else {
-                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    lastSockErrno = errno;
+                    if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
+                        lastReadFailReason = "sock_err";
                         return false;
                     }
                     if ((millis() - lastProg) >= maxIdleMs) {
+                        lastReadFailReason = "idle_body";
                         return false;
                     }
                 }
@@ -2748,7 +3270,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         size_t got = 0;
         uint32_t lastProg = millis();
         while (got < wantLen) {
-            if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
+            if (!m_wantActive.load(std::memory_order_acquire)) {
+                lastReadFailReason = "deactivated";
+                return false;
+            }
+            if (shouldYieldShowcaseToWebUi(m_hasPsram)) {
+                lastReadFailReason = "webui";
                 return false;
             }
             if (preBufferedOff < preBufferedEnd) {
@@ -2763,12 +3290,14 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                 preBufferedOff += consumed;
                 got += produced;
                 if (chunkDec.hasError()) {
+                    lastReadFailReason = "decode_err";
                     return false;
                 }
                 if (got >= wantLen) {
                     return true;
                 }
                 if (chunkDec.isDone()) {
+                    lastReadFailReason = "eof_early";
                     return false;
                 }
             }
@@ -2779,12 +3308,16 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                 preBufferedEnd = static_cast<size_t>(r);
                 lastProg = millis();
             } else if (r == 0) {
+                lastReadFailReason = "eof_early";
                 return false;
             } else {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                lastSockErrno = errno;
+                if (lastSockErrno != EAGAIN && lastSockErrno != EWOULDBLOCK) {
+                    lastReadFailReason = "sock_err";
                     return false;
                 }
                 if ((millis() - lastProg) >= maxIdleMs) {
+                    lastReadFailReason = "idle_body";
                     return false;
                 }
             }
@@ -2798,7 +3331,8 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         !core::drawing::DmdzStreamDecoder::parseHeader(hdr, parsedHdr)) {
         LOGW(
             "Showcase",
-            "TCP stream bad header magic (chunked=%u): %02x %02x %02x %02x %02x %02x",
+            "TCP stream bad header magic (proto=%s chunked=%u): %02x %02x %02x %02x %02x %02x",
+            isWebSocket ? "ws" : "http",
             isChunked ? 1U : 0U,
             hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5]
         );
@@ -2861,13 +3395,13 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         if (m_cfgGen.load(std::memory_order_acquire) != startGen) { endReason = "cfg"; break; }
         if ((millis() - streamStartMs) >= maxAllowedMs) { endReason = "cap"; break; }
 
-        // 1. Wait for the next frame's first payload bytes WHILE `m_frameSeq` remains EVEN.
+        // 1. Wait for the next frame's first payload byte WHILE `m_frameSeq` remains EVEN.
         uint8_t firstFrameByte = 0;
         bool hasFirstFrameByte = false;
-        if (isChunked) {
-            // Advance past any trailing `\r\n<hex>\r\n` chunk framing before locking `m_frame565`
+        if (isWebSocket || isChunked) {
+            // Advance past WebSocket frame headers / PINGs or HTTP chunk headers before locking `m_frame565`
             if (!readExactStreamBody(&firstFrameByte, 1U, 3500U)) {
-                endReason = "idle";
+                endReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_wait" : lastReadFailReason;
                 break;
             }
             hasFirstFrameByte = true;
@@ -2889,11 +3423,19 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                     break;
                 }
                 if (sel < 0 && errno != EINTR) {
+                    lastSockErrno = errno;
+                    endReason = "sock_err";
                     break;
                 }
             }
             if (!socketReadable) {
-                endReason = "idle";
+                if (strcmp(endReason, "eof") == 0) {
+                    if (!m_wantActive.load(std::memory_order_acquire)) endReason = "deactivated";
+                    else if (shouldYieldShowcaseToWebUi(m_hasPsram)) endReason = "webui";
+                    else if (m_cfgGen.load(std::memory_order_acquire) != startGen) endReason = "cfg";
+                    else if ((millis() - streamStartMs) >= maxAllowedMs) endReason = "cap";
+                    else endReason = "idle_wait";
+                }
                 break;
             }
         }
@@ -2923,6 +3465,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             memset(m_frame565, 0, std::min(maxBufBytes, m_posterCapBytes));
         }
         bool okFrame = false;
+        const char* frameFailReason = "idle_body";
         if (parsedHdr.isDmdz) {
             uint8_t lenBytes[2] = {0, 0};
             bool lenOk = false;
@@ -2932,23 +3475,31 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
             } else {
                 lenOk = readExactStreamBody(lenBytes, 2U, 3500U);
             }
-            if (lenOk) {
+            if (!lenOk) {
+                frameFailReason = (strcmp(lastReadFailReason, "idle_body") == 0) ? "idle_len" : lastReadFailReason;
+            } else {
                 const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) |
                                             (static_cast<uint16_t>(lenBytes[1]) << 8);
                 dmdzDec.beginFrame(payloadLen);
-                uint8_t decChunk[384];
+                uint8_t decChunk[128];
                 size_t rem = payloadLen;
                 okFrame = true;
                 while (rem > 0U) {
                     const size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
-                    if (!readExactStreamBody(decChunk, take, 3500U) ||
-                        !dmdzDec.feed(decChunk, take, m_frame565)) {
+                    if (!readExactStreamBody(decChunk, take, 3500U)) {
+                        frameFailReason = lastReadFailReason;
+                        okFrame = false;
+                        break;
+                    }
+                    if (!dmdzDec.feed(decChunk, take, m_frame565)) {
+                        frameFailReason = "decode_err";
                         okFrame = false;
                         break;
                     }
                     rem -= take;
                 }
                 if (okFrame && !dmdzDec.finishFrame()) {
+                    frameFailReason = "decode_err";
                     okFrame = false;
                 }
             }
@@ -2959,6 +3510,9 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
                 okFrame = (frameBytes == 1U) || readExactStreamBody(frameDst + 1U, frameBytes - 1U, 3500U);
             } else {
                 okFrame = readExactStreamBody(frameDst, frameBytes, 3500U);
+            }
+            if (!okFrame) {
+                frameFailReason = lastReadFailReason;
             }
         }
 
@@ -2991,7 +3545,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
         if (!okFrame) {
             endReason = m_wantActive.load(std::memory_order_acquire)
-                ? (shouldYieldShowcaseToWebUi(m_hasPsram) ? "webui" : "idle")
+                ? (shouldYieldShowcaseToWebUi(m_hasPsram) ? "webui" : frameFailReason)
                 : "deactivated";
             break;
         }
@@ -3012,9 +3566,17 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         }
     }
 
-    // Send immediate TCP RST (`SO_LINGER {1, 0}`) whenever closing before EOF so LwIP frees all
-    // queued `TCP_WND` rx `pbuf`s in internal DRAM instead of stranding ~6-8 KB in `FIN_WAIT_1`.
-    closeStreamSocket(framesRead < totalFrames);
+    if (isWebSocket && framesRead == totalFrames && fd >= 0) {
+        (void)lwip_send(
+            fd,
+            core::drawing::DmdzWsDemuxer::kMaskedCloseFrame,
+            sizeof(core::drawing::DmdzWsDemuxer::kMaskedCloseFrame),
+            0
+        );
+    }
+    // Always reclaim the LwIP `tcp_pcb` synchronously via `SO_LINGER {1, 0}` BEFORE `stepCGuard`
+    // frees `m_frame565`, guaranteeing 0 `TIME_WAIT` PCBs and 100% LIFO heap coalescence!
+    closeStreamSocket(true);
     if (framesRead > 0U) {
         net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
     }
@@ -3023,10 +3585,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         uint32_t pres = m_presentedStreamFrames.load(std::memory_order_acquire);
         LOGI(
             "Showcase",
-            "TCP stream done (%s): codec=%s path=%s rxFrames=%u/%u presented=%u late=%u durMs=%u effFps=%.1f paced=%u minFree8=%u stackFree=%u",
+            "TCP stream done (%s, errno=%d): proto=%s codec=%s path=%s rxFrames=%u/%u presented=%u late=%u durMs=%u effFps=%.1f paced=%u minFree8=%u stackFree=%u",
             endReason,
+            lastSockErrno,
+            isWebSocket ? "ws" : "http",
             parsedHdr.isDmdz ? "dmdz1" : "dmds",
-            reqPath,
+            activePath,
             static_cast<unsigned>(framesRead),
             static_cast<unsigned>(totalFrames),
             static_cast<unsigned>(pres),
@@ -3040,6 +3604,9 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     }
     return (framesRead > 0U);
 #else
+    if (!m_frame565) {
+        return false;
+    }
     net::SecureHttpResponse sResp;
     {
         char fullUrl[320];
@@ -3664,11 +4231,22 @@ void MediaShowcaseBase::render(EngineContext* context) {
         return;
     }
 
+    struct BlitSeqGuard {
+        std::atomic<uint32_t>& seq;
+        explicit BlitSeqGuard(std::atomic<uint32_t>& sRef) : seq(sRef) {
+            seq.fetch_add(1U, std::memory_order_seq_cst);
+        }
+        ~BlitSeqGuard() {
+            seq.fetch_add(1U, std::memory_order_release);
+        }
+    } blitGuard{m_renderBlitSeq};
+
     uint32_t elapsedMs = millis() - m_activatedAtMs;
     Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
     if (curPhase == Phase::LiveStream) {
-        if (m_renderCard.hasVideoFrame && m_frame565 != nullptr) {
+        uint16_t* framePtr = m_frame565;
+        if (m_renderCard.hasVideoFrame && framePtr != nullptr) {
             // Never clear or blit while Core 0 is mid-frame (`ODD` m_frameSeq): keep `m_dirty = true`
             // so the very next Core 1 tick blits the completed frame as soon as `m_frameSeq` turns `EVEN`.
             uint32_t fSeq1 = m_frameSeq.load(std::memory_order_acquire);
@@ -3679,7 +4257,7 @@ void MediaShowcaseBase::render(EngineContext* context) {
             if (s->width() != static_cast<int>(m_width) || s->height() != static_cast<int>(m_height)) {
                 s->clear(0);
             }
-            s->blit565(m_frame565, 0, 0, m_width, m_height);
+            s->blit565(framePtr, 0, 0, m_width, m_height);
             m_lastRenderedFrameSeq = fSeq1;
             m_consumedFrameSeq.store(fSeq1, std::memory_order_release);
             m_presentedStreamFrames.fetch_add(1, std::memory_order_relaxed);

@@ -75,4 +75,74 @@ private:
     bool m_error = false;
 };
 
+/**
+ * @brief Converts a Showcase HTTP stream path (`/api/v1/{domain}/stream/{item_id}.rgb565.stream?...`)
+ *        into the ZeDMD-style credit-acknowledged WebSocket path (`/api/v1/{domain}/ws/{item_id}.dmdz?...`).
+ * @return true if `rawPath` matched the Showcase stream route and `outWsPath` was populated.
+ */
+bool buildDmdzWebSocketPath(
+    const char* rawPath,
+    const char* clientId,
+    char* outWsPath,
+    size_t outCap
+);
+
+/**
+ * @brief Zero-allocation RFC 6455 binary WebSocket frame demuxer with per-message credit ACK
+ *        counting and automatic PING->PONG / CLOSE handling.
+ */
+class DmdzWsDemuxer {
+public:
+    static const uint8_t kMaskKey[4];
+    // Masked RFC 6455 binary frame carrying 1 byte `'A'` (`0x41`).
+    static const uint8_t kMaskedCreditAckFrame[7];
+    // Masked RFC 6455 CLOSE frame (`0` payload bytes).
+    static const uint8_t kMaskedCloseFrame[6];
+
+    void reset();
+
+    size_t decode(
+        const uint8_t* src,
+        size_t srcLen,
+        size_t& outSrcConsumed,
+        uint8_t* dst,
+        size_t dstCap,
+        uint8_t& outCreditsToAck
+    );
+
+    bool isClosed() const { return m_closed; }
+    bool hasError() const { return m_error; }
+    bool hasPendingPong() const { return m_pongPending; }
+    size_t takePendingPongFrame(uint8_t outFrame[131]);
+
+private:
+    enum class WsState : uint8_t {
+        Hdr0 = 0,
+        Hdr1,
+        ExtLen16,
+        ExtLen64,
+        MaskKey,
+        DataPayload,
+        CtrlPayload,
+    };
+
+    void enterPayloadOrMask(uint8_t& outCreditsToAck);
+    void enterPayloadAfterHeader(uint8_t& outCreditsToAck);
+
+    uint8_t m_pongBuf[125] = {0};
+    uint8_t m_peerMaskKey[4] = {0};
+    size_t m_frameRem = 0;
+    WsState m_state = WsState::Hdr0;
+    uint8_t m_opcode = 0;
+    uint8_t m_lenBytesRem = 0;
+    uint8_t m_maskIdx = 0;
+    uint8_t m_ctrlLen = 0;
+    uint8_t m_pongLen = 0;
+    bool m_fin = true;
+    bool m_masked = false;
+    bool m_pongPending = false;
+    bool m_closed = false;
+    bool m_error = false;
+};
+
 } // namespace core::drawing

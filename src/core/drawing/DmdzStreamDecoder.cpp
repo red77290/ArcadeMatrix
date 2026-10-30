@@ -1,5 +1,6 @@
 #include "DmdzStreamDecoder.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace core::drawing {
@@ -204,6 +205,306 @@ bool DmdzStreamDecoder::feed(const uint8_t* src, size_t len, uint16_t* frame565)
 
 bool DmdzStreamDecoder::finishFrame() const {
     return !m_error && (m_bytesRemaining == 0U) && (m_state == State::Op) && (m_pos == m_numPixels);
+}
+
+const uint8_t DmdzWsDemuxer::kMaskKey[4] = {0x37U, 0xFAU, 0x21U, 0x3DU};
+const uint8_t DmdzWsDemuxer::kMaskedCreditAckFrame[7] = {
+    0x82U, 0x81U, 0x37U, 0xFAU, 0x21U, 0x3DU, static_cast<uint8_t>(0x41U ^ 0x37U)
+};
+const uint8_t DmdzWsDemuxer::kMaskedCloseFrame[6] = {
+    0x88U, 0x80U, 0x37U, 0xFAU, 0x21U, 0x3DU
+};
+
+bool buildDmdzWebSocketPath(
+    const char* rawPath,
+    const char* clientId,
+    char* outWsPath,
+    size_t outCap
+) {
+    if (!outWsPath || outCap == 0U) {
+        return false;
+    }
+    outWsPath[0] = '\0';
+    if (!rawPath || rawPath[0] == '\0') {
+        return false;
+    }
+
+    const char* apiPrefix = strstr(rawPath, "/api/v1/");
+    if (!apiPrefix) {
+        return false;
+    }
+    const char* domainStart = apiPrefix + 8;
+    const char* domainSlash = strchr(domainStart, '/');
+    if (!domainSlash || domainSlash == domainStart) {
+        return false;
+    }
+    const size_t domainLen = static_cast<size_t>(domainSlash - domainStart);
+    if (domainLen > 24U || strncmp(domainSlash + 1, "stream/", 7) != 0) {
+        return false;
+    }
+
+    const char* itemStart = domainSlash + 8;
+    const char* qMark = strchr(itemStart, '?');
+    const char* pathEnd = qMark ? qMark : (itemStart + strlen(itemStart));
+    constexpr size_t kSuffixLen = 14U; // strlen(".rgb565.stream")
+    if (static_cast<size_t>(pathEnd - itemStart) <= kSuffixLen ||
+        strncmp(pathEnd - kSuffixLen, ".rgb565.stream", kSuffixLen) != 0) {
+        return false;
+    }
+    const size_t itemLen = static_cast<size_t>((pathEnd - kSuffixLen) - itemStart);
+    if (itemLen == 0U || itemLen > 128U) {
+        return false;
+    }
+
+    bool purge = true;
+    char apiKeyParam[80] = "";
+    if (qMark && qMark[1] != '\0') {
+        const char* query = qMark + 1;
+        if (strstr(query, "purge=false") != nullptr || strstr(query, "purge=0") != nullptr) {
+            purge = false;
+        }
+        const char* ak = strstr(query, "api_key=");
+        if (ak != nullptr) {
+            const char* akEnd = strchr(ak, '&');
+            size_t akLen = akEnd ? static_cast<size_t>(akEnd - ak) : strlen(ak);
+            if (akLen > 8U && akLen + 2U < sizeof(apiKeyParam)) {
+                apiKeyParam[0] = '&';
+                memcpy(apiKeyParam + 1, ak, akLen);
+                apiKeyParam[akLen + 1] = '\0';
+            }
+        }
+    }
+
+    const int n = (clientId && clientId[0] != '\0')
+        ? snprintf(
+              outWsPath,
+              outCap,
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s&client_id=%s%s",
+              static_cast<int>(domainLen),
+              domainStart,
+              static_cast<int>(itemLen),
+              itemStart,
+              purge ? "true" : "false",
+              clientId,
+              apiKeyParam
+          )
+        : snprintf(
+              outWsPath,
+              outCap,
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s%s",
+              static_cast<int>(domainLen),
+              domainStart,
+              static_cast<int>(itemLen),
+              itemStart,
+              purge ? "true" : "false",
+              apiKeyParam
+          );
+    if (n <= 0 || static_cast<size_t>(n) >= outCap) {
+        outWsPath[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+void DmdzWsDemuxer::reset() {
+    m_frameRem = 0;
+    m_state = WsState::Hdr0;
+    m_opcode = 0;
+    m_lenBytesRem = 0;
+    m_maskIdx = 0;
+    m_ctrlLen = 0;
+    m_pongLen = 0;
+    m_fin = true;
+    m_masked = false;
+    m_pongPending = false;
+    m_closed = false;
+    m_error = false;
+}
+
+void DmdzWsDemuxer::enterPayloadOrMask(uint8_t& outCreditsToAck) {
+    if (m_masked) {
+        m_lenBytesRem = 4U;
+        m_maskIdx = 0U;
+        m_state = WsState::MaskKey;
+    } else {
+        enterPayloadAfterHeader(outCreditsToAck);
+    }
+}
+
+void DmdzWsDemuxer::enterPayloadAfterHeader(uint8_t& outCreditsToAck) {
+    m_ctrlLen = 0U;
+    m_maskIdx = 0U;
+    if (m_frameRem == 0U) {
+        if (m_opcode == 0x8U) {
+            m_closed = true;
+        } else if (m_opcode == 0x9U) {
+            m_pongLen = 0U;
+            m_pongPending = true;
+        } else if (m_opcode <= 0x2U && m_fin) {
+            ++outCreditsToAck;
+        }
+        m_state = WsState::Hdr0;
+    } else {
+        m_state = (m_opcode >= 0x8U) ? WsState::CtrlPayload : WsState::DataPayload;
+    }
+}
+
+size_t DmdzWsDemuxer::decode(
+    const uint8_t* src,
+    size_t srcLen,
+    size_t& outSrcConsumed,
+    uint8_t* dst,
+    size_t dstCap,
+    uint8_t& outCreditsToAck
+) {
+    outSrcConsumed = 0U;
+    outCreditsToAck = 0U;
+    if (!src || srcLen == 0U || !dst || dstCap == 0U || m_closed || m_error || m_pongPending) {
+        return 0U;
+    }
+
+    size_t written = 0U;
+    while (outSrcConsumed < srcLen && !m_closed && !m_error && !m_pongPending) {
+        if (m_state == WsState::DataPayload) {
+            if (written >= dstCap) {
+                break;
+            }
+            const size_t avail = srcLen - outSrcConsumed;
+            const size_t space = dstCap - written;
+            size_t take = (avail < m_frameRem) ? avail : m_frameRem;
+            if (take > space) {
+                take = space;
+            }
+            if (!m_masked) {
+                memcpy(dst + written, src + outSrcConsumed, take);
+            } else {
+                for (size_t k = 0U; k < take; ++k) {
+                    dst[written + k] = static_cast<uint8_t>(
+                        src[outSrcConsumed + k] ^ m_peerMaskKey[(m_maskIdx + k) & 3U]
+                    );
+                }
+                m_maskIdx = static_cast<uint8_t>((m_maskIdx + take) & 3U);
+            }
+            written += take;
+            outSrcConsumed += take;
+            m_frameRem -= take;
+            if (m_frameRem == 0U) {
+                if (m_fin) {
+                    ++outCreditsToAck;
+                }
+                m_state = WsState::Hdr0;
+            }
+            if (written >= dstCap) {
+                break;
+            }
+            continue;
+        }
+
+        const uint8_t b = src[outSrcConsumed++];
+        switch (m_state) {
+            case WsState::Hdr0: {
+                if ((b & 0x70U) != 0U) {
+                    m_error = true;
+                    break;
+                }
+                m_fin = (b & 0x80U) != 0U;
+                m_opcode = static_cast<uint8_t>(b & 0x0FU);
+                if ((m_opcode > 0x2U && m_opcode != 0x8U && m_opcode != 0x9U && m_opcode != 0xAU) ||
+                    (m_opcode >= 0x8U && !m_fin)) {
+                    m_error = true;
+                    break;
+                }
+                m_state = WsState::Hdr1;
+                break;
+            }
+            case WsState::Hdr1: {
+                m_masked = (b & 0x80U) != 0U;
+                const uint8_t len7 = static_cast<uint8_t>(b & 0x7FU);
+                if (m_opcode >= 0x8U && len7 > 125U) {
+                    m_error = true;
+                    break;
+                }
+                if (len7 < 126U) {
+                    m_frameRem = len7;
+                    enterPayloadOrMask(outCreditsToAck);
+                } else if (len7 == 126U) {
+                    m_frameRem = 0U;
+                    m_lenBytesRem = 2U;
+                    m_state = WsState::ExtLen16;
+                } else {
+                    m_frameRem = 0U;
+                    m_lenBytesRem = 8U;
+                    m_state = WsState::ExtLen64;
+                }
+                break;
+            }
+            case WsState::ExtLen16: {
+                m_frameRem = (m_frameRem << 8) | static_cast<size_t>(b);
+                if (--m_lenBytesRem == 0U) {
+                    enterPayloadOrMask(outCreditsToAck);
+                }
+                break;
+            }
+            case WsState::ExtLen64: {
+                if (m_frameRem > 0xFFFFFFU) {
+                    m_error = true;
+                    break;
+                }
+                m_frameRem = (m_frameRem << 8) | static_cast<size_t>(b);
+                if (m_frameRem > 65535U) {
+                    m_error = true;
+                    break;
+                }
+                if (--m_lenBytesRem == 0U) {
+                    enterPayloadOrMask(outCreditsToAck);
+                }
+                break;
+            }
+            case WsState::MaskKey: {
+                m_peerMaskKey[m_maskIdx++] = b;
+                if (--m_lenBytesRem == 0U) {
+                    enterPayloadAfterHeader(outCreditsToAck);
+                }
+                break;
+            }
+            case WsState::CtrlPayload: {
+                const uint8_t unmasked = m_masked
+                    ? static_cast<uint8_t>(b ^ m_peerMaskKey[m_maskIdx++ & 3U])
+                    : b;
+                if (m_opcode == 0x9U && m_ctrlLen < sizeof(m_pongBuf)) {
+                    m_pongBuf[m_ctrlLen++] = unmasked;
+                }
+                if (--m_frameRem == 0U) {
+                    if (m_opcode == 0x8U) {
+                        m_closed = true;
+                    } else if (m_opcode == 0x9U) {
+                        m_pongLen = m_ctrlLen;
+                        m_pongPending = true;
+                    }
+                    m_state = WsState::Hdr0;
+                }
+                break;
+            }
+            case WsState::DataPayload:
+                break;
+        }
+    }
+    return written;
+}
+
+size_t DmdzWsDemuxer::takePendingPongFrame(uint8_t outFrame[131]) {
+    if (!m_pongPending || !outFrame) {
+        return 0U;
+    }
+    m_pongPending = false;
+    const uint8_t len = (m_pongLen <= 125U) ? m_pongLen : 125U;
+    outFrame[0] = 0x8AU; // FIN + Opcode PONG (0xA)
+    outFrame[1] = static_cast<uint8_t>(0x80U | len);
+    memcpy(outFrame + 2, kMaskKey, 4U);
+    for (uint8_t i = 0U; i < len; ++i) {
+        outFrame[6U + i] = static_cast<uint8_t>(m_pongBuf[i] ^ kMaskKey[i & 3U]);
+    }
+    return static_cast<size_t>(6U + len);
 }
 
 } // namespace core::drawing
