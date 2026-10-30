@@ -2884,6 +2884,177 @@ void test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack(void) {
     TEST_ASSERT_EQUAL_UINT8(0x90U, ackBuf[1]);
 }
 
+void test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure(void) {
+    using core::drawing::DmdzWsDemuxer;
+
+    // 1. WebSocket credit batching & strict `!hasPsram` (`wsCredits=2, ackBatch=1`) vs `hasPsram` (`wsCredits=8, ackBatch=2`)
+    TEST_ASSERT_EQUAL_UINT8(1U, net::clampWsCredits(0U));
+    TEST_ASSERT_EQUAL_UINT8(2U, net::clampWsCredits(2U));
+    TEST_ASSERT_EQUAL_UINT8(8U, net::clampWsCredits(8U));
+    TEST_ASSERT_EQUAL_UINT8(16U, net::clampWsCredits(42U));
+
+    TEST_ASSERT_EQUAL_UINT8(1U, net::computeWsAckBatch(net::clampWsCredits(2U))); // `!hasPsram` (`esp32dev`)
+    TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(8U))); // `hasPsram` (`esp32s3`)
+
+    // 2. Credit backpressure gating (`ringFree >= 1152U` or deadlock-free `ringCount == 0U`)
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(0U, 1U, false, 0U, 4096U, 4096U));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 1U, false, 2944U, 1152U, 4096U));
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 1U, false, 2945U, 1151U, 4096U));
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 1U, true, 3072U, 1024U, 4096U));
+    // Deadlock-freedom when Core 0 drained the ring (`ringCount == 0`) on a tiny/exhausted ring
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 4096U));
+    // PSRAM `ackBatch = 2` coalescing
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 2U, false, 1024U, 7168U, 8192U));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 2048U, 6144U, 8192U));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 1024U, 7168U, 8192U));
+
+    // 3. `StreamByteRing` `initFromSlice`, `peek`, and circular wraparound across 4096 B `ioScratch`
+    uint8_t scratch[4096];
+    for (size_t i = 0U; i < sizeof(scratch); ++i) {
+        scratch[i] = static_cast<uint8_t>((i * 37U + 11U) & 0xFFU);
+    }
+    net::StreamByteRing ring;
+    ring.initFromSlice(scratch, sizeof(scratch), 4000U, 90U);
+    TEST_ASSERT_EQUAL_UINT32(90U, static_cast<uint32_t>(ring.size()));
+    TEST_ASSERT_EQUAL_UINT32(4006U, static_cast<uint32_t>(ring.freeBytes()));
+
+    uint8_t extraIn[200];
+    for (size_t i = 0U; i < sizeof(extraIn); ++i) {
+        extraIn[i] = static_cast<uint8_t>((i + 0xA0U) & 0xFFU);
+    }
+    // Push 200 B across the 4096 B wrap boundary (`tail` starts at 4090 -> wraps to 194)
+    TEST_ASSERT_EQUAL_UINT32(200U, static_cast<uint32_t>(ring.push(extraIn, sizeof(extraIn))));
+    TEST_ASSERT_EQUAL_UINT32(290U, static_cast<uint32_t>(ring.size()));
+
+    uint8_t peekHdr[4] = {0};
+    TEST_ASSERT_EQUAL_UINT32(4U, static_cast<uint32_t>(ring.peek(peekHdr, 4U, 88U)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((4088U * 37U + 11U) & 0xFFU), peekHdr[0]);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((4089U * 37U + 11U) & 0xFFU), peekHdr[1]);
+    TEST_ASSERT_EQUAL_UINT8(0xA0U, peekHdr[2]);
+    TEST_ASSERT_EQUAL_UINT8(0xA1U, peekHdr[3]);
+
+    uint8_t popped[290] = {0};
+    TEST_ASSERT_EQUAL_UINT32(290U, static_cast<uint32_t>(ring.pop(popped, sizeof(popped))));
+    TEST_ASSERT_TRUE(ring.empty());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(extraIn, popped + 90U, sizeof(extraIn));
+
+    // 4. End-to-end simulation of a 5,500 B oversized `DMDZ` keyframe streaming through a 4,096 B
+    //    `StreamByteRing` with `wsCredits = 2`, `ackBatch = 1` (`!hasPsram` `esp32dev` profile):
+    //    verifies zero deadlock AND strict `esp_wifi` in-flight packet bounding!
+    std::vector<uint8_t> expectedPayload(5500U);
+    for (size_t i = 0U; i < expectedPayload.size(); ++i) {
+        expectedPayload[i] = static_cast<uint8_t>((i * 131U + 7U) & 0xFFU);
+    }
+
+    // Build unmasked server->client WS binary frames of <= 1024 B payload each (6 WS frames total)
+    std::vector<std::vector<uint8_t>> serverWsFrames;
+    for (size_t pos = 0U; pos < expectedPayload.size(); pos += 1024U) {
+        const size_t chunkLen = std::min<size_t>(1024U, expectedPayload.size() - pos);
+        std::vector<uint8_t> frame;
+        frame.push_back(0x82U); // FIN + Binary
+        if (chunkLen < 126U) {
+            frame.push_back(static_cast<uint8_t>(chunkLen));
+        } else {
+            frame.push_back(126U);
+            frame.push_back(static_cast<uint8_t>((chunkLen >> 8) & 0xFFU));
+            frame.push_back(static_cast<uint8_t>(chunkLen & 0xFFU));
+        }
+        frame.insert(frame.end(), expectedPayload.begin() + pos, expectedPayload.begin() + pos + chunkLen);
+        serverWsFrames.push_back(frame);
+    }
+    TEST_ASSERT_EQUAL_UINT32(6U, static_cast<uint32_t>(serverWsFrames.size()));
+
+    ring.init(scratch, sizeof(scratch));
+    DmdzWsDemuxer wsDemux;
+    size_t nextServerFrame = 0U;
+    uint16_t serverCredits = 2U; // Initial `wsCredits = 2` on `esp32dev`
+    uint16_t pendingWsCredits = 0U;
+    const uint8_t ackBatch = net::computeWsAckBatch(2U);
+    std::vector<uint8_t> wireInFlight;
+    std::vector<uint8_t> decodedOut;
+    bool sawCreditWithheld = false;
+
+    auto serverSendAvailable = [&]() {
+        while (serverCredits > 0U && nextServerFrame < serverWsFrames.size()) {
+            const auto& f = serverWsFrames[nextServerFrame++];
+            wireInFlight.insert(wireInFlight.end(), f.begin(), f.end());
+            --serverCredits;
+        }
+    };
+
+    auto pumpWireToRing = [&]() {
+        size_t wireConsumed = 0U;
+        while (wireConsumed < wireInFlight.size() && !ring.full()) {
+            const size_t space = ring.freeBytes();
+            const size_t step = std::min<size_t>({static_cast<size_t>(512U), space, wireInFlight.size() - wireConsumed});
+            size_t off = 0U;
+            while (off < step) {
+                const size_t contig = ring.contiguousWriteCap();
+                TEST_ASSERT_TRUE(contig > 0U);
+                size_t consumed = 0U;
+                uint8_t credits = 0U;
+                const size_t produced = wsDemux.decode(
+                    wireInFlight.data() + wireConsumed + off,
+                    step - off,
+                    consumed,
+                    ring.writePtr(),
+                    contig,
+                    credits
+                );
+                TEST_ASSERT_FALSE(wsDemux.hasError());
+                off += consumed;
+                if (produced > 0U) {
+                    ring.commitWrite(produced);
+                }
+                pendingWsCredits = static_cast<uint16_t>(pendingWsCredits + credits);
+            }
+            wireConsumed += step;
+            if (pendingWsCredits > 0U &&
+                !net::canFlushWsCredits(pendingWsCredits, ackBatch, false, ring.size(), ring.freeBytes(), ring.capacity())) {
+                sawCreditWithheld = true;
+            }
+            while (net::canFlushWsCredits(pendingWsCredits, ackBatch, false, ring.size(), ring.freeBytes(), ring.capacity())) {
+                serverCredits = static_cast<uint16_t>(serverCredits + pendingWsCredits);
+                pendingWsCredits = 0U;
+            }
+        }
+        wireInFlight.erase(wireInFlight.begin(), wireInFlight.begin() + wireConsumed);
+        // Critical `esp32dev` invariant: unread wire bytes waiting outside `rxRing` must NEVER exceed 1 WS frame!
+        TEST_ASSERT_TRUE(wireInFlight.size() <= 1028U);
+    };
+
+    // Pre-buffer up to `safePrebufCap = 4096 - 1152 = 2944 B` before Core 0 begins decoding
+    while (ring.size() < 2944U && (nextServerFrame < serverWsFrames.size() || !wireInFlight.empty())) {
+        serverSendAvailable();
+        pumpWireToRing();
+    }
+    TEST_ASSERT_TRUE(ring.size() >= 2944U);
+    TEST_ASSERT_TRUE(sawCreditWithheld);
+
+    // Core 0 consumes in 384 B decode chunks (`DmdzStreamClient` chunk size), releasing credits dynamically
+    uint8_t decChunk[384];
+    size_t guardIters = 0U;
+    while (decodedOut.size() < expectedPayload.size()) {
+        TEST_ASSERT_TRUE(++guardIters < 64U);
+        serverSendAvailable();
+        pumpWireToRing();
+        const size_t want = std::min<size_t>(sizeof(decChunk), expectedPayload.size() - decodedOut.size());
+        const size_t got = ring.pop(decChunk, want);
+        if (got > 0U) {
+            decodedOut.insert(decodedOut.end(), decChunk, decChunk + got);
+        }
+        while (net::canFlushWsCredits(pendingWsCredits, ackBatch, true, ring.size(), ring.freeBytes(), ring.capacity())) {
+            serverCredits = static_cast<uint16_t>(serverCredits + pendingWsCredits);
+            pendingWsCredits = 0U;
+        }
+    }
+
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expectedPayload.size()), static_cast<uint32_t>(decodedOut.size()));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedPayload.data(), decodedOut.data(), expectedPayload.size());
+    TEST_ASSERT_TRUE(ring.empty());
+    TEST_ASSERT_TRUE(wireInFlight.empty());
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2977,6 +3148,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder);
     RUN_TEST(test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits);
     RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack);
+    RUN_TEST(test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure);
 
     return UNITY_END();
 }

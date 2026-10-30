@@ -62,9 +62,31 @@ public:
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool selfPaced() const override { return true; }
     uint32_t nextFrameDueInMs() const override {
-        if (m_phase.load(std::memory_order_acquire) == static_cast<uint8_t>(Phase::LiveStream) &&
+        const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
+        if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
+            return (m_lastRenderedPhase != static_cast<uint8_t>(Phase::StreamBlank)) ? 1U : 0xFFFFFFFFU;
+        }
+        if (curPhase == static_cast<uint8_t>(Phase::LiveStream) &&
             m_renderCard.hasVideoFrame) {
-            return 2U;
+            const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+            if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
+                return 1U;
+            }
+            const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
+            if (dueMs != 0U) {
+                const int32_t rem = static_cast<int32_t>(dueMs - millis());
+                if (rem < -4) {
+                    return 8U;
+                }
+                if (rem <= 1) {
+                    return 2U;
+                }
+                if (rem < 16) {
+                    return static_cast<uint32_t>(rem);
+                }
+                return 16U;
+            }
+            return 8U;
         }
         return 0xFFFFFFFFU;
     }
@@ -129,13 +151,16 @@ protected:
     static constexpr size_t MAX_SYNOPSIS_LEN = engines::showcase::ShowcaseCardData::MAX_SYNOPSIS_LEN;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
-    static constexpr size_t IO_SCRATCH_BYTES = 1472;
+    static constexpr size_t IO_SCRATCH_BYTES = 3072;
+    static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 2048;
+    static constexpr size_t MIN_IO_SCRATCH_BYTES = 1472;
     static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 8192;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
     enum class Phase : uint8_t {
         Card = 0,
-        LiveStream = 1
+        StreamBlank = 1,
+        LiveStream = 2
     };
 
     struct ConfigSlot {
@@ -183,6 +208,9 @@ protected:
     std::atomic<uint32_t> m_consumedFrameSeq{0};
     std::atomic<uint32_t> m_renderBlitSeq{0};
     std::atomic<uint32_t> m_presentedStreamFrames{0};
+    std::atomic<uint32_t> m_nextStreamFrameDueMs{0};
+    std::atomic<uint32_t> m_blankPresentedSeq{0};
+    std::atomic<uint32_t> m_activeItemStreamMaxMs{0};
     std::atomic<const uint16_t*> m_publishedFramePtr{nullptr};
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr;
@@ -245,12 +273,14 @@ protected:
         return engines::showcase::ShowcaseCardRenderer::synopsisPxPerSec(speedStr);
     }
     static uint32_t configuredMaxStreamMs(const ConfigSlot& cfg);
+    uint32_t effectiveMaxStreamMs(const ConfigSlot& cfg) const;
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH) {
         engines::showcase::ShowcaseCardRenderer::computeCardPosterDims(panelW, panelH, outW, outH);
     }
     static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
     bool allocateBuffers();
     void freeBuffers();
+    void blankCardBeforeStream();
     bool acquireStepCFrameBuffer();
     void releaseStepCFrameBuffer();
     void waitRenderBlitQuiescent() const;
