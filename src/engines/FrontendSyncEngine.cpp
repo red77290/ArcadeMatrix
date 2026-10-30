@@ -10,6 +10,8 @@
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/DmdzStreamClient.h"
+#include "../core/net/RawMqttSocket.h"
 #include "../core/net/SecureHttpClient.h"
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
@@ -43,47 +45,6 @@ bool isLoopbackOrEmptyHost(const char* h) {
             strcmp(h, "::1") == 0);
 }
 
-bool parseUrlHostAndPort(const char* rawUrl, uint16_t defaultPort, char* outHost, size_t hostCap, uint16_t& outPort, bool& outHttps) {
-    if (!rawUrl || !outHost || hostCap == 0) return false;
-    while (*rawUrl == ' ') ++rawUrl;
-    if (*rawUrl == '\0') return false;
-
-    outHttps = false;
-    const char* p = rawUrl;
-    if (strncmp(p, "https://", 8) == 0) {
-        outHttps = true;
-        p += 8;
-    } else if (strncmp(p, "http://", 7) == 0) {
-        p += 7;
-    } else if (strncmp(p, "mqtt://", 7) == 0) {
-        p += 7;
-    } else if (strncmp(p, "tcp://", 6) == 0) {
-        p += 6;
-    }
-
-    const char* slash = strchr(p, '/');
-    size_t authLen = slash ? static_cast<size_t>(slash - p) : strlen(p);
-    if (authLen == 0) return false;
-
-    char auth[96];
-    size_t copyLen = (authLen < sizeof(auth) - 1) ? authLen : (sizeof(auth) - 1);
-    memcpy(auth, p, copyLen);
-    auth[copyLen] = '\0';
-
-    outPort = defaultPort;
-    char* colon = strrchr(auth, ':');
-    if (colon) {
-        *colon = '\0';
-        int parsed = atoi(colon + 1);
-        if (parsed > 0 && parsed <= 65535) {
-            outPort = static_cast<uint16_t>(parsed);
-        }
-    }
-    if (auth[0] == '\0') return false;
-    copySafeCStr(outHost, hostCap, auth);
-    return true;
-}
-
 bool resolveBaseServerUrl(const char* rawUrl, char* outBaseUrl, size_t outCap, char* outResolvedHost, size_t hostCap) {
     uint16_t port = 8890;
     bool online = false;
@@ -100,47 +61,6 @@ bool resolveBaseServerUrl(const char* rawUrl, char* outBaseUrl, size_t outCap, c
         true,
         false
     );
-}
-
-bool readExactTokenAware(
-    Stream& st,
-    uint8_t* dst,
-    size_t len,
-    const std::atomic<uint32_t>& currentToken,
-    uint32_t expectedToken,
-    const std::atomic<bool>& stopFlag,
-    uint32_t timeoutMs = 2500
-) {
-    size_t got = 0;
-    uint32_t lastProgress = millis();
-    while (got < len) {
-        if (stopFlag.load(std::memory_order_acquire) ||
-            currentToken.load(std::memory_order_acquire) != expectedToken) {
-            return false;
-        }
-        int avail = st.available();
-        if (avail > 0) {
-            size_t toRead = len - got;
-            if (static_cast<size_t>(avail) < toRead) toRead = static_cast<size_t>(avail);
-            size_t r = st.readBytes(dst + got, toRead);
-            if (r > 0) {
-                got += r;
-                lastProgress = millis();
-                continue;
-            }
-        }
-        int c = st.read();
-        if (c >= 0) {
-            dst[got++] = static_cast<uint8_t>(c);
-            lastProgress = millis();
-        } else {
-            if (millis() - lastProgress > timeoutMs) return false;
-#if defined(ESP32)
-            vTaskDelay(pdMS_TO_TICKS(2));
-#endif
-        }
-    }
-    return true;
 }
 
 struct SharedBrokerTargetState {
@@ -247,6 +167,8 @@ void InGameShowcaseEngine::render(EngineContext* context) {
     if (ptr && fw > 0 && fh > 0) {
         s->blit565(ptr, 0, 0, fw, fh);
         m_lastRenderedSeq = seq;
+        m_consumedFrameSeq.store(seq, std::memory_order_release);
+        m_presentedFrames.fetch_add(1U, std::memory_order_relaxed);
     }
     m_dirty = false;
     m_renderedNewFrame = true;
@@ -987,7 +909,7 @@ void FrontendSyncEngine::cancelInGameShowcaseSession() {
 bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
     size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     if (pixels == 0) return false;
-    if (m_streamFrames[0] != nullptr && m_streamFramePixels == pixels) {
+    if (m_streamFrames[0] != nullptr && m_streamIoScratch != nullptr && m_streamFramePixels == pixels) {
         return true;
     }
     freeStreamBuffersSafely();
@@ -998,24 +920,42 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
     if (hasPsram) {
         m_streamFrames[0] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_streamFrames[1] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        m_streamIoScratch = static_cast<char*>(heap_caps_malloc(STREAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!m_streamIoScratch) {
+            m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
+        }
     } else {
-        // Classic ESP32 (`esp32dev`): allocate a single 8 KB frame buffer (`m_streamFrames[0]`) for in-place
-        // `DMDZ` / `DMDS` decoding so 8-bit HUB75 DMA stays pinned with plenty of internal 8-bit DRAM headroom.
+        // Classic ESP32 (`esp32dev`): allocate a single 8 KB frame buffer (`m_streamFrames[0]`) + 1.4 KB I/O
+        // scratch in LIFO order so 8-bit HUB75 DMA stays pinned with zero internal DRAM fragmentation.
         size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (frameBytes <= 16384U && free8 >= frameBytes + 6144U && largest8 >= frameBytes) {
+        if (frameBytes <= 16384U &&
+            free8 >= (frameBytes + STREAM_IO_SCRATCH_BYTES + 4608U) &&
+            largest8 >= frameBytes) {
             m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
+            if (m_streamFrames[0]) {
+                m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
+            }
         }
     }
 #else
     m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
     m_streamFrames[1] = static_cast<uint16_t*>(malloc(frameBytes));
+    m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
 #endif
 
-    if (!m_streamFrames[0]) {
+    if (!m_streamFrames[0] || !m_streamIoScratch) {
+        if (m_streamIoScratch) {
+            free(m_streamIoScratch);
+            m_streamIoScratch = nullptr;
+        }
         if (m_streamFrames[1]) {
             free(m_streamFrames[1]);
             m_streamFrames[1] = nullptr;
+        }
+        if (m_streamFrames[0]) {
+            free(m_streamFrames[0]);
+            m_streamFrames[0] = nullptr;
         }
         m_streamFramePixels = 0;
         return false;
@@ -1024,6 +964,7 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
     if (m_streamFrames[1]) {
         memset(m_streamFrames[1], 0, frameBytes);
     }
+    m_streamIoScratch[0] = '\0';
     m_streamFramePixels = pixels;
     return true;
 }
@@ -1039,7 +980,12 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
         vTaskDelay(pdMS_TO_TICKS(18));
 #endif
     }
-    for (int i = 0; i < 2; ++i) {
+    // Strict LIFO teardown (`m_streamIoScratch` -> `m_streamFrames[1]` -> `m_streamFrames[0]`)
+    if (m_streamIoScratch) {
+        free(m_streamIoScratch);
+        m_streamIoScratch = nullptr;
+    }
+    for (int i = 1; i >= 0; --i) {
         if (m_streamFrames[i]) {
             free(m_streamFrames[i]);
             m_streamFrames[i] = nullptr;
@@ -1057,23 +1003,19 @@ void FrontendSyncEngine::deleteShowcaseQueueItemHttp(
     if (!resolvedServerUrl || !syncClientId || !queueId || queueId[0] == '\0') return;
     char host[96] = "";
     uint16_t port = 8890;
-    bool isHttps = false;
-    if (!parseUrlHostAndPort(resolvedServerUrl, 8890, host, sizeof(host), port, isHttps)) return;
+    if (!net::parseEndpointHostAndPort(resolvedServerUrl, 8890, host, sizeof(host), port, nullptr)) return;
+    if (!net::ShowcaseDiscovery::resolveHostInPlace(host, sizeof(host), port)) return;
 
-    WiFiClient cli;
-    if (!cli.connect(host, port, 800)) return;
-    cli.printf(
-        "DELETE /api/v1/clients/%s/queue/%s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
+    char deletePath[160];
+    const int n = snprintf(
+        deletePath,
+        sizeof(deletePath),
+        "/api/v1/clients/%s/queue/%s",
         syncClientId,
-        queueId,
-        host,
-        port
+        queueId
     );
-    uint32_t t0 = millis();
-    while (cli.connected() && !cli.available() && (millis() - t0) < 300U) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    cli.stop();
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(deletePath)) return;
+    net::sendHttpDeleteOneShotAbort(host, port, deletePath, 800U, 300U);
 #else
     (void)resolvedServerUrl;
     (void)syncClientId;
@@ -1083,138 +1025,131 @@ void FrontendSyncEngine::deleteShowcaseQueueItemHttp(
 
 bool FrontendSyncEngine::streamReadyItemOnce(
     const char* resolvedServerUrl,
+    const char* syncClientId,
     const char* itemId,
     uint32_t jobToken,
     uint16_t expectedW,
-    uint16_t expectedH
+    uint16_t expectedH,
+    uint32_t configuredStreamMs
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!resolvedServerUrl || !itemId || itemId[0] == '\0') return false;
-    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
     if (!allocateStreamBuffers(expectedW, expectedH)) {
         LOGW("RetroFrontend", "Insufficient memory for %ux%u In-Game Showcase stream; keeping marquee.", expectedW, expectedH);
         return false;
     }
 
-    net::SecureHttpOptions httpOpts;
-    httpOpts.ownerId = net::OWNER_INGAME_SYNC;
-    httpOpts.requestTimeoutMs = 3500;
-    httpOpts.keepAlive = false;
-
-    String streamUrl = String(resolvedServerUrl) + "/api/v1/games/stream/" + itemId + ".rgb565.stream?purge=false&paced=1&codec=dmdz1";
-    auto resp = net::SecureHttpClient::get(streamUrl, httpOpts);
-    if (!resp.ok()) {
+    char streamPath[224];
+    const int pathLen = snprintf(
+        streamPath,
+        sizeof(streamPath),
+        "/api/v1/games/stream/%s.rgb565.stream?purge=false&paced=1&codec=dmdz1",
+        itemId
+    );
+    if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(streamPath)) {
         return false;
     }
 
-    Stream& st = resp.stream();
-    uint8_t hdr[16];
-    core::drawing::DmdzStreamHeader parsedHdr;
-    if (!readExactTokenAware(st, hdr, sizeof(hdr), m_playSessionToken, jobToken, m_workerStopRequested, 2500) ||
-        !core::drawing::DmdzStreamDecoder::parseHeader(hdr, parsedHdr)) {
-        return false;
+    if (m_inGameEngine) {
+        m_inGameEngine->resetStreamTelemetry();
     }
 
-    uint8_t fps = parsedHdr.fps;
-    uint16_t w = parsedHdr.width;
-    uint16_t h = parsedHdr.height;
-    uint16_t totalFrames = parsedHdr.totalFrames;
-    size_t framePixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    size_t frameBytes = framePixels * sizeof(uint16_t);
-    if (framePixels == 0 || framePixels > m_streamFramePixels || totalFrames == 0) {
-        return false;
-    }
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    struct StreamCallbackCtx {
+        FrontendSyncEngine* self;
+        uint32_t expectedToken;
+        bool hasPsram;
+    } cbCtx{this, jobToken, hasPsram};
 
-    core::drawing::DmdzStreamDecoder dmdzDec;
-    if (parsedHdr.isDmdz) {
-        dmdzDec.init(w, h);
-    }
-
-    const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(fps));
-    uint32_t scheduleT0 = 0U;
-    uint32_t publishedOnClock = 0U;
-    const bool singleBuffer = (m_streamFrames[1] == nullptr) || parsedHdr.isDmdz;
-
-    for (uint16_t f = 0; f < totalFrames; ++f) {
-        if (m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_playSessionToken.load(std::memory_order_acquire) != jobToken) {
-            return false;
+    auto checkStopFn = [](void* rawCtx) -> net::StreamStopReason {
+        const auto* c = static_cast<const StreamCallbackCtx*>(rawCtx);
+        if (c->self->m_workerStopRequested.load(std::memory_order_acquire) ||
+            c->self->m_playSessionToken.load(std::memory_order_acquire) != c->expectedToken) {
+            return net::StreamStopReason::Deactivated;
         }
-
-        uint16_t* dst = singleBuffer ? m_streamFrames[0] : m_streamFrames[f & 1U];
-        if (singleBuffer && m_inGameEngine && f > 0U) {
-            m_inGameEngine->beginFrameUpdate();
+        if (!c->hasPsram && WebUiSyncEngine::isRequested()) {
+            return net::StreamStopReason::WebUiYield;
         }
+        return net::StreamStopReason::Continue;
+    };
 
-        bool okFrame = false;
-        if (parsedHdr.isDmdz) {
-            uint8_t lenBytes[2] = {0, 0};
-            if (readExactTokenAware(st, lenBytes, 2U, m_playSessionToken, jobToken, m_workerStopRequested, 2500)) {
-                const uint16_t payloadLen = static_cast<uint16_t>(lenBytes[0]) | (static_cast<uint16_t>(lenBytes[1]) << 8);
-                dmdzDec.beginFrame(payloadLen);
-                uint8_t decChunk[256];
-                size_t rem = payloadLen;
-                okFrame = true;
-                while (rem > 0U) {
-                    const size_t take = (rem < sizeof(decChunk)) ? rem : sizeof(decChunk);
-                    if (!readExactTokenAware(st, decChunk, take, m_playSessionToken, jobToken, m_workerStopRequested, 2500) ||
-                        !dmdzDec.feed(decChunk, take, dst)) {
-                        okFrame = false;
-                        break;
-                    }
-                    rem -= take;
-                }
-                if (okFrame && !dmdzDec.finishFrame()) {
-                    okFrame = false;
-                }
+    net::DmdzStreamParams params{};
+    params.serverUrl = resolvedServerUrl;
+    params.streamPath = streamPath;
+    params.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
+    params.logTag = "RetroFrontend";
+    params.ownerId = net::OWNER_INGAME_SYNC;
+    params.wsCredits = hasPsram ? 8U : 2U;
+    params.panelWidth = expectedW;
+    params.panelHeight = expectedH;
+    params.configuredStreamMs = configuredStreamMs;
+    params.maxFramePixels = m_streamFramePixels;
+    params.frameBuf0 = m_streamFrames[0];
+    params.frameBuf1 = m_streamFrames[1];
+    params.ioScratch = m_streamIoScratch;
+    params.ioScratchCap = STREAM_IO_SCRATCH_BYTES;
+    params.userCtx = &cbCtx;
+    params.checkStop = checkStopFn;
+
+    params.onBeginFrameWrite = [](void* rawCtx, uint16_t frameIdx, uint16_t* dstBuf, bool singleBuffer, uint32_t safeFps) {
+        (void)dstBuf;
+        auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
+        InGameShowcaseEngine* eng = c->self->m_inGameEngine;
+        if (!singleBuffer || !eng || frameIdx == 0U) {
+            return;
+        }
+        const uint32_t handoffBudgetMs = std::max<uint32_t>(frameIdx == 1U ? 36U : 18U, 1000U / safeFps);
+        const uint32_t handoffT0 = millis();
+        while (!c->self->m_workerStopRequested.load(std::memory_order_acquire) &&
+               c->self->m_playSessionToken.load(std::memory_order_acquire) == c->expectedToken &&
+               (c->hasPsram || !WebUiSyncEngine::isRequested()) &&
+               eng->consumedFrameSeq() != eng->currentFrameSeq() &&
+               (millis() - handoffT0) < handoffBudgetMs) {
+            vTaskDelay(1);
+        }
+        eng->beginFrameUpdate();
+    };
+
+    params.onFinishFrameWrite = [](
+        void* rawCtx,
+        uint16_t frameIdx,
+        const uint16_t* dstBuf,
+        uint16_t width,
+        uint16_t height,
+        bool okFrame,
+        bool singleBuffer
+    ) {
+        auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
+        InGameShowcaseEngine* eng = c->self->m_inGameEngine;
+        if (!okFrame) {
+            if (singleBuffer && eng) {
+                eng->endFrameUpdateWithoutPublish();
             }
-        } else {
-            okFrame = readExactTokenAware(st, reinterpret_cast<uint8_t*>(dst), frameBytes, m_playSessionToken, jobToken, m_workerStopRequested, 2500);
+            return;
         }
-
-        if (!okFrame ||
-            m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_playSessionToken.load(std::memory_order_acquire) != jobToken) {
-            if (singleBuffer && m_inGameEngine) {
-                m_inGameEngine->endFrameUpdateWithoutPublish();
-            }
-            return false;
+        if (eng) {
+            eng->publishFrame(dstBuf, width, height);
         }
-
-        const uint32_t now = millis();
-        if (publishedOnClock == 0U) {
-            scheduleT0 = now;
-        } else {
-            const uint32_t due = scheduleT0 + static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
-            const int32_t lagMs = static_cast<int32_t>(now - due);
-            if (lagMs > static_cast<int32_t>(1000U / safeFps)) {
-                scheduleT0 = now - static_cast<uint32_t>((static_cast<uint64_t>(publishedOnClock) * 1000ULL) / safeFps);
-            } else {
-                while (!m_workerStopRequested.load(std::memory_order_acquire) &&
-                       m_playSessionToken.load(std::memory_order_acquire) == jobToken &&
-                       static_cast<int32_t>(due - millis()) > 0) {
-                    const uint32_t rem = due - millis();
-                    vTaskDelay(pdMS_TO_TICKS(rem > 2U ? (rem - 1U) : 1U));
-                }
-            }
-        }
-
-        if (m_inGameEngine) {
-            m_inGameEngine->publishFrame(dst, w, h);
-        }
-        ++publishedOnClock;
-        if (f == 0) {
+        if (frameIdx == 0U) {
             // Late Preemption: Frame 0 is now buffered and published -> preempt marquee cleanly!
-            m_wantsInGameDisplay.store(true, std::memory_order_release);
+            c->self->m_wantsInGameDisplay.store(true, std::memory_order_release);
         }
-    }
-    return true;
+    };
+
+    params.getPresentedFrames = [](void* rawCtx) -> uint32_t {
+        const auto* c = static_cast<const StreamCallbackCtx*>(rawCtx);
+        return c->self->m_inGameEngine ? c->self->m_inGameEngine->presentedFrames() : 0U;
+    };
+
+    return net::DmdzStreamClient::stream(params);
 #else
     (void)resolvedServerUrl;
+    (void)syncClientId;
     (void)itemId;
     (void)jobToken;
     (void)expectedW;
     (void)expectedH;
+    (void)configuredStreamMs;
     return false;
 #endif
 }
@@ -1431,118 +1366,151 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                     qOpts.requestTimeoutMs = 3500;
                     qOpts.keepAlive = false;
 
-                    String enqueueUrl = String(baseServerUrl) + "/api/v1/clients/" + syncClientId + "/queue/async";
-                    auto qResp = net::SecureHttpClient::post(enqueueUrl, "application/json", postBody, qOpts);
-                    if (qResp.ok()) {
-                        DynamicJsonDocument qDoc(2048);
-                        if (deserializeJson(qDoc, qResp.stream()) == DeserializationError::Ok) {
-                            JsonVariantConst itemVar = qDoc.containsKey("item")
-                                ? qDoc["item"].as<JsonVariantConst>()
-                                : qDoc.as<JsonVariantConst>();
-                            const char* qId = itemVar["queue_id"] | "";
-                            const char* qStatus = itemVar["status"] | "";
-                            const char* qItemId = itemVar["item_id"] | "";
+                    char endpointUrl[192];
+                    snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue/async", baseServerUrl, syncClientId);
 
-                            if (qId[0] != '\0') {
-                                copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
-                                copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
-                                copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
+                    char readyItemId[80] = "";
+                    bool enqueuedOk = false;
+                    {
+                        auto qResp = net::SecureHttpClient::post(endpointUrl, "application/json", postBody, qOpts);
+                        if (qResp.ok()) {
+                            StaticJsonDocument<192> qFilter;
+                            qFilter["queue_id"] = true;
+                            qFilter["status"] = true;
+                            qFilter["item_id"] = true;
+                            qFilter["item"]["queue_id"] = true;
+                            qFilter["item"]["status"] = true;
+                            qFilter["item"]["item_id"] = true;
 
-                                if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
-                                    m_workerStopRequested.load(std::memory_order_acquire)) {
-                                    cleanupActiveQueue();
-                                } else {
-                                    String readyItemId = (strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0)
-                                        ? String(qItemId)
-                                        : String("");
+                            StaticJsonDocument<384> qDoc;
+                            if (deserializeJson(qDoc, qResp.stream(), DeserializationOption::Filter(qFilter)) == DeserializationError::Ok) {
+                                JsonVariantConst itemVar = qDoc.containsKey("item")
+                                    ? qDoc["item"].as<JsonVariantConst>()
+                                    : qDoc.as<JsonVariantConst>();
+                                const char* qId = itemVar["queue_id"] | "";
+                                const char* qStatus = itemVar["status"] | "";
+                                const char* qItemId = itemVar["item_id"] | "";
 
-                                    // Wait for async preparation while marquee stays undisturbed on the DMD
-                                    uint32_t waitStartMs = millis();
-                                    String pollUrl = String(baseServerUrl) + "/api/v1/clients/" + syncClientId + "/queue";
-                                    while (readyItemId.length() == 0 &&
-                                           !m_workerStopRequested.load(std::memory_order_acquire) &&
-                                           m_playSessionToken.load(std::memory_order_acquire) == job.token &&
-                                           (millis() - waitStartMs) < 60000U) {
-                                        for (int w = 0; w < 15; ++w) {
-                                            if (m_workerStopRequested.load(std::memory_order_acquire) ||
-                                                m_playSessionToken.load(std::memory_order_acquire) != job.token ||
-                                                m_readyWakeupHint.exchange(false, std::memory_order_acq_rel)) {
-                                                break;
-                                            }
-                                            vTaskDelay(pdMS_TO_TICKS(50));
-                                        }
-                                        if (m_workerStopRequested.load(std::memory_order_acquire) ||
-                                            m_playSessionToken.load(std::memory_order_acquire) != job.token) {
-                                            break;
-                                        }
-
-                                        auto pResp = net::SecureHttpClient::get(pollUrl, qOpts);
-                                        if (pResp.ok()) {
-                                            DynamicJsonDocument pDoc(3072);
-                                            if (deserializeJson(pDoc, pResp.stream()) == DeserializationError::Ok) {
-                                                JsonArrayConst itemsArr = pDoc.containsKey("items")
-                                                    ? pDoc["items"].as<JsonArrayConst>()
-                                                    : pDoc.as<JsonArrayConst>();
-                                                bool foundInQueue = false;
-                                                for (JsonObjectConst it : itemsArr) {
-                                                    const char* itQid = it["queue_id"] | "";
-                                                    if (strcmp(itQid, activeQueueId) == 0) {
-                                                        foundInQueue = true;
-                                                        const char* st = it["status"] | "";
-                                                        const char* iid = it["item_id"] | "";
-                                                        if ((strcmp(st, "ready") == 0 || strcmp(st, "playing") == 0) && iid[0] != '\0') {
-                                                            readyItemId = String(iid);
-                                                        } else if (strcmp(st, "error") == 0) {
-                                                            foundInQueue = false;
-                                                        }
-                                                        break;
-                                                    }
-                                                }
-                                                if (!foundInQueue) break;
-                                            }
-                                        }
+                                if (qId[0] != '\0') {
+                                    copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
+                                    copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
+                                    copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
+                                    if ((strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0) && qItemId[0] != '\0') {
+                                        copySafeCStr(readyItemId, sizeof(readyItemId), qItemId);
                                     }
-
-                                    // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
-                                    while (readyItemId.length() > 0 &&
-                                           !m_workerStopRequested.load(std::memory_order_acquire) &&
-                                           m_playSessionToken.load(std::memory_order_acquire) == job.token) {
-                                        bool playedOk = streamReadyItemOnce(
-                                            baseServerUrl,
-                                            readyItemId.c_str(),
-                                            job.token,
-                                            targetW,
-                                            targetH
-                                        );
-                                        if (!playedOk ||
-                                            m_workerStopRequested.load(std::memory_order_acquire) ||
-                                            m_playSessionToken.load(std::memory_order_acquire) != job.token) {
-                                            break;
-                                        }
-
-                                        readWorkerCfg(wcfg);
-                                        if (strcasecmp(wcfg.cycleMode, "loop") == 0) {
-                                            continue;
-                                        } else if (strcasecmp(wcfg.cycleMode, "alternating") == 0) {
-                                            // Yield display back to Pixelcade marquee (TransitionMode::RESUME) for marqueeIntervalSec
-                                            m_wantsInGameDisplay.store(false, std::memory_order_release);
-                                            uint32_t pauseMs = static_cast<uint32_t>(wcfg.marqueeIntervalSec) * 1000U;
-                                            uint32_t pauseT0 = millis();
-                                            while (!m_workerStopRequested.load(std::memory_order_acquire) &&
-                                                   m_playSessionToken.load(std::memory_order_acquire) == job.token &&
-                                                   (millis() - pauseT0) < pauseMs) {
-                                                vTaskDelay(pdMS_TO_TICKS(50));
-                                            }
-                                            continue;
-                                        } else {
-                                            // `once`: release display back to marquee and clean up queue item
-                                            break;
-                                        }
-                                    }
-                                    cleanupActiveQueue();
-                                    freeStreamBuffersSafely();
+                                    enqueuedOk = true;
                                 }
                             }
+                        }
+                    }
+
+                    if (enqueuedOk) {
+                        if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                            m_workerStopRequested.load(std::memory_order_acquire)) {
+                            cleanupActiveQueue();
+                        } else {
+                            // Wait for async preparation while marquee stays undisturbed on the DMD
+                            uint32_t waitStartMs = millis();
+                            snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue", baseServerUrl, syncClientId);
+                            while (readyItemId[0] == '\0' &&
+                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
+                                   m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                                   (millis() - waitStartMs) < 60000U) {
+                                for (int w = 0; w < 15; ++w) {
+                                    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                        m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                                        m_readyWakeupHint.exchange(false, std::memory_order_acq_rel)) {
+                                        break;
+                                    }
+                                    vTaskDelay(pdMS_TO_TICKS(50));
+                                }
+                                if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                    break;
+                                }
+
+                                bool keepPolling = true;
+                                {
+                                    auto pResp = net::SecureHttpClient::get(endpointUrl, qOpts);
+                                    if (pResp.ok()) {
+                                        StaticJsonDocument<128> pFilter;
+                                        pFilter["items"][0]["queue_id"] = true;
+                                        pFilter["items"][0]["status"] = true;
+                                        pFilter["items"][0]["item_id"] = true;
+
+                                        StaticJsonDocument<768> pDoc;
+                                        if (deserializeJson(pDoc, pResp.stream(), DeserializationOption::Filter(pFilter)) == DeserializationError::Ok) {
+                                            JsonArrayConst itemsArr = pDoc["items"].as<JsonArrayConst>();
+                                            bool foundInQueue = false;
+                                            for (JsonObjectConst it : itemsArr) {
+                                                const char* itQid = it["queue_id"] | "";
+                                                if (strcmp(itQid, activeQueueId) == 0) {
+                                                    foundInQueue = true;
+                                                    const char* st = it["status"] | "";
+                                                    const char* iid = it["item_id"] | "";
+                                                    if ((strcmp(st, "ready") == 0 || strcmp(st, "playing") == 0) && iid[0] != '\0') {
+                                                        copySafeCStr(readyItemId, sizeof(readyItemId), iid);
+                                                    } else if (strcmp(st, "error") == 0) {
+                                                        foundInQueue = false;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (!foundInQueue) keepPolling = false;
+                                        }
+                                    }
+                                }
+                                if (!keepPolling) break;
+                            }
+
+                            // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
+                            while (readyItemId[0] != '\0' &&
+                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
+                                   m_playSessionToken.load(std::memory_order_acquire) == job.token) {
+                                uint32_t estStreamMs =
+                                    (wcfg.includeCardIntro ? 8000U : 0U) +
+                                    (wcfg.jacketPanorama ? 5000U : 0U) +
+                                    (wcfg.marqueePanorama ? 5000U : 0U) +
+                                    (static_cast<uint32_t>(wcfg.snapshotPanoramaCount) * 5000U) +
+                                    (wcfg.showVideo ? (static_cast<uint32_t>(wcfg.videoMaxDurationS) * 1000U) : 0U);
+                                if (estStreamMs < 12000U) estStreamMs = 12000U;
+
+                                bool playedOk = streamReadyItemOnce(
+                                    baseServerUrl,
+                                    syncClientId,
+                                    readyItemId,
+                                    job.token,
+                                    targetW,
+                                    targetH,
+                                    estStreamMs
+                                );
+                                if (!playedOk ||
+                                    m_workerStopRequested.load(std::memory_order_acquire) ||
+                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                    break;
+                                }
+
+                                readWorkerCfg(wcfg);
+                                if (strcasecmp(wcfg.cycleMode, "loop") == 0) {
+                                    continue;
+                                } else if (strcasecmp(wcfg.cycleMode, "alternating") == 0) {
+                                    // Yield display back to Pixelcade marquee (TransitionMode::RESUME) for marqueeIntervalSec
+                                    m_wantsInGameDisplay.store(false, std::memory_order_release);
+                                    uint32_t pauseMs = static_cast<uint32_t>(wcfg.marqueeIntervalSec) * 1000U;
+                                    uint32_t pauseT0 = millis();
+                                    while (!m_workerStopRequested.load(std::memory_order_acquire) &&
+                                           m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                                           (millis() - pauseT0) < pauseMs) {
+                                        vTaskDelay(pdMS_TO_TICKS(50));
+                                    }
+                                    continue;
+                                } else {
+                                    // `once`: release display back to marquee and clean up queue item
+                                    break;
+                                }
+                            }
+                            cleanupActiveQueue();
+                            freeStreamBuffersSafely();
                         }
                     }
                 }

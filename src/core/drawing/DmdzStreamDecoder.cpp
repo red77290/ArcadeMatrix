@@ -219,7 +219,8 @@ bool buildDmdzWebSocketPath(
     const char* rawPath,
     const char* clientId,
     char* outWsPath,
-    size_t outCap
+    size_t outCap,
+    uint8_t credits
 ) {
     if (!outWsPath || outCap == 0U) {
         return false;
@@ -275,28 +276,36 @@ bool buildDmdzWebSocketPath(
         }
     }
 
+    const uint8_t clampedCredits = (credits < 1U) ? 1U : (credits > 16U ? 16U : credits);
+    char creditsParam[16] = "";
+    if (clampedCredits != 2U) {
+        snprintf(creditsParam, sizeof(creditsParam), "&credits=%u", static_cast<unsigned>(clampedCredits));
+    }
+
     const int n = (clientId && clientId[0] != '\0')
         ? snprintf(
               outWsPath,
               outCap,
-              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s&client_id=%s%s",
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s&client_id=%s%s%s",
               static_cast<int>(domainLen),
               domainStart,
               static_cast<int>(itemLen),
               itemStart,
               purge ? "true" : "false",
               clientId,
+              creditsParam,
               apiKeyParam
           )
         : snprintf(
               outWsPath,
               outCap,
-              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s%s",
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s%s%s",
               static_cast<int>(domainLen),
               domainStart,
               static_cast<int>(itemLen),
               itemStart,
               purge ? "true" : "false",
+              creditsParam,
               apiKeyParam
           );
     if (n <= 0 || static_cast<size_t>(n) >= outCap) {
