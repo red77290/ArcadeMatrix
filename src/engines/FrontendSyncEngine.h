@@ -11,16 +11,19 @@
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
 #include "MessageEngine.h"
+#include "showcase/ShowcaseStreamPlayer.h"
 
 class IDrawingSurface;
 
 /**
  * @class InGameShowcaseEngine
- * @brief Lightweight lock-free RGB565 frame presenter for DisplaySourceId::INGAME_SHOWCASE.
+ * @brief Lightweight lock-free presenter for DisplaySourceId::INGAME_SHOWCASE.
  *
- * Strictly enforces all 20 real-time architectural invariants on Core 1:
+ * Strictly enforces all real-time architectural invariants on Core 1:
  * - Zero dynamic allocation, zero String, and zero std::mutex on Core 1.
- * - Renders exclusively via IDrawingSurface::blit565 (strict HUB75 DMA isolation).
+ * - Shares `engines::showcase::ShowcaseStreamPlayer` with `MediaShowcaseBase` for Zero-Copy
+ *   `ScopedCanvasGuard` in-place `DMDZ` v2 (`FRAME_PAL8` + RLE/LZ/Scroll2D) decoding across
+ *   all 3 adaptive tiers (`sram`, `psram`, `psram_hd`), with rotated `IDrawingSurface::blit565` fallback.
  * - Allocation-free and wait-free deactivate() / pause() / resume().
  */
 class InGameShowcaseEngine : public IEngine {
@@ -41,6 +44,7 @@ public:
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool selfPaced() const override { return true; }
+    bool allowsOverlay() const override { return false; }
     uint32_t nextFrameDueInMs() const override;
     bool allowRotation() const override { return false; }
 
@@ -93,7 +97,9 @@ public:
     }
 
     uint32_t presentedFrames() const {
-        return m_presentedFrames.load(std::memory_order_relaxed);
+        return m_streamPlayer.isCore1Streaming()
+            ? m_streamPlayer.presentedFrames()
+            : m_presentedFrames.load(std::memory_order_relaxed);
     }
 
     void setNextStreamFrameDueMs(uint32_t dueMs) {
@@ -103,15 +109,20 @@ public:
     void resetStreamTelemetry() {
         m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
         m_presentedFrames.store(0U, std::memory_order_release);
+        m_streamPlayer.resetPresentedFrames();
     }
 
     void waitRenderBlitQuiescent() const;
 
+    engines::showcase::ShowcaseStreamPlayer& streamPlayer() { return m_streamPlayer; }
+    const engines::showcase::ShowcaseStreamPlayer& streamPlayer() const { return m_streamPlayer; }
+    const IDrawingSurface* surface() const { return m_surface; }
     uint16_t surfaceWidth() const { return m_width; }
     uint16_t surfaceHeight() const { return m_height; }
 
 private:
     IDrawingSurface* m_surface = nullptr;
+    engines::showcase::ShowcaseStreamPlayer m_streamPlayer;
     uint16_t m_width = 128;
     uint16_t m_height = 32;
 
@@ -287,16 +298,10 @@ private:
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
-    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 5632U;
-    static constexpr size_t MID_STREAM_IO_SCRATCH_BYTES = 4608U;
-    static constexpr size_t FALLBACK_STREAM_IO_SCRATCH_BYTES = 3072U;
-    static constexpr size_t MIN_STREAM_IO_SCRATCH_BYTES = 1472U;
-    static constexpr size_t PSRAM_STREAM_IO_SCRATCH_BYTES = 8192U;
+    static constexpr size_t STREAM_SESSION_SCRATCH_BYTES = 1536U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
-    uint16_t* m_streamFrames[2] = {nullptr, nullptr};
     char* m_streamIoScratch = nullptr;
     size_t m_streamIoScratchCap = 0;
-    size_t m_streamFramePixels = 0;
 
     static void showcaseWorkerTaskFunc(void* param);
     void showcaseWorkerLoop();
@@ -306,7 +311,7 @@ private:
     void syncWorkerConfigSlot();
     void startInGameShowcaseSession(const String& cleanSystem, const String& rawGame);
     void cancelInGameShowcaseSession();
-    bool allocateStreamBuffers(uint16_t w, uint16_t h);
+    bool ensureStreamScratchAllocated();
     void freeStreamBuffersSafely();
     bool streamReadyItemOnce(
         const char* resolvedServerUrl,

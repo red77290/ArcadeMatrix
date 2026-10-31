@@ -10,6 +10,7 @@
 #include "core/drawing/DmdzStreamDecoder.h"
 #include "core/net/DmdzStreamClient.h"
 #include "core/net/ShowcaseDiscovery.h"
+#include "engines/showcase/ShowcaseStreamPlayer.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 #include "engines/mqttdata/GraphPayload.h"
@@ -3392,6 +3393,153 @@ void test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure(void) 
     TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
 }
 
+void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
+    using core::drawing::DmdzStreamDecoder;
+    using engines::showcase::ShowcaseStreamPlayer;
+
+    class NativeCanvasSurface8x4 : public IDrawingSurface {
+    public:
+        uint16_t pixels[8 * 4];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        uint32_t blits = 0U;
+        NativeCanvasSurface8x4() : IDrawingSurface(8, 4, 8, 4) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 8 && y >= 0 && y < 4) {
+                pixels[y * 8 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0U; i < 32U; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            ++blits;
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 8U, 4U, 8U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    // 1. Zero-Copy `ScopedCanvasGuard` (`rotation == 0`, `fallbackFrameBuffer() == nullptr`)
+    //    including incremental oversized SPSC frame (`2 + payLen > ringCap - 1600`) + 2D scroll `FRAME_PAL8`
+    NativeCanvasSurface8x4 surf;
+    ShowcaseStreamPlayer player;
+    TEST_ASSERT_TRUE(player.probeZeroCopyOnCore1(&surf, 8U, 4U));
+    TEST_ASSERT_TRUE(player.isZeroCopyEligible());
+    TEST_ASSERT_NULL(player.fallbackFrameBuffer());
+
+    TEST_ASSERT_TRUE(player.ensureDecoderAllocated(false));
+    // Small 64-byte SPSC ring so a 67-byte `kFrameRaw` (`2 + 65 > 64`) MUST stream incrementally across 2 slices!
+    TEST_ASSERT_TRUE(player.allocateSpscRing(64U, false));
+    std::vector<uint8_t> rawWire;
+    const uint16_t rawPayLen = 1U + 32U * 2U; // 65 B > 64 B ring!
+    rawWire.push_back(static_cast<uint8_t>(rawPayLen & 0xFFU));
+    rawWire.push_back(static_cast<uint8_t>(rawPayLen >> 8));
+    rawWire.push_back(DmdzStreamDecoder::kFrameRaw);
+    for (uint16_t k = 0U; k < 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x3000U + k);
+        rawWire.push_back(static_cast<uint8_t>(px & 0xFFU));
+        rawWire.push_back(static_cast<uint8_t>(px >> 8));
+    }
+
+    // Push first 40 B, start incremental Core 1 decode, then push remaining 27 B + a `FRAME_PAL8` scroll frame
+    TEST_ASSERT_EQUAL_UINT32(40U, static_cast<uint32_t>(player.spscRing().push(rawWire.data(), 40U)));
+    player.armSpscStreamForTest(8U, 4U, 2U, true, 2U, 20U);
+    TEST_ASSERT_TRUE(player.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U)); // Partial frame consumed (`m_core1DecPartialRem > 0`)
+    TEST_ASSERT_EQUAL_UINT32(0U, player.presentedFrames());
+
+    TEST_ASSERT_EQUAL_UINT32(
+        rawWire.size() - 40U,
+        static_cast<uint32_t>(player.spscRing().push(rawWire.data() + 40U, rawWire.size() - 40U))
+    );
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U)); // Completes Frame 0 Zero-Copy!
+    TEST_ASSERT_NULL(player.fallbackFrameBuffer());
+    TEST_ASSERT_EQUAL_UINT32(1U, player.presentedFrames());
+    TEST_ASSERT_EQUAL_UINT32(1U, surf.extDraws);
+    TEST_ASSERT_EQUAL_UINT32(0U, surf.blits);
+    TEST_ASSERT_EQUAL_HEX16(0x3000U, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x301FU, surf.pixels[31]);
+
+    // Frame 1: `FRAME_PAL8` with `hasScroll2D` (`dx=+1, dy=+1`)
+    const uint8_t palScrollWire[] = {
+        8U, 0U, // payLen = 8
+        DmdzStreamDecoder::kFramePal8,
+        static_cast<uint8_t>(0x80U | 0U), // hasScroll2D = true, palCount = 1
+        1U, 1U,                           // dx = +1, dy = +1 -> pixels[0] = old pixels[9] (0x3009)
+        0xFEU, 0xCAU,                     // m_pal[0] = 0xCAFE
+        static_cast<uint8_t>(0x80U | 30U), // PAL_SKIP 31 (pixels 0..30)
+        0x00U                             // PAL_INDEX 0 -> pixels[31] = 0xCAFE
+    };
+    TEST_ASSERT_EQUAL_UINT32(
+        sizeof(palScrollWire),
+        static_cast<uint32_t>(player.spscRing().push(palScrollWire, sizeof(palScrollWire)))
+    );
+    advanceVirtualMillis(55U);
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_EQUAL_UINT32(2U, player.presentedFrames());
+    TEST_ASSERT_TRUE(player.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x3009U, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0xCAFEU, surf.pixels[31]);
+
+    // 2. Rotated surface (`rotation == 1`) disables Zero-Copy and routes through `m_fallbackFrame565` + `blit565`
+    surf.setRotation(1U);
+    player.onGeometryChanged(surf.getRotation());
+    TEST_ASSERT_FALSE(player.isZeroCopyEligible());
+    TEST_ASSERT_TRUE(player.acquireFallbackFrameBuffer(8U, 4U, false));
+    TEST_ASSERT_NOT_NULL(player.fallbackFrameBuffer());
+
+    // 3. `PsramPreload` progressive download (`Tier 2` / `Tier 3` `psram_hd`): Core 1 waits when download cursor
+    //    has not yet reached full frame, then presents as soon as Core 0 advances `bytesDownloaded`!
+    std::vector<uint8_t> preloadBlob(16U, 0U);
+    const uint8_t palSolid[] = {
+        5U, 0U,
+        DmdzStreamDecoder::kFramePal8,
+        0x00U,
+        0x1FU, 0x00U,                     // 0x001F blue
+        static_cast<uint8_t>(0xC0U | 30U) // PAL_RUN 32
+    };
+    preloadBlob.insert(preloadBlob.end(), palSolid, palSolid + sizeof(palSolid));
+    player.armPreloadStreamForTest(preloadBlob.data(), 18U, false, 8U, 4U, 2U, true, 1U, 20U); // Only 2B of frame downloaded
+    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_FALSE(player.isCore1StreamFinished());
+
+    player.updatePreloadProgressForTest(preloadBlob.size(), true);
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_EQUAL_UINT32(1U, surf.blits);
+    TEST_ASSERT_TRUE(player.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[31]);
+
+    player.releaseAll();
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3489,6 +3637,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path);
     RUN_TEST(test_dmdz_v2_frame_pal8_1_to_128_colors_scroll2d_and_profile_paths);
     RUN_TEST(test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure);
+    RUN_TEST(test_showcase_stream_player_zero_copy_rotated_fallback_and_preload);
 
     return UNITY_END();
 }

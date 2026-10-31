@@ -46,8 +46,12 @@ void copySafeStr(char* dst, size_t cap, const char* src) {
         dst[0] = '\0';
         return;
     }
-    strncpy(dst, src, cap - 1U);
-    dst[cap - 1U] = '\0';
+    size_t i = 0U;
+    while (i + 1U < cap && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
 }
 
 void appendRawToBuf(char* dst, size_t cap, size_t& pos, const char* str) {
@@ -520,9 +524,8 @@ void MediaShowcaseBase::onDisplayGeometryChanged(const DisplayGeometry& geometry
         clearLiveCardState();
         m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (geometry.rotation != 0U) {
-        m_zeroCopyCanvasEligible.store(false, std::memory_order_release);
-    }
+    m_streamPlayer.onGeometryChanged(geometry.rotation);
+    m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
     m_dirty = true;
 }
 
@@ -578,21 +581,7 @@ bool MediaShowcaseBase::resolveMqttBroker(
 }
 
 void MediaShowcaseBase::probeZeroCopyCanvasEligibility() {
-    bool eligible = false;
-    if (m_surface &&
-        m_surface->hasCanvas() &&
-        m_surface->getRotation() == 0 &&
-        m_surface->physicalWidth() == static_cast<int16_t>(m_width) &&
-        m_surface->physicalHeight() == static_cast<int16_t>(m_height)) {
-        ScopedCanvasGuard probe(m_surface);
-        if (probe.isValid() &&
-            probe.width() == m_width &&
-            probe.height() == m_height &&
-            (probe.stridePixels() == 0U || probe.stridePixels() == m_width)) {
-            eligible = true;
-        }
-    }
-    m_zeroCopyCanvasEligible.store(eligible, std::memory_order_release);
+    (void)m_streamPlayer.probeZeroCopyOnCore1(m_surface, m_width, m_height);
 }
 
 bool MediaShowcaseBase::allocateBuffers() {
@@ -618,22 +607,12 @@ bool MediaShowcaseBase::allocateBuffers() {
             m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
             m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
         }
-        void* decMem = heap_caps_malloc(sizeof(core::drawing::DmdzStreamDecoder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!decMem) {
-            decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
-        }
-        if (decMem) {
-            m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
-        }
+        (void)m_streamPlayer.ensureDecoderAllocated(true);
         if (!m_poster565) {
             m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         }
-        if (!m_zeroCopyCanvasEligible.load(std::memory_order_acquire)) {
-            const size_t frameBytes = m_framePixels * sizeof(uint16_t);
-            m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            if (m_frame565) {
-                memset(m_frame565, 0, frameBytes);
-            }
+        if (!m_streamPlayer.isZeroCopyEligible()) {
+            (void)m_streamPlayer.acquireFallbackFrameBuffer(m_width, m_height, true);
         }
     } else
 #endif
@@ -654,25 +633,17 @@ bool MediaShowcaseBase::allocateBuffers() {
                 }
             }
         }
-        void* decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
-        if (decMem) {
-            m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
-        }
+        (void)m_streamPlayer.ensureDecoderAllocated(false);
         m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     }
 #else
     m_hasPsram = true;
-    const size_t frameBytes = m_framePixels * sizeof(uint16_t);
-    m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-    if (m_frame565) {
-        memset(m_frame565, 0, frameBytes);
-    }
     m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     m_ioScratch = static_cast<char*>(malloc(PSRAM_IO_SCRATCH_BYTES));
     m_ioScratchCap = m_ioScratch ? PSRAM_IO_SCRATCH_BYTES : 0U;
-    void* decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
-    if (decMem) {
-        m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
+    (void)m_streamPlayer.ensureDecoderAllocated(true);
+    if (!m_streamPlayer.isZeroCopyEligible()) {
+        (void)m_streamPlayer.acquireFallbackFrameBuffer(m_width, m_height, true);
     }
 #endif
 
@@ -794,88 +765,12 @@ void MediaShowcaseBase::releaseStepCFrameBuffer() {
     }
 }
 
-bool MediaShowcaseBase::allocateSpscRingBuffer(size_t preferredBytes) {
-    freeSpscRingBuffer();
-#if defined(ESP32)
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    if (m_hasPsram) {
-        uint8_t* psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        if (!psBuf && preferredBytes > 65536U) {
-            preferredBytes = 65536U;
-            psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        }
-        if (!psBuf) {
-            return false;
-        }
-        m_spscRingStorage = psBuf;
-        m_spscRing.init(psBuf, preferredBytes);
-        return true;
-    }
-#endif
-
-    // Tier 1 (`profile="sram"`): try `10,240 B` keeping `>= 20 KB` free 8-bit heap for `esp_wifi`/lwIP,
-    // else `8,192 B`, else `6,144 B` / `4,096 B` step-down.
-    const size_t candidates[4] = {
-        SRAM_SPSC_HI_RING_BYTES,
-        SRAM_SPSC_DEFAULT_RING_BYTES,
-        SRAM_SPSC_LOW_RING_BYTES,
-        SRAM_SPSC_MIN_RING_BYTES
-    };
-    const size_t postAllocMinFree8[4] = {
-        20480U,
-        14336U,
-        10240U,
-        6144U
-    };
-    for (size_t i = 0U; i < 4U; ++i) {
-        const size_t cand = candidates[i];
-        if (cand > preferredBytes && i == 0U && preferredBytes > 0U) {
-            continue;
-        }
-        if (showcaseLargest8BitBlock() < cand) {
-            continue;
-        }
-        uint8_t* mem = static_cast<uint8_t*>(malloc(cand));
-        if (!mem) {
-            continue;
-        }
-        if (showcaseFree8BitHeap() >= postAllocMinFree8[i]) {
-            m_spscRingStorage = mem;
-            m_spscRing.init(mem, cand);
-            return true;
-        }
-        free(mem);
-    }
-    return false;
-#else
-    uint8_t* mem = static_cast<uint8_t*>(malloc(preferredBytes));
-    if (!mem) {
-        return false;
-    }
-    m_spscRingStorage = mem;
-    m_spscRing.init(mem, preferredBytes);
-    return true;
-#endif
-}
-
-void MediaShowcaseBase::freeSpscRingBuffer() {
-    m_spscRing.init(nullptr, 0U);
-    if (m_spscRingStorage) {
-        free(m_spscRingStorage);
-        m_spscRingStorage = nullptr;
-    }
-}
-
 void MediaShowcaseBase::freeBuffers() {
-    resetCore1StreamState();
+    m_streamPlayer.resetCore1StreamState();
     m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
     waitRenderBlitQuiescent();
-    freeSpscRingBuffer();
-    if (m_frame565Back) {
-        free(m_frame565Back);
-        m_frame565Back = nullptr;
-    }
+    m_streamPlayer.releaseAll();
     if (m_frame565) {
         free(m_frame565);
         m_frame565 = nullptr;
@@ -887,11 +782,6 @@ void MediaShowcaseBase::freeBuffers() {
         m_poster565 = nullptr;
     }
     m_posterAliasesFrame = false;
-    if (m_core1Decoder) {
-        m_core1Decoder->~DmdzStreamDecoder();
-        free(m_core1Decoder);
-        m_core1Decoder = nullptr;
-    }
     if (m_ioScratch) {
         free(m_ioScratch);
         m_ioScratch = nullptr;
@@ -901,21 +791,8 @@ void MediaShowcaseBase::freeBuffers() {
     m_framePixels = 0U;
 }
 
-void MediaShowcaseBase::resetCore1StreamState() {
-    m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
-    m_preloadReadPtr = nullptr;
-    m_preloadBytesDownloaded.store(0U, std::memory_order_release);
-    m_preloadComplete.store(false, std::memory_order_release);
-    m_core1StreamFinished.store(false, std::memory_order_release);
-    m_core1PreloadOffset = 16U;
-    m_core1PreloadFrameIdx = 0U;
-    m_core1NextFrameDueUs = 0U;
-    m_core1DecPartialRem = 0U;
-    m_core1StreamArmed = false;
-}
-
 void MediaShowcaseBase::clearLiveCardState() {
-    resetCore1StreamState();
+    m_streamPlayer.resetCore1StreamState();
     m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
     m_activeItemStreamMaxMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
@@ -2790,43 +2667,6 @@ bool MediaShowcaseBase::fetchBinaryPosterRgb565(
 }
 
 
-namespace {
-
-template <typename T>
-struct ScratchSessionGuard {
-    T* ptr = nullptr;
-    bool heapOwned = false;
-
-    ScratchSessionGuard(char* scratch, size_t scratchCap) {
-        if (scratch && scratchCap >= sizeof(T) &&
-            (reinterpret_cast< uintptr_t >(scratch) % alignof(T)) == 0U) {
-            ptr = new (scratch) T();
-            heapOwned = false;
-        } else {
-            void* mem = malloc(sizeof(T));
-            if (mem) {
-                ptr = new (mem) T();
-                heapOwned = true;
-            }
-        }
-    }
-
-    ~ScratchSessionGuard() {
-        if (ptr) {
-            ptr->~T();
-            if (heapOwned) {
-                free(ptr);
-            }
-            ptr = nullptr;
-        }
-    }
-
-    ScratchSessionGuard(const ScratchSessionGuard&) = delete;
-    ScratchSessionGuard& operator=(const ScratchSessionGuard&) = delete;
-};
-
-} // namespace
-
 void MediaShowcaseBase::executeAcquiredItem(
     const ConfigSlot& cfg,
     const char* /*domain*/,
@@ -2835,9 +2675,8 @@ void MediaShowcaseBase::executeAcquiredItem(
     const AcquiredItemInfo& info
 ) {
     // Disarm any previous item's stream before touching poster/card buffers
-    if (m_streamExecMode.load(std::memory_order_acquire) != static_cast<uint8_t>(StreamExecMode::LegacyFramePtr) ||
-        m_liveCard.hasVideoFrame) {
-        resetCore1StreamState();
+    if (m_streamPlayer.isCore1Streaming() || m_liveCard.hasVideoFrame) {
+        m_streamPlayer.resetCore1StreamState();
         m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
         m_publishedFramePtr.store(nullptr, std::memory_order_release);
         m_seq.fetch_add(1U, std::memory_order_acq_rel);
@@ -2845,7 +2684,7 @@ void MediaShowcaseBase::executeAcquiredItem(
         m_seq.fetch_add(1U, std::memory_order_release);
         waitRenderBlitQuiescent();
     }
-    freeSpscRingBuffer();
+    m_streamPlayer.freeSpscRing();
 
     // Ensure `m_poster565` is available (e.g., on item 2..N of a multi-item rotation turn)
     const size_t expectedPosterBytes = static_cast<size_t>(card.posterW) * static_cast<size_t>(card.posterH) * sizeof(uint16_t);
@@ -2932,607 +2771,45 @@ void MediaShowcaseBase::executeAcquiredItem(
         return;
     }
 
-    probeZeroCopyCanvasEligibility();
-    const bool zeroCopyEligible = m_zeroCopyCanvasEligible.load(std::memory_order_acquire);
-    const char* profile = net::selectDmdzStreamProfile(m_hasPsram, m_width, m_height);
-    const uint32_t maxStreamMs = std::max<uint32_t>(effectiveMaxStreamMs(), info.streamMaxMs);
-
-    auto runSpscSessionLoop = [&](net::DmdzSpscStreamSession& sess, bool alreadyOpened, uint8_t wsCredits, uint16_t wsChunk) -> bool {
-        if (!alreadyOpened) {
-            if (!sess.open(
-                    info.baseServerUrl,
-                    info.streamPath,
-                    m_sessionId,
-                    profile,
-                    wsCredits,
-                    wsChunk,
-                    m_spscRing,
-                    checkStop,
-                    &ctx,
-                    "Showcase")) {
-                return false;
-            }
-        }
-        m_streamHeaderW = sess.header.width > 0U ? sess.header.width : m_width;
-        m_streamHeaderH = sess.header.height > 0U ? sess.header.height : m_height;
-        m_streamHeaderVersion = sess.header.version;
-        m_streamHeaderIsDmdz = sess.header.isDmdz;
-        m_streamTotalFrames = sess.header.totalFrames;
-        const uint32_t safeFps = std::max<uint32_t>(1U, sess.header.fps);
-        m_streamFrameIntervalUs = 1000000U / safeFps;
-
-        m_presentedStreamFrames.store(0U, std::memory_order_release);
-        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
-        m_core1DecPartialRem = 0U;
-        m_core1StreamArmed = false;
-        m_core1StreamFinished.store(false, std::memory_order_release);
-        m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::SpscRing), std::memory_order_release);
-
-        m_seq.fetch_add(1U, std::memory_order_acq_rel);
-        m_liveCard.hasVideoFrame = true;
-        m_seq.fetch_add(1U, std::memory_order_release);
-        m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-
-        const uint32_t streamT0 = millis();
-        uint32_t eofDrainStartMs = 0U;
-        while (checkStop(&ctx) == net::StreamStopReason::Continue &&
-               (millis() - streamT0) < maxStreamMs &&
-               !m_core1StreamFinished.load(std::memory_order_acquire)) {
-            if (!sess.streamEof) {
-                (void)sess.pump(m_spscRing, 14U, checkStop, &ctx);
-            } else {
-                if (m_spscRing.empty() && m_core1DecPartialRem == 0U) {
-                    break;
-                }
-                if (eofDrainStartMs == 0U) {
-                    eofDrainStartMs = millis();
-                } else if ((millis() - eofDrainStartMs) > 2500U) {
-                    break;
-                }
-                vTaskDelay(pdMS_TO_TICKS(8));
-            }
-        }
-
-        const uint32_t framesShown = m_presentedStreamFrames.load(std::memory_order_acquire);
-        sess.close(true);
-
-        m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
-        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
-        waitRenderBlitQuiescent();
-        freeSpscRingBuffer();
-        return framesShown > 0U;
+    engines::showcase::ShowcaseStreamRunOptions runOpts{};
+    runOpts.baseServerUrl = info.baseServerUrl;
+    runOpts.streamPath = info.streamPath;
+    runOpts.clientId = m_sessionId;
+    runOpts.logTag = "Showcase";
+    runOpts.surfaceForReadOnlyCheck = m_surface;
+    runOpts.ioScratch = m_ioScratch;
+    runOpts.ioScratchCap = m_ioScratchCap;
+    runOpts.panelWidth = m_width;
+    runOpts.panelHeight = m_height;
+    runOpts.preStreamCardWaitMs = cardWaitMs;
+    runOpts.cardStartedAtMs = cardT0;
+    runOpts.maxStreamMs = std::max<uint32_t>(effectiveMaxStreamMs(), info.streamMaxMs);
+    runOpts.hasPsram = m_hasPsram;
+    runOpts.purgeOnComplete = true;
+    runOpts.waitFirstFrameBeforeLive = false;
+    runOpts.userCtx = &ctx;
+    runOpts.checkStop = checkStop;
+    runOpts.onBeforeLiveStream = [](void* raw) {
+        auto* c = static_cast<ShowcaseStreamCtx*>(raw);
+        c->self->freePosterAfterBlank();
     };
-
-    // =========================================================================
-    // TIER 1 (`profile == "sram"`, `!m_hasPsram`)
-    // =========================================================================
-    if (!m_hasPsram) {
-        NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
-        ScratchSessionGuard<net::DmdzSpscStreamSession> spscGuard(m_ioScratch, m_ioScratchCap);
-        bool preOpened = false;
-        const uint32_t preConnectOffsetMs = (cardWaitMs > 300U) ? (cardWaitMs - 300U) : 0U;
-
-        while (checkStop(&ctx) == net::StreamStopReason::Continue) {
-            const uint32_t elapsed = millis() - cardT0;
-            if (elapsed >= cardWaitMs) {
-                break;
-            }
-            if (!preOpened &&
-                zeroCopyEligible &&
-                m_core1Decoder != nullptr &&
-                spscGuard.ptr != nullptr &&
-                elapsed >= preConnectOffsetMs) {
-                if (m_spscRingStorage != nullptr || allocateSpscRingBuffer(SRAM_SPSC_HI_RING_BYTES)) {
-                    preOpened = spscGuard.ptr->open(
-                        info.baseServerUrl,
-                        info.streamPath,
-                        m_sessionId,
-                        profile,
-                        4U,
-                        1360U,
-                        m_spscRing,
-                        checkStop,
-                        &ctx,
-                        "Showcase"
-                    );
-                }
-            }
-            if (preOpened && !spscGuard.ptr->streamEof) {
-                const uint32_t remCard = cardWaitMs - elapsed;
-                (void)spscGuard.ptr->pump(m_spscRing, std::min<uint32_t>(20U, remCard), checkStop, &ctx);
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(20));
-            }
-        }
-
-        if (checkStop(&ctx) != net::StreamStopReason::Continue) {
-            if (preOpened && spscGuard.ptr) {
-                spscGuard.ptr->close(true);
-            }
-            freeSpscRingBuffer();
-            return;
-        }
-
-        // Part A.3: Blank Info Card (`Phase::StreamBlank` + `m_blankPresentedSeq`) BEFORE freeing `m_poster565`!
-        freePosterAfterBlank();
-
-        bool acquiredFallbackFrame = false;
-        if (!zeroCopyEligible && m_frame565 == nullptr) {
-            acquiredFallbackFrame = acquireStepCFrameBuffer();
-        }
-
-        if (m_core1Decoder != nullptr &&
-            spscGuard.ptr != nullptr &&
-            (zeroCopyEligible || m_frame565 != nullptr) &&
-            (m_spscRingStorage != nullptr || allocateSpscRingBuffer(SRAM_SPSC_HI_RING_BYTES))) {
-            (void)runSpscSessionLoop(*spscGuard.ptr, preOpened, 4U, 1360U);
-            if (acquiredFallbackFrame) {
-                releaseStepCFrameBuffer();
-            }
-            return;
-        }
-
-        if (preOpened && spscGuard.ptr) {
-            spscGuard.ptr->close(true);
-        }
-        if (acquiredFallbackFrame) {
-            releaseStepCFrameBuffer();
-        }
-        freeSpscRingBuffer();
-        return;
-    }
-
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    // =========================================================================
-    // TIER 2 (`profile == "psram"`, `W*H <= 8192`) & TIER 3 (`profile == "psram_hd"`, `W*H > 8192`)
-    // =========================================================================
-    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
-    const bool isTier3Hd = (static_cast<uint32_t>(m_width) * static_cast<uint32_t>(m_height)) > 8192U;
-    size_t maxPreloadCap = PSRAM_TIER2_MAX_PRELOAD_BYTES;
-    if (isTier3Hd) {
-        const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        maxPreloadCap = (freePsram > PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
-            ? std::min<size_t>(PSRAM_TIER3_MAX_PRELOAD_BYTES, freePsram - PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
-            : 0U;
-    }
-
-    bool usePreloadPlayback = false;
-    {
-        ScratchSessionGuard<net::DmdzPreloadSession> preloadGuard(m_ioScratch, m_ioScratchCap);
-        bool preloadOpened = false;
-        if (preloadGuard.ptr != nullptr && m_core1Decoder != nullptr && maxPreloadCap >= 131072U) {
-            m_preloadBytesDownloaded.store(0U, std::memory_order_release);
-            m_preloadComplete.store(false, std::memory_order_release);
-            preloadOpened = preloadGuard.ptr->open(
-                info.baseServerUrl,
-                info.streamPath,
-                m_sessionId,
-                profile,
-                maxPreloadCap,
-                m_preloadBytesDownloaded,
-                m_preloadComplete,
-                checkStop,
-                &ctx,
-                "Showcase"
-            );
-        }
-
-        // Download in background during `Phase::Card` (`cardWaitMs`)
-        while (checkStop(&ctx) == net::StreamStopReason::Continue) {
-            const uint32_t elapsed = millis() - cardT0;
-            if (elapsed >= cardWaitMs) {
-                break;
-            }
-            if (preloadOpened && !m_preloadComplete.load(std::memory_order_acquire)) {
-                const uint32_t remCard = cardWaitMs - elapsed;
-                (void)preloadGuard.ptr->pump(
-                    m_preloadBytesDownloaded,
-                    m_preloadComplete,
-                    std::min<uint32_t>(30U, remCard),
-                    checkStop,
-                    &ctx
-                );
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(25));
-            }
-        }
-
-        if (checkStop(&ctx) != net::StreamStopReason::Continue) {
-            if (preloadOpened && preloadGuard.ptr) {
-                preloadGuard.ptr->releasePreloadBuffer();
-                net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
-            }
-            return;
-        }
-
-        if (preloadOpened && preloadGuard.ptr && preloadGuard.ptr->headerParsed && !preloadGuard.ptr->tooLargeForPreload) {
-            if (!isTier3Hd) {
-                // Tier 2: finish remaining tail (if any) before `LiveStream` so 0 Wi-Fi traffic occurs during playback
-                const uint32_t finishT0 = millis();
-                while (!m_preloadComplete.load(std::memory_order_acquire) &&
-                       checkStop(&ctx) == net::StreamStopReason::Continue &&
-                       (millis() - finishT0) < 900U) {
-                    (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 25U, checkStop, &ctx);
-                }
-                if (m_preloadComplete.load(std::memory_order_acquire)) {
-                    preloadGuard.ptr->closeSocket();
-                }
-            } else {
-                // Tier 3: ensure `>= 128 KB` or `>= 15` frames buffered before starting progressive playback
-                const uint32_t cushionT0 = millis();
-                while (!m_preloadComplete.load(std::memory_order_acquire) &&
-                       m_preloadBytesDownloaded.load(std::memory_order_acquire) < PSRAM_TIER3_START_CUSHION_BYTES &&
-                       preloadGuard.ptr->framesBuffered < 15U &&
-                       checkStop(&ctx) == net::StreamStopReason::Continue &&
-                       (millis() - cushionT0) < 1000U) {
-                    (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 25U, checkStop, &ctx);
-                }
-            }
-
-            if (preloadGuard.ptr->preloadBuf != nullptr &&
-                m_preloadBytesDownloaded.load(std::memory_order_acquire) > 16U) {
-                usePreloadPlayback = true;
-            }
-        }
-
-        if (usePreloadPlayback) {
-            freePosterAfterBlank();
-            if (!zeroCopyEligible && m_frame565 == nullptr) {
-                (void)acquireStepCFrameBuffer();
-            }
-
-            if (zeroCopyEligible || m_frame565 != nullptr) {
-                m_preloadReadPtr = preloadGuard.ptr->preloadBuf;
-                m_streamHeaderW = preloadGuard.ptr->header.width > 0U ? preloadGuard.ptr->header.width : m_width;
-                m_streamHeaderH = preloadGuard.ptr->header.height > 0U ? preloadGuard.ptr->header.height : m_height;
-                m_streamHeaderVersion = preloadGuard.ptr->header.version;
-                m_streamHeaderIsDmdz = preloadGuard.ptr->header.isDmdz;
-                m_streamTotalFrames = preloadGuard.ptr->header.totalFrames;
-                const uint32_t safeFps = std::max<uint32_t>(1U, preloadGuard.ptr->header.fps);
-                m_streamFrameIntervalUs = 1000000U / safeFps;
-
-                m_presentedStreamFrames.store(0U, std::memory_order_release);
-                m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
-                m_core1PreloadOffset = 16U;
-                m_core1PreloadFrameIdx = 0U;
-                m_core1DecPartialRem = 0U;
-                m_core1StreamArmed = false;
-                m_core1StreamFinished.store(false, std::memory_order_release);
-                m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::PsramPreload), std::memory_order_release);
-
-                m_seq.fetch_add(1U, std::memory_order_acq_rel);
-                m_liveCard.hasVideoFrame = true;
-                m_seq.fetch_add(1U, std::memory_order_release);
-                m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-
-                const uint32_t streamT0 = millis();
-                while (checkStop(&ctx) == net::StreamStopReason::Continue &&
-                       (millis() - streamT0) < maxStreamMs &&
-                       !m_core1StreamFinished.load(std::memory_order_acquire)) {
-                    if (!m_preloadComplete.load(std::memory_order_acquire)) {
-                        (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 18U, checkStop, &ctx);
-                        if (m_preloadComplete.load(std::memory_order_acquire)) {
-                            preloadGuard.ptr->closeSocket();
-                        }
-                    } else {
-                        vTaskDelay(pdMS_TO_TICKS(20));
-                    }
-                }
-
-                m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
-                m_preloadReadPtr = nullptr;
-                m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
-                waitRenderBlitQuiescent();
-            }
-
-            preloadGuard.ptr->releasePreloadBuffer();
-            net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
-            return;
-        }
-
-        if (preloadOpened && preloadGuard.ptr) {
-            preloadGuard.ptr->releasePreloadBuffer();
-        }
-    }
-
-    // Fallback for Tier 2 (`> 1.5 MB` -> `256 KB` PSRAM SPSC WS `credits=12, chunk=1400`)
-    // and Tier 3 (`> maxPreloadCap` -> `768 KB` PSRAM SPSC WS `credits=16, chunk=1400`)
-    freePosterAfterBlank();
-    if (!zeroCopyEligible && m_frame565 == nullptr) {
-        (void)acquireStepCFrameBuffer();
-    }
-
-    const size_t psramRingTarget = isTier3Hd ? PSRAM_TIER3_SPSC_RING_BYTES : PSRAM_TIER2_SPSC_RING_BYTES;
-    const uint8_t psramWsCredits = isTier3Hd ? 16U : 12U;
-    ScratchSessionGuard<net::DmdzSpscStreamSession> wsFallbackGuard(m_ioScratch, m_ioScratchCap);
-    if (wsFallbackGuard.ptr != nullptr &&
-        m_core1Decoder != nullptr &&
-        (zeroCopyEligible || m_frame565 != nullptr) &&
-        allocateSpscRingBuffer(psramRingTarget)) {
-        (void)runSpscSessionLoop(*wsFallbackGuard.ptr, false, psramWsCredits, 1400U);
-    } else {
-        net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
-    }
-#endif
+    runOpts.onEnterLiveStream = [](void* raw) {
+        auto* c = static_cast<ShowcaseStreamCtx*>(raw);
+        c->self->m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        c->self->m_liveCard.hasVideoFrame = true;
+        c->self->m_seq.fetch_add(1U, std::memory_order_release);
+        c->self->m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+    };
+    runOpts.onExitLiveStream = [](void* raw) {
+        auto* c = static_cast<ShowcaseStreamCtx*>(raw);
+        c->self->waitRenderBlitQuiescent();
+    };
+    (void)m_streamPlayer.runStreamSession(runOpts);
 #else
     (void)cfg;
     (void)startGen;
     (void)info;
 #endif
-}
-
-bool MediaShowcaseBase::renderStreamFrameCore1(IDrawingSurface* s) {
-    if (!s || !m_core1Decoder) {
-        return false;
-    }
-
-    const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    if (execMode != StreamExecMode::SpscRing && execMode != StreamExecMode::PsramPreload) {
-        return false;
-    }
-#else
-    if (execMode != StreamExecMode::SpscRing) {
-        return false;
-    }
-#endif
-
-    const uint32_t nowUs = micros();
-    if (m_core1StreamArmed && m_core1DecPartialRem == 0U) {
-        const int32_t diffUs = static_cast<int32_t>(nowUs - m_core1NextFrameDueUs);
-        if (diffUs < -750) {
-            return false;
-        }
-    }
-
-    const uint16_t decW = m_streamHeaderW > 0U ? m_streamHeaderW : m_width;
-    const uint16_t decH = m_streamHeaderH > 0U ? m_streamHeaderH : m_height;
-    const size_t decPixels = static_cast<size_t>(decW) * static_cast<size_t>(decH);
-    const size_t rawFrameBytes = decPixels * sizeof(uint16_t);
-
-    // Pre-check data availability BEFORE borrowing `ScopedCanvasGuard` (since `acquireCanvas()` marks surface dirty!)
-    uint16_t spscPayloadLen = 0U;
-    bool spscOversizedStart = false;
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    const uint8_t* preloadFramePayload = nullptr;
-    uint16_t preloadPayloadLen = 0U;
-#endif
-
-    if (execMode == StreamExecMode::SpscRing) {
-        if (m_streamHeaderIsDmdz) {
-            if (m_core1DecPartialRem > 0U) {
-                if (m_spscRing.consumerSize() == 0U) {
-                    return false;
-                }
-            } else {
-                if (!m_spscRing.peekFrameLength(spscPayloadLen)) {
-                    return false;
-                }
-                const size_t totalWire = 2U + static_cast<size_t>(spscPayloadLen);
-                if (totalWire <= m_spscRing.capacity()) {
-                    if (m_spscRing.consumerSize() < totalWire) {
-                        return false;
-                    }
-                } else {
-                    spscOversizedStart = true;
-                }
-            }
-        } else {
-            if (m_spscRing.consumerSize() < rawFrameBytes) {
-                return false;
-            }
-        }
-    }
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    else {
-        // `PsramPreload` (complete or progressive `psram_hd`)
-        const uint8_t* base = m_preloadReadPtr;
-        const size_t downloaded = m_preloadBytesDownloaded.load(std::memory_order_acquire);
-        const bool complete = m_preloadComplete.load(std::memory_order_acquire);
-        if (!base || (m_streamTotalFrames > 0U && m_core1PreloadFrameIdx >= m_streamTotalFrames)) {
-            m_core1StreamFinished.store(true, std::memory_order_release);
-            return false;
-        }
-        if (m_streamHeaderIsDmdz) {
-            if (m_core1PreloadOffset + 2U > downloaded) {
-                if (complete) {
-                    m_core1StreamFinished.store(true, std::memory_order_release);
-                }
-                return false;
-            }
-            preloadPayloadLen = static_cast<uint16_t>(base[m_core1PreloadOffset]) |
-                                (static_cast<uint16_t>(base[m_core1PreloadOffset + 1U]) << 8);
-            const size_t endOff = m_core1PreloadOffset + 2U + static_cast<size_t>(preloadPayloadLen);
-            if (endOff > downloaded) {
-                if (complete) {
-                    m_core1StreamFinished.store(true, std::memory_order_release);
-                }
-                return false;
-            }
-            preloadFramePayload = base + m_core1PreloadOffset + 2U;
-        } else {
-            const size_t endOff = m_core1PreloadOffset + rawFrameBytes;
-            if (endOff > downloaded) {
-                if (complete) {
-                    m_core1StreamFinished.store(true, std::memory_order_release);
-                }
-                return false;
-            }
-            preloadFramePayload = base + m_core1PreloadOffset;
-        }
-    }
-#endif
-
-    // Borrow Zero-Copy linear canvas via `ScopedCanvasGuard` when unrotated & matching geometry;
-    // otherwise decode into Core 0-allocated `m_frame565` and blit via `s->blit565`.
-    const bool tryZeroCopy = m_zeroCopyCanvasEligible.load(std::memory_order_acquire) &&
-                             s->hasCanvas() &&
-                             s->getRotation() == 0 &&
-                             decW == m_width &&
-                             decH == m_height;
-
-    ScopedCanvasGuard canvasGuard(tryZeroCopy ? s : nullptr);
-    const bool usingZeroCopy = canvasGuard.isValid() &&
-                               canvasGuard.width() == decW &&
-                               canvasGuard.height() == decH &&
-                               (canvasGuard.stridePixels() == 0U || canvasGuard.stridePixels() == decW);
-
-    uint16_t* dstPixels = usingZeroCopy ? canvasGuard.data() : m_frame565;
-    if (!dstPixels || (!usingZeroCopy && decPixels > m_framePixels)) {
-        canvasGuard.release();
-        return false;
-    }
-
-    if (!m_core1StreamArmed) {
-        m_core1Decoder->resetStream(decW, decH, m_streamHeaderVersion);
-        memset(dstPixels, 0, rawFrameBytes);
-    }
-
-    bool frameComplete = false;
-    bool decodeOk = true;
-
-    if (execMode == StreamExecMode::SpscRing) {
-        if (!m_streamHeaderIsDmdz) {
-            const size_t popped = m_spscRing.pop(reinterpret_cast<uint8_t*>(dstPixels), rawFrameBytes);
-            decodeOk = (popped == rawFrameBytes);
-            frameComplete = decodeOk;
-        } else if (m_core1DecPartialRem > 0U) {
-            const size_t avail = m_spscRing.consumerSize();
-            const size_t take = (avail < m_core1DecPartialRem) ? avail : m_core1DecPartialRem;
-            const uint8_t* p1 = nullptr;
-            const uint8_t* p2 = nullptr;
-            size_t n1 = 0U;
-            size_t n2 = 0U;
-            m_spscRing.getConsumerSlices(0U, take, p1, n1, p2, n2);
-            if (n1 > 0U && !m_core1Decoder->feed(p1, n1, dstPixels)) {
-                decodeOk = false;
-            }
-            if (decodeOk && n2 > 0U && !m_core1Decoder->feed(p2, n2, dstPixels)) {
-                decodeOk = false;
-            }
-            m_spscRing.consumeRead(take);
-            m_core1DecPartialRem = static_cast<uint16_t>(m_core1DecPartialRem - take);
-            if (!decodeOk) {
-                m_core1DecPartialRem = 0U;
-                m_core1StreamFinished.store(true, std::memory_order_release);
-            } else if (m_core1DecPartialRem == 0U) {
-                decodeOk = m_core1Decoder->finishFrame();
-                frameComplete = decodeOk;
-            }
-        } else if (spscOversizedStart) {
-            m_spscRing.consumeRead(2U);
-            if (!m_core1Decoder->beginFrame(spscPayloadLen)) {
-                m_core1StreamFinished.store(true, std::memory_order_release);
-                canvasGuard.release();
-                return false;
-            }
-            m_core1DecPartialRem = spscPayloadLen;
-            const size_t avail = m_spscRing.consumerSize();
-            const size_t take = (avail < m_core1DecPartialRem) ? avail : m_core1DecPartialRem;
-            if (take > 0U) {
-                const uint8_t* p1 = nullptr;
-                const uint8_t* p2 = nullptr;
-                size_t n1 = 0U;
-                size_t n2 = 0U;
-                m_spscRing.getConsumerSlices(0U, take, p1, n1, p2, n2);
-                if (n1 > 0U && !m_core1Decoder->feed(p1, n1, dstPixels)) {
-                    decodeOk = false;
-                }
-                if (decodeOk && n2 > 0U && !m_core1Decoder->feed(p2, n2, dstPixels)) {
-                    decodeOk = false;
-                }
-                m_spscRing.consumeRead(take);
-                m_core1DecPartialRem = static_cast<uint16_t>(m_core1DecPartialRem - take);
-            }
-            if (!decodeOk) {
-                m_core1DecPartialRem = 0U;
-                m_core1StreamFinished.store(true, std::memory_order_release);
-            } else if (m_core1DecPartialRem == 0U) {
-                decodeOk = m_core1Decoder->finishFrame();
-                frameComplete = decodeOk;
-            }
-        } else {
-            // Normal complete compressed frame in SPSC ring (`2 + spscPayloadLen` bytes)
-            const uint8_t* p1 = nullptr;
-            const uint8_t* p2 = nullptr;
-            size_t n1 = 0U;
-            size_t n2 = 0U;
-            m_spscRing.getConsumerSlices(2U, spscPayloadLen, p1, n1, p2, n2);
-            decodeOk = m_core1Decoder->beginFrame(spscPayloadLen);
-            if (decodeOk && n1 > 0U) {
-                decodeOk = m_core1Decoder->feed(p1, n1, dstPixels);
-            }
-            if (decodeOk && n2 > 0U) {
-                decodeOk = m_core1Decoder->feed(p2, n2, dstPixels);
-            }
-            if (decodeOk) {
-                decodeOk = m_core1Decoder->finishFrame();
-            }
-            m_spscRing.consumeRead(2U + static_cast<size_t>(spscPayloadLen));
-            frameComplete = decodeOk;
-                if (!decodeOk) {
-                    m_core1StreamFinished.store(true, std::memory_order_release);
-                }
-        }
-    }
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-    else {
-        // `PsramPreload`
-        if (m_streamHeaderIsDmdz) {
-            decodeOk = m_core1Decoder->beginFrame(preloadPayloadLen) &&
-                       (preloadPayloadLen == 0U || m_core1Decoder->feed(preloadFramePayload, preloadPayloadLen, dstPixels)) &&
-                       m_core1Decoder->finishFrame();
-            m_core1PreloadOffset += 2U + static_cast<size_t>(preloadPayloadLen);
-        } else {
-            memcpy(dstPixels, preloadFramePayload, rawFrameBytes);
-            m_core1PreloadOffset += rawFrameBytes;
-            decodeOk = true;
-        }
-        ++m_core1PreloadFrameIdx;
-        frameComplete = decodeOk;
-        if (!decodeOk ||
-            (m_streamTotalFrames > 0U && m_core1PreloadFrameIdx >= m_streamTotalFrames)) {
-            m_core1StreamFinished.store(true, std::memory_order_release);
-        }
-    }
-#endif
-
-    if (!frameComplete) {
-        canvasGuard.release();
-        return false;
-    }
-
-    if (usingZeroCopy) {
-        canvasGuard.markDrawnAndRelease();
-    } else {
-        canvasGuard.release();
-        if (s->width() != static_cast<int>(decW) || s->height() != static_cast<int>(decH)) {
-            s->clear(0);
-        }
-        s->blit565(dstPixels, 0, 0, static_cast<int16_t>(decW), static_cast<int16_t>(decH));
-    }
-
-    const uint32_t presented = m_presentedStreamFrames.fetch_add(1U, std::memory_order_relaxed) + 1U;
-    if (m_streamTotalFrames > 0U && presented >= m_streamTotalFrames) {
-        m_core1StreamFinished.store(true, std::memory_order_release);
-    }
-
-    const uint32_t postDecodeUs = micros();
-    if (!m_core1StreamArmed) {
-        m_core1StreamArmed = true;
-        m_core1NextFrameDueUs = postDecodeUs + m_streamFrameIntervalUs;
-    } else {
-        m_core1NextFrameDueUs += m_streamFrameIntervalUs;
-        // Part B.3: Smooth catchup without burst if behind by `> 2` frames!
-        const uint32_t maxLagUs = m_streamFrameIntervalUs * 2U;
-        if (static_cast<int32_t>(postDecodeUs - m_core1NextFrameDueUs) > static_cast<int32_t>(maxLagUs)) {
-            m_core1NextFrameDueUs = postDecodeUs + m_streamFrameIntervalUs;
-        }
-    }
-    const int32_t remUs = static_cast<int32_t>(m_core1NextFrameDueUs - postDecodeUs);
-    const uint32_t remMs = (remUs > 0) ? static_cast<uint32_t>((remUs + 999) / 1000) : 1U;
-    m_nextStreamFrameDueMs.store(millis() + remMs, std::memory_order_relaxed);
-    return true;
 }
 
 void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs) {
@@ -3620,8 +2897,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
     }
 
     if (curPhase == static_cast<uint8_t>(Phase::LiveStream)) {
-        const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
-        if (execMode == StreamExecMode::LegacyFramePtr) {
+        if (!m_streamPlayer.isCore1Streaming()) {
             const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
             if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
                 m_dirty = true;
@@ -3629,26 +2905,8 @@ void MediaShowcaseBase::update(EngineContext* context) {
                 m_lastScrollStepMs = now;
                 m_dirty = true;
             }
-        } else {
-            const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
-            const bool frameDue = (!m_core1StreamArmed) ||
-                                  (m_core1DecPartialRem > 0U) ||
-                                  (dueMs == 0U) ||
-                                  (static_cast<int32_t>(now - dueMs) >= -1);
-            if (frameDue) {
-                if (execMode == StreamExecMode::SpscRing) {
-                    if (m_spscRing.consumerSize() > 0U) {
-                        m_dirty = true;
-                    }
-#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
-                } else if (execMode == StreamExecMode::PsramPreload) {
-                    const size_t dl = m_preloadBytesDownloaded.load(std::memory_order_acquire);
-                    if (dl > m_core1PreloadOffset || m_preloadComplete.load(std::memory_order_acquire)) {
-                        m_dirty = true;
-                    }
-#endif
-                }
-            }
+        } else if (m_streamPlayer.shouldMarkCore1Dirty(now)) {
+            m_dirty = true;
         }
     } else if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
         // Hold clean black cut with zero redraw spin while Core 0 hands off to the stream.
@@ -3725,10 +2983,9 @@ void MediaShowcaseBase::render(EngineContext* context) {
     }
 
     if (curPhase == Phase::LiveStream) {
-        const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
-        if (execMode != StreamExecMode::LegacyFramePtr) {
+        if (m_streamPlayer.isCore1Streaming()) {
             BlitSeqGuard blitGuard{m_renderBlitSeq};
-            const bool drew = renderStreamFrameCore1(s);
+            const bool drew = m_streamPlayer.renderFrameCore1(s, m_width, m_height);
             m_dirty = false;
             m_renderedNewFrame = drew;
             return;

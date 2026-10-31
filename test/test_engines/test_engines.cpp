@@ -1063,26 +1063,21 @@ void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
 
     class ZeroCopyShowcaseProbe : public RetroGamesEngine {
     public:
-        bool isZeroCopyEligible() const { return m_zeroCopyCanvasEligible.load(std::memory_order_acquire); }
-        bool hasEngineFrameBuffer() const { return m_frame565 != nullptr; }
+        bool isZeroCopyEligible() const { return m_streamPlayer.isZeroCopyEligible(); }
+        bool hasEngineFrameBuffer() const {
+            return m_frame565 != nullptr || m_streamPlayer.fallbackFrameBuffer() != nullptr;
+        }
         void forceDropEngineFrameBuffer() {
             if (m_frame565) {
                 free(m_frame565);
                 m_frame565 = nullptr;
             }
+            m_streamPlayer.freeFallbackFrameBuffer();
         }
         void setPhaseForTest(uint8_t p) { m_phase.store(p, std::memory_order_release); }
         void armZeroCopySpscPal8Frame(uint16_t fill565) {
-            TEST_ASSERT_TRUE(allocateSpscRingBuffer(4096U));
-            m_streamHeaderW = 128U;
-            m_streamHeaderH = 32U;
-            m_streamHeaderVersion = 2U;
-            m_streamHeaderIsDmdz = true;
-            m_streamTotalFrames = 1U;
-            m_streamFrameIntervalUs = 50000U;
-            m_core1StreamArmed = false;
-            m_core1DecPartialRem = 0U;
-            m_core1StreamFinished.store(false, std::memory_order_release);
+            TEST_ASSERT_TRUE(m_streamPlayer.ensureDecoderAllocated(false));
+            TEST_ASSERT_TRUE(m_streamPlayer.allocateSpscRing(4096U, false));
 
             // Encode 4,096 pixels (`64 * 64`) using `FRAME_PAL8` (`0x05`) 1-color + 64x `PAL_RUN(64)`
             std::vector<uint8_t> wire;
@@ -1096,9 +1091,12 @@ void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
             for (int r = 0; r < 64; ++r) {
                 wire.push_back(0xFEU); // PAL_RUN 64
             }
-            TEST_ASSERT_EQUAL_UINT32(wire.size(), static_cast<uint32_t>(m_spscRing.push(wire.data(), wire.size())));
+            TEST_ASSERT_EQUAL_UINT32(
+                wire.size(),
+                static_cast<uint32_t>(m_streamPlayer.spscRing().push(wire.data(), wire.size()))
+            );
+            m_streamPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 20U);
 
-            m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::SpscRing), std::memory_order_release);
             m_seq.fetch_add(1U, std::memory_order_acq_rel);
             m_liveCard.hasVideoFrame = true;
             m_seq.fetch_add(1U, std::memory_order_release);

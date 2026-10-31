@@ -25,13 +25,17 @@ namespace net {
 namespace {
 
 void copySafe(char* dst, size_t cap, const char* src) {
-    if (!dst || cap == 0) return;
+    if (!dst || cap == 0U) return;
     if (!src) {
         dst[0] = '\0';
         return;
     }
-    strncpy(dst, src, cap - 1);
-    dst[cap - 1] = '\0';
+    size_t n = 0U;
+    while (n + 1U < cap && src[n] != '\0') {
+        dst[n] = src[n];
+        ++n;
+    }
+    dst[n] = '\0';
 }
 
 bool isValidCandidateIpv4(const char* s) {
@@ -78,8 +82,10 @@ struct CandidateRing {
 };
 
 static constexpr uint32_t kPositiveCacheTtlMs = 120000U;
+#if defined(ESP32) && !defined(UNIT_TEST)
 static constexpr uint32_t kNegativeScanBackoffMs = 5000U;
 static constexpr size_t kMinDiscoveryHeapFloorBytes = 6144U;
+#endif
 
 CachedDiscoveryState s_cache;
 CandidateRing s_candidates;

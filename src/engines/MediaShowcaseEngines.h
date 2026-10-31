@@ -8,6 +8,7 @@
 #include "../../include/core/EngineContract.h"
 #include "../core/net/DmdzStreamClient.h"
 #include "showcase/ShowcaseCardRenderer.h"
+#include "showcase/ShowcaseStreamPlayer.h"
 
 class IDrawingSurface;
 
@@ -68,31 +69,17 @@ public:
         }
         if (curPhase == static_cast<uint8_t>(Phase::LiveStream) &&
             m_renderCard.hasVideoFrame) {
-            const uint8_t execMode = m_streamExecMode.load(std::memory_order_acquire);
-            if (execMode == static_cast<uint8_t>(StreamExecMode::LegacyFramePtr)) {
-                const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
-                if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
-                    return 1U;
-                }
-            } else if (m_presentedStreamFrames.load(std::memory_order_relaxed) == 0U ||
-                       m_core1DecPartialRem > 0U) {
+            if (m_streamPlayer.isCore1Streaming()) {
+                return m_streamPlayer.computeCore1NextFrameDueInMs(millis());
+            }
+            const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+            if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
                 return 1U;
             }
-            const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
-            if (dueMs != 0U) {
-                const int32_t rem = static_cast<int32_t>(dueMs - millis());
-                if (rem < -4) {
-                    return 8U;
-                }
-                if (rem <= 1) {
-                    return 2U;
-                }
-                if (rem < 16) {
-                    return static_cast<uint32_t>(rem);
-                }
-                return 16U;
-            }
-            return 8U;
+            return engines::showcase::ShowcaseStreamPlayer::computeSelfPacedWakeupMs(
+                m_nextStreamFrameDueMs.load(std::memory_order_relaxed),
+                millis()
+            );
         }
         return 0xFFFFFFFFU;
     }
@@ -161,30 +148,13 @@ protected:
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
     static constexpr size_t IO_SCRATCH_BYTES = 3072;
     static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 2048;
-    static constexpr size_t MIN_IO_SCRATCH_BYTES = 1472;
+    static constexpr size_t MIN_IO_SCRATCH_BYTES = engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES;
     static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 6144;
-
-    static constexpr size_t SRAM_SPSC_HI_RING_BYTES = 10240;
-    static constexpr size_t SRAM_SPSC_DEFAULT_RING_BYTES = 8192;
-    static constexpr size_t SRAM_SPSC_LOW_RING_BYTES = 6144;
-    static constexpr size_t SRAM_SPSC_MIN_RING_BYTES = 4096;
-    static constexpr size_t PSRAM_TIER2_MAX_PRELOAD_BYTES = 1572864; // 1.5 MB
-    static constexpr size_t PSRAM_TIER2_SPSC_RING_BYTES = 262144;    // 256 KB
-    static constexpr size_t PSRAM_TIER3_MAX_PRELOAD_BYTES = 3670016; // 3.5 MB
-    static constexpr size_t PSRAM_TIER3_MIN_FREE_RESERVE_BYTES = 2621440; // 2.5 MB
-    static constexpr size_t PSRAM_TIER3_SPSC_RING_BYTES = 786432;    // 768 KB
-    static constexpr size_t PSRAM_TIER3_START_CUSHION_BYTES = 131072; // 128 KB
 
     enum class Phase : uint8_t {
         Card = 0,
         StreamBlank = 1,
         LiveStream = 2
-    };
-
-    enum class StreamExecMode : uint8_t {
-        LegacyFramePtr = 0,
-        SpscRing = 1,
-        PsramPreload = 2
     };
 
     struct ConfigSlot {
@@ -256,25 +226,10 @@ protected:
     std::atomic<const uint16_t*> m_publishedFramePtr{nullptr};
 
     CardSnapshot m_liveCard;
+    engines::showcase::ShowcaseStreamPlayer m_streamPlayer;
     uint16_t* m_poster565 = nullptr;
     uint16_t* m_frame565 = nullptr;
-    uint16_t* m_frame565Back = nullptr;
     char* m_ioScratch = nullptr;
-    uint8_t* m_spscRingStorage = nullptr;
-    core::drawing::DmdzStreamDecoder* m_core1Decoder = nullptr;
-    net::DmdzSpscByteRing m_spscRing;
-
-    const uint8_t* m_preloadReadPtr = nullptr;
-    std::atomic<size_t> m_preloadBytesDownloaded{0};
-    std::atomic<bool> m_preloadComplete{false};
-    std::atomic<bool> m_core1StreamFinished{false};
-    std::atomic<uint8_t> m_streamExecMode{static_cast<uint8_t>(StreamExecMode::LegacyFramePtr)};
-    uint32_t m_streamFrameIntervalUs = 50000U;
-    uint16_t m_streamHeaderW = 128U;
-    uint16_t m_streamHeaderH = 32U;
-    uint16_t m_streamTotalFrames = 0U;
-    uint8_t m_streamHeaderVersion = 2U;
-    bool m_streamHeaderIsDmdz = true;
 
     size_t m_ioScratchCap = 0;
     size_t m_posterCapBytes = 0;
@@ -288,7 +243,6 @@ protected:
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};
     std::atomic<bool> m_buffersReady{false};
-    std::atomic<bool> m_zeroCopyCanvasEligible{false};
     std::atomic<bool> m_turnEvaluated{false};
     std::atomic<bool> m_readyStateReceived{false};
     std::atomic<bool> m_hasReadyItem{false};
@@ -308,11 +262,6 @@ protected:
 #endif
 
     CardSnapshot m_renderCard;
-    size_t m_core1PreloadOffset = 16U;
-    uint32_t m_core1PreloadFrameIdx = 0U;
-    uint32_t m_core1NextFrameDueUs = 0U;
-    uint16_t m_core1DecPartialRem = 0U;
-    bool m_core1StreamArmed = false;
 
     uint32_t m_activatedAtMs = 0;
     uint32_t m_phaseStartedAtMs = 0;
@@ -361,11 +310,8 @@ protected:
     void blankCardBeforeStream();
     bool acquireStepCFrameBuffer();
     void releaseStepCFrameBuffer();
-    bool allocateSpscRingBuffer(size_t preferredBytes);
-    void freeSpscRingBuffer();
     void waitRenderBlitQuiescent() const;
     void clearLiveCardState();
-    void resetCore1StreamState();
     bool startWorkerTask();
     void stopWorkerTaskBounded(uint32_t timeoutMs);
     static void workerTaskEntry(void* arg);
@@ -411,7 +357,6 @@ protected:
         CardSnapshot& card,
         const AcquiredItemInfo& info
     );
-    bool renderStreamFrameCore1(IDrawingSurface* s);
 
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);

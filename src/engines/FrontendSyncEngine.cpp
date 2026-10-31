@@ -28,13 +28,17 @@ extern ConfigLoader config;
 namespace {
 
 void copySafeCStr(char* dst, size_t cap, const char* src) {
-    if (!dst || cap == 0) return;
+    if (!dst || cap == 0U) return;
     if (!src) {
         dst[0] = '\0';
         return;
     }
-    strncpy(dst, src, cap - 1);
-    dst[cap - 1] = '\0';
+    size_t i = 0U;
+    while (i + 1U < cap && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
 }
 
 bool isLoopbackOrEmptyHost(const char* h) {
@@ -121,12 +125,14 @@ EngineError InGameShowcaseEngine::initialize(EngineContext* context, const Engin
     DisplayGeometry geom = context->getGeometry();
     m_width = geom.width > 0 ? geom.width : 128;
     m_height = geom.height > 0 ? geom.height : 32;
+    (void)m_streamPlayer.probeZeroCopyOnCore1(m_surface, m_width, m_height);
     m_dirty = false;
     m_renderedNewFrame = false;
     return EngineError::OK;
 }
 
 void InGameShowcaseEngine::activate() {
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
     m_displayEngaged.store(true, std::memory_order_release);
     m_lastRenderedSeq = 0;
     m_dirty = true;
@@ -134,33 +140,33 @@ void InGameShowcaseEngine::activate() {
 }
 
 uint32_t InGameShowcaseEngine::nextFrameDueInMs() const {
-    if (!m_displayEngaged.load(std::memory_order_acquire) ||
-        m_activeFramePtr.load(std::memory_order_acquire) == nullptr) {
+    if (!m_displayEngaged.load(std::memory_order_acquire)) {
+        return 0xFFFFFFFFU;
+    }
+    if (m_streamPlayer.isCore1Streaming()) {
+        return m_streamPlayer.computeCore1NextFrameDueInMs(millis());
+    }
+    if (m_activeFramePtr.load(std::memory_order_acquire) == nullptr) {
         return 0xFFFFFFFFU;
     }
     const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
     if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedSeq) {
         return 1U;
     }
-    const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
-    if (dueMs != 0U) {
-        const int32_t rem = static_cast<int32_t>(dueMs - millis());
-        if (rem < -4) {
-            return 8U;
-        }
-        if (rem <= 1) {
-            return 2U;
-        }
-        if (rem < 16) {
-            return static_cast<uint32_t>(rem);
-        }
-        return 16U;
-    }
-    return 8U;
+    return engines::showcase::ShowcaseStreamPlayer::computeSelfPacedWakeupMs(
+        m_nextStreamFrameDueMs.load(std::memory_order_relaxed),
+        millis()
+    );
 }
 
 void InGameShowcaseEngine::update(EngineContext* context) {
     (void)context;
+    if (m_streamPlayer.isCore1Streaming()) {
+        if (m_streamPlayer.shouldMarkCore1Dirty(millis())) {
+            m_dirty = true;
+        }
+        return;
+    }
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
     if ((seq & 1U) == 0U && seq != m_lastRenderedSeq && m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
         m_dirty = true;
@@ -189,13 +195,6 @@ void InGameShowcaseEngine::render(EngineContext* context) {
         return;
     }
 
-    const uint32_t seq1 = m_frameSeq.load(std::memory_order_acquire);
-    if ((seq1 & 1U) != 0U) {
-        m_dirty = false;
-        m_renderedNewFrame = false;
-        return;
-    }
-
     struct BlitSeqGuard {
         std::atomic<uint32_t>& seq;
         explicit BlitSeqGuard(std::atomic<uint32_t>& sRef) : seq(sRef) {
@@ -204,7 +203,24 @@ void InGameShowcaseEngine::render(EngineContext* context) {
         ~BlitSeqGuard() {
             seq.fetch_add(1U, std::memory_order_release);
         }
-    } blitGuard{m_renderBlitSeq};
+    };
+
+    if (m_streamPlayer.isCore1Streaming()) {
+        BlitSeqGuard blitGuard{m_renderBlitSeq};
+        const bool drew = m_streamPlayer.renderFrameCore1(s, m_width, m_height);
+        m_dirty = false;
+        m_renderedNewFrame = drew;
+        return;
+    }
+
+    const uint32_t seq1 = m_frameSeq.load(std::memory_order_acquire);
+    if ((seq1 & 1U) != 0U) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
+    }
+
+    BlitSeqGuard blitGuard{m_renderBlitSeq};
 
     const uint32_t seq2 = m_frameSeq.load(std::memory_order_acquire);
     if ((seq2 & 1U) != 0U) {
@@ -243,6 +259,7 @@ void InGameShowcaseEngine::pause() {
 }
 
 void InGameShowcaseEngine::resume() {
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
     m_displayEngaged.store(true, std::memory_order_release);
     m_lastRenderedSeq = 0;
     m_dirty = true;
@@ -252,6 +269,8 @@ void InGameShowcaseEngine::resume() {
 void InGameShowcaseEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_width = geometry.width > 0 ? geometry.width : 128;
     m_height = geometry.height > 0 ? geometry.height : 32;
+    m_streamPlayer.onGeometryChanged(geometry.rotation);
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
     m_lastRenderedSeq = 0;
     m_dirty = true;
 }
@@ -567,7 +586,7 @@ void FrontendSyncEngine::ensureShowcaseWorkerRunning() {
         return;
     }
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
-    const uint32_t stackBytes = hasPsram ? 6144U : 5632U;
+    const uint32_t stackBytes = hasPsram ? 6144U : 5120U;
     m_workerStopRequested.store(false, std::memory_order_release);
     m_workerExited.store(false, std::memory_order_release);
     if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 2, &m_showcaseWorkerHandle, 0) != pdPASS) {
@@ -962,99 +981,53 @@ void FrontendSyncEngine::cancelInGameShowcaseSession() {
     m_jobSeq.fetch_add(1, std::memory_order_release);
 }
 
-bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
-    size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    if (pixels == 0) return false;
-    if (m_streamFrames[0] != nullptr && m_streamIoScratch != nullptr && m_streamFramePixels == pixels) {
+bool FrontendSyncEngine::ensureStreamScratchAllocated() {
+    if (m_streamIoScratch != nullptr &&
+        m_streamIoScratchCap >= engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES) {
         return true;
     }
-    freeStreamBuffersSafely();
-
-    size_t frameBytes = pixels * sizeof(uint16_t);
+    if (m_streamIoScratch) {
+        free(m_streamIoScratch);
+        m_streamIoScratch = nullptr;
+        m_streamIoScratchCap = 0U;
+    }
 #if defined(ESP32)
-    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+#if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
     if (hasPsram) {
-        m_streamFrames[0] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_streamFrames[1] = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_streamIoScratch = static_cast<char*>(heap_caps_malloc(PSRAM_STREAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        m_streamIoScratch = static_cast<char*>(
+            heap_caps_malloc(STREAM_SESSION_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        );
         if (m_streamIoScratch) {
-            m_streamIoScratchCap = PSRAM_STREAM_IO_SCRATCH_BYTES;
-        } else {
-            m_streamIoScratch = static_cast<char*>(malloc(STREAM_IO_SCRATCH_BYTES));
-            if (m_streamIoScratch) {
-                m_streamIoScratchCap = STREAM_IO_SCRATCH_BYTES;
-            } else {
-                m_streamIoScratch = static_cast<char*>(malloc(MIN_STREAM_IO_SCRATCH_BYTES));
-                m_streamIoScratchCap = m_streamIoScratch ? MIN_STREAM_IO_SCRATCH_BYTES : 0U;
-            }
-        }
-    } else {
-        // Classic ESP32 (`esp32dev`): allocate a single 8 KB frame buffer (`m_streamFrames[0]`) + 4 KB
-        // circular `DMDZ` ring scratch (falling back gracefully to 2 KB / 1.4 KB when tight) in LIFO order
-        // so 8-bit HUB75 DMA stays pinned with zero internal DRAM fragmentation.
-        size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        const size_t scratchCandidates[4] = {
-            STREAM_IO_SCRATCH_BYTES,
-            MID_STREAM_IO_SCRATCH_BYTES,
-            FALLBACK_STREAM_IO_SCRATCH_BYTES,
-            MIN_STREAM_IO_SCRATCH_BYTES
-        };
-        const size_t headroomByCandidate[4] = {4608U, 3584U, 2560U, 2560U};
-        if (frameBytes <= 16384U &&
-            free8 >= (frameBytes + MIN_STREAM_IO_SCRATCH_BYTES + 2560U) &&
-            largest8 >= frameBytes) {
-            m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
-            if (m_streamFrames[0]) {
-                const size_t postFrameFree8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                for (size_t i = 0U; i < 4U && !m_streamIoScratch; ++i) {
-                    const size_t cand = scratchCandidates[i];
-                    if (postFrameFree8 >= (cand + headroomByCandidate[i])) {
-                        m_streamIoScratch = static_cast<char*>(malloc(cand));
-                        if (m_streamIoScratch) {
-                            m_streamIoScratchCap = cand;
-                        }
-                    }
-                }
-            }
+            m_streamIoScratchCap = STREAM_SESSION_SCRATCH_BYTES;
+            m_streamIoScratch[0] = '\0';
+            return true;
         }
     }
 #else
-    m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
-    m_streamFrames[1] = static_cast<uint16_t*>(malloc(frameBytes));
-    m_streamIoScratch = static_cast<char*>(malloc(PSRAM_STREAM_IO_SCRATCH_BYTES));
-    m_streamIoScratchCap = m_streamIoScratch ? PSRAM_STREAM_IO_SCRATCH_BYTES : 0U;
+    (void)hasPsram;
 #endif
-
-    if (!m_streamFrames[0] || !m_streamIoScratch) {
-        if (m_streamIoScratch) {
-            free(m_streamIoScratch);
-            m_streamIoScratch = nullptr;
+    if (!hasPsram) {
+        const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (free8 < (STREAM_SESSION_SCRATCH_BYTES + 8192U) || largest8 < STREAM_SESSION_SCRATCH_BYTES) {
+            return false;
         }
-        m_streamIoScratchCap = 0U;
-        if (m_streamFrames[1]) {
-            free(m_streamFrames[1]);
-            m_streamFrames[1] = nullptr;
-        }
-        if (m_streamFrames[0]) {
-            free(m_streamFrames[0]);
-            m_streamFrames[0] = nullptr;
-        }
-        m_streamFramePixels = 0;
+    }
+#endif
+    m_streamIoScratch = static_cast<char*>(malloc(STREAM_SESSION_SCRATCH_BYTES));
+    if (!m_streamIoScratch) {
         return false;
     }
-    memset(m_streamFrames[0], 0, frameBytes);
-    if (m_streamFrames[1]) {
-        memset(m_streamFrames[1], 0, frameBytes);
-    }
+    m_streamIoScratchCap = STREAM_SESSION_SCRATCH_BYTES;
     m_streamIoScratch[0] = '\0';
-    m_streamFramePixels = pixels;
     return true;
 }
 
 void FrontendSyncEngine::freeStreamBuffersSafely() {
     m_wantsInGameDisplay.store(false, std::memory_order_release);
     if (m_inGameEngine) {
+        m_inGameEngine->streamPlayer().resetCore1StreamState();
         m_inGameEngine->clearFrame();
         m_inGameEngine->waitRenderBlitQuiescent();
 #if defined(ESP32) && !defined(UNIT_TEST)
@@ -1063,20 +1036,13 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
         }
         vTaskDelay(pdMS_TO_TICKS(18));
 #endif
+        m_inGameEngine->streamPlayer().releaseAll();
     }
-    // Strict LIFO teardown (`m_streamIoScratch` -> `m_streamFrames[1]` -> `m_streamFrames[0]`)
     if (m_streamIoScratch) {
         free(m_streamIoScratch);
         m_streamIoScratch = nullptr;
     }
     m_streamIoScratchCap = 0U;
-    for (int i = 1; i >= 0; --i) {
-        if (m_streamFrames[i]) {
-            free(m_streamFrames[i]);
-            m_streamFrames[i] = nullptr;
-        }
-    }
-    m_streamFramePixels = 0;
 }
 
 void FrontendSyncEngine::deleteShowcaseQueueItemHttp(
@@ -1118,8 +1084,8 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     uint32_t configuredStreamMs
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (!resolvedServerUrl || !itemId || itemId[0] == '\0') return false;
-    if (!allocateStreamBuffers(expectedW, expectedH)) {
+    if (!resolvedServerUrl || !itemId || itemId[0] == '\0' || !m_inGameEngine) return false;
+    if (!ensureStreamScratchAllocated()) {
         LOGW("RetroFrontend", "Insufficient memory for %ux%u In-Game Showcase stream; keeping marquee.", expectedW, expectedH);
         return false;
     }
@@ -1128,16 +1094,14 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     const int pathLen = snprintf(
         streamPath,
         sizeof(streamPath),
-        "/api/v1/games/stream/%s.rgb565.stream?purge=false&paced=1&codec=dmdz1",
+        "/api/v1/games/stream/%s.rgb565.stream?purge=false&paced=1&codec=dmdz2",
         itemId
     );
     if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(streamPath)) {
         return false;
     }
 
-    if (m_inGameEngine) {
-        m_inGameEngine->resetStreamTelemetry();
-    }
+    m_inGameEngine->resetStreamTelemetry();
 
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
     struct StreamCallbackCtx {
@@ -1158,90 +1122,36 @@ bool FrontendSyncEngine::streamReadyItemOnce(
         return net::StreamStopReason::Continue;
     };
 
-    net::DmdzStreamParams params{};
-    params.serverUrl = resolvedServerUrl;
-    params.streamPath = streamPath;
-    params.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
-    params.logTag = "RetroFrontend";
-    params.ownerId = net::OWNER_INGAME_SYNC;
-    params.wsCredits = hasPsram
-        ? 8U
-        : ((m_streamIoScratchCap >= 5632U) ? 4U : ((m_streamIoScratchCap >= 3072U) ? 3U : 2U));
-    params.panelWidth = expectedW;
-    params.panelHeight = expectedH;
-    params.configuredStreamMs = configuredStreamMs;
-    params.maxFramePixels = m_streamFramePixels;
-    params.frameBuf0 = m_streamFrames[0];
-    params.frameBuf1 = m_streamFrames[1];
-    params.ioScratch = m_streamIoScratch;
-    params.ioScratchCap = m_streamIoScratchCap;
-    params.userCtx = &cbCtx;
-    params.checkStop = checkStopFn;
-
-    params.onBeginFrameWrite = [](void* rawCtx, uint16_t frameIdx, uint16_t* dstBuf, bool singleBuffer, uint32_t safeFps) {
-        (void)dstBuf;
+    engines::showcase::ShowcaseStreamRunOptions runOpts{};
+    runOpts.baseServerUrl = resolvedServerUrl;
+    runOpts.streamPath = streamPath;
+    runOpts.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
+    runOpts.logTag = "RetroFrontend";
+    runOpts.surfaceForReadOnlyCheck = m_inGameEngine->surface();
+    runOpts.ioScratch = m_streamIoScratch;
+    runOpts.ioScratchCap = m_streamIoScratchCap;
+    runOpts.panelWidth = expectedW;
+    runOpts.panelHeight = expectedH;
+    runOpts.preStreamCardWaitMs = 0U;
+    runOpts.cardStartedAtMs = 0U;
+    runOpts.maxStreamMs = std::min<uint32_t>(300000U, std::max<uint32_t>(12000U, configuredStreamMs + 6000U));
+    runOpts.hasPsram = hasPsram;
+    runOpts.purgeOnComplete = false;
+    runOpts.waitFirstFrameBeforeLive = true; // Late Preemption: never interrupt marquee unless Frame 0 is buffered!
+    runOpts.userCtx = &cbCtx;
+    runOpts.checkStop = checkStopFn;
+    runOpts.onEnterLiveStream = [](void* rawCtx) {
         auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
-        InGameShowcaseEngine* eng = c->self->m_inGameEngine;
-        if (!singleBuffer || !eng) {
-            return;
-        }
-        if (frameIdx > 0U) {
-            const uint32_t handoffBudgetMs = std::max<uint32_t>(frameIdx == 1U ? 36U : 18U, 1000U / safeFps);
-            const uint32_t handoffT0 = millis();
-            while (!c->self->m_workerStopRequested.load(std::memory_order_acquire) &&
-                   c->self->m_playSessionToken.load(std::memory_order_acquire) == c->expectedToken &&
-                   (c->hasPsram || !WebUiSyncEngine::isRequested()) &&
-                   eng->consumedFrameSeq() != eng->currentFrameSeq() &&
-                   (millis() - handoffT0) < handoffBudgetMs) {
-                vTaskDelay(1);
-            }
-        }
-        eng->beginFrameUpdate();
-        eng->waitRenderBlitQuiescent();
+        c->self->m_wantsInGameDisplay.store(true, std::memory_order_release);
     };
-
-    params.onFinishFrameWrite = [](
-        void* rawCtx,
-        uint16_t frameIdx,
-        const uint16_t* dstBuf,
-        uint16_t width,
-        uint16_t height,
-        bool okFrame,
-        bool singleBuffer
-    ) {
+    runOpts.onExitLiveStream = [](void* rawCtx) {
         auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
-        InGameShowcaseEngine* eng = c->self->m_inGameEngine;
-        if (!okFrame) {
-            if (singleBuffer) {
-                if (eng) {
-                    eng->clearFrame();
-                }
-                c->self->m_wantsInGameDisplay.store(false, std::memory_order_release);
-            }
-            return;
-        }
-        if (eng) {
-            eng->publishFrame(dstBuf, width, height);
-        }
-        if (frameIdx == 0U) {
-            // Late Preemption: Frame 0 is now buffered and published -> preempt marquee cleanly!
-            c->self->m_wantsInGameDisplay.store(true, std::memory_order_release);
-        }
-    };
-
-    params.getPresentedFrames = [](void* rawCtx) -> uint32_t {
-        const auto* c = static_cast<const StreamCallbackCtx*>(rawCtx);
-        return c->self->m_inGameEngine ? c->self->m_inGameEngine->presentedFrames() : 0U;
-    };
-
-    params.onNextFrameDueMs = [](void* rawCtx, uint32_t dueMs) {
-        const auto* c = static_cast<const StreamCallbackCtx*>(rawCtx);
         if (c->self->m_inGameEngine) {
-            c->self->m_inGameEngine->setNextStreamFrameDueMs(dueMs);
+            c->self->m_inGameEngine->waitRenderBlitQuiescent();
         }
     };
 
-    return net::DmdzStreamClient::stream(params);
+    return m_inGameEngine->streamPlayer().runStreamSession(runOpts);
 #else
     (void)resolvedServerUrl;
     (void)syncClientId;
