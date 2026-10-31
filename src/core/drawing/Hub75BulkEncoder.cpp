@@ -91,10 +91,8 @@ uint32_t Hub75BulkEncoder::encode(
     const uint8_t* const lutR = params.lutR;
     const uint8_t* const lutG = params.lutG;
     const uint8_t* const lutB = params.lutB;
-    const int baseRow = (rpf > 0) ? (static_cast<int>(params.startRow) % rpf) : 0;
 
-    for (int step = 0; step < rpf; step++) {
-        const int y = (rpf > 0) ? ((baseRow + step) % rpf) : step;
+    for (int y = 0; y < rpf; y++) {
         const uint16_t* src1;
         const uint16_t* src2;
 

@@ -2769,10 +2769,7 @@ void MediaShowcaseBase::executeAcquiredItem(
     // Compute full-synopsis Card dwell (`900 ms` start hold + full scroll + `700 ms` end hold)
     uint32_t cardWaitMs = 4500U;
     const uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(card.synopsis));
-    const uint32_t speedPx = engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(
-        synopsisPxPerSec(cfg.textScrollSpeed),
-        m_width
-    );
+    const uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
     if (cfg.showSynopsis && synGlyphs > 0U && speedPx > 0U) {
         const uint32_t textW = synGlyphs * 6U;
         const uint32_t availW = static_cast<uint32_t>(
@@ -2978,31 +2975,27 @@ void MediaShowcaseBase::update(EngineContext* context) {
         }
     } else {
         const uint32_t dtUs = nowUs - m_cardLastTickUs;
-        if (dtUs > 0U) {
+        if (dtUs >= 8000U) {
             m_cardLastTickUs = nowUs;
             const uint32_t prevTitleStep = m_titleStepPx;
             const uint32_t prevSynPx = m_synScrollPx;
 
-            const uint32_t effTitleSpeedPx =
-                engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(30U, m_width);
-            engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
+            (void)engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
                 m_titleStepPx,
                 m_titleSubpixelRem,
                 dtUs,
-                effTitleSpeedPx
+                30U
             );
 
             if (m_cfgShowSynopsis.load(std::memory_order_relaxed) &&
                 m_renderCard.synopsis[0] != '\0' &&
                 (now - m_cardAnimStartMs) >= 900U) {
-                const uint32_t baseSpeedPx = m_cfgSynopsisSpeedPx.load(std::memory_order_relaxed);
-                const uint32_t effSynSpeedPx =
-                    engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(baseSpeedPx, m_width);
-                engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
+                const uint32_t speedPx = m_cfgSynopsisSpeedPx.load(std::memory_order_relaxed);
+                (void)engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
                     m_synScrollPx,
                     m_synSubpixelRem,
                     dtUs,
-                    effSynSpeedPx
+                    speedPx
                 );
             }
 

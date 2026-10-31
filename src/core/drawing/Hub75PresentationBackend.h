@@ -37,6 +37,5 @@ private:
     uint16_t _width = 64;
     uint16_t _height = 32;
     uint8_t _colorDepth = 8;
-    uint8_t _nextStartRow = 0;
     bool _doubleBuffer = true;
 };

@@ -3442,9 +3442,9 @@ void test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll
 
     setMockProfile(HwProfile::ESP32_STD);
 
-    // 2b. `Hub75BulkEncoder::encode` rotated `startRow` + per-row `rowFlush` invariant (`256x64` 1/32 scan, 8-bit):
-    //     Every `startRow` (`0, 1, 7, 19, 31`) must produce 100% bit-exact HUB75 bitplanes while invoking
-    //     `rowFlush` once per scan row in the exact `(startRow + step) % 32` order.
+    // 2b. `Hub75BulkEncoder::encode` monotonic top-to-bottom scan order + per-row `rowFlush` invariant
+    //     (`256x64` 1/32 scan, 8-bit): encodes all 8 bitplanes per row while preserving upper control
+    //     bits `[15:6]` and invoking `rowFlush` strictly monotonically across `0 .. 31`.
     {
         constexpr uint16_t kTestW = 16;
         constexpr uint16_t kTestH = 64;
@@ -3486,53 +3486,80 @@ void test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll
         encParams.lutG = lutG;
         encParams.lutB = lutB;
         encParams.rotation = 0;
-        encParams.startRow = 0;
         encParams.rowFlush = flusher;
         encParams.flushCtx = &refBuf;
 
         Hub75BulkEncoder::encode(gradCanvas.data(), kTestW, accessor, &refBuf, encParams);
         TEST_ASSERT_EQUAL_UINT32(32U, static_cast<uint32_t>(refBuf.flushedRows.size()));
-
-        const uint8_t kStartRows[] = {1, 7, 19, 31};
-        for (uint8_t sr : kStartRows) {
-            MockScanBuffer rotBuf{};
-            memset(rotBuf.planes, 0xA5, sizeof(rotBuf.planes));
-            encParams.startRow = sr;
-            encParams.flushCtx = &rotBuf;
-            Hub75BulkEncoder::encode(gradCanvas.data(), kTestW, accessor, &rotBuf, encParams);
-
-            TEST_ASSERT_EQUAL_UINT32(32U, static_cast<uint32_t>(rotBuf.flushedRows.size()));
-            for (uint8_t step = 0; step < kTestRpf; ++step) {
-                TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((sr + step) % kTestRpf), rotBuf.flushedRows[step]);
+        for (uint8_t step = 0; step < kTestRpf; ++step) {
+            TEST_ASSERT_EQUAL_UINT8(step, refBuf.flushedRows[step]);
+            for (uint16_t x = 0; x < kTestW; ++x) {
+                const uint16_t c1 = gradCanvas[step * kTestW + x];
+                const uint16_t c2 = gradCanvas[(step + kTestRpf) * kTestW + x];
+                const uint8_t r1 = lutR[(c1 >> 11) & 0x1F];
+                const uint8_t g1 = lutG[(c1 >> 5) & 0x3F];
+                const uint8_t b1 = lutB[c1 & 0x1F];
+                const uint8_t r2 = lutR[(c2 >> 11) & 0x1F];
+                const uint8_t g2 = lutG[(c2 >> 5) & 0x3F];
+                const uint8_t b2 = lutB[c2 & 0x1F];
+                const int ax = MATRIX_TX_ADJUST(x);
+                for (uint8_t p = 0; p < 8; ++p) {
+                    const uint16_t expRgb =
+                        static_cast<uint16_t>((r1 >> p) & 1U) |
+                        (static_cast<uint16_t>((g1 >> p) & 1U) << 1) |
+                        (static_cast<uint16_t>((b1 >> p) & 1U) << 2) |
+                        (static_cast<uint16_t>((r2 >> p) & 1U) << 3) |
+                        (static_cast<uint16_t>((g2 >> p) & 1U) << 4) |
+                        (static_cast<uint16_t>((b2 >> p) & 1U) << 5);
+                    TEST_ASSERT_EQUAL_HEX16(
+                        static_cast<uint16_t>((0xA5A5U & HUB75_BITMASK_RGB12_CLEAR) | expRgb),
+                        refBuf.planes[step][p][ax]
+                    );
+                }
             }
-            TEST_ASSERT_EQUAL_INT(0, memcmp(refBuf.planes, rotBuf.planes, sizeof(refBuf.planes)));
         }
     }
 
-    // 3. `ShowcaseCardRenderer` geometry-proportional scroll speed & 1-px/frame 60 Hz lock on `256x64`
+    // 3. `ShowcaseCardRenderer::advanceCardScrollSubpixels` discrete `1/60 s` harmonic cadence lock:
+    //    - Rejects sub-frame ticks (`dtUs < 8000 us`),
+    //    - Steps default `30 px/s` ("4") strictly `+1 px` every `2` frames across `16,000 us` (`FrameScheduler`
+    //      `62.5 Hz`) and Core 0 PSRAM-preload jitter (`14,500 .. 25,500 us`) with `0` beat hitches or `+2 px` jumps,
+    //    - Steps `60 px/s` ("6") strictly `+1 px` every frame and `20 px/s` ("2") strictly `+1 px` every `3` frames,
+    //    - Catches up `2` frame units on a `33.3 ms` (`30 Hz`) tick.
     using engines::showcase::ShowcaseCardRenderer;
     const uint32_t baseNormal = ShowcaseCardRenderer::synopsisPxPerSec("4");
     TEST_ASSERT_EQUAL_UINT32(30U, baseNormal);
-    TEST_ASSERT_EQUAL_UINT32(30U, ShowcaseCardRenderer::effectiveScrollPxPerSec(baseNormal, 128U));
-    TEST_ASSERT_EQUAL_UINT32(60U, ShowcaseCardRenderer::effectiveScrollPxPerSec(baseNormal, 256U));
 
-    // Across 60 consecutive 16 ms (`16,000 us`) ticks on `256x64` (`effPxPerSec = 60`), every single
-    // frame must advance by strictly `+1 px` (`0` beat-frequency stalls and `0` `+2 px` jumps).
     uint32_t stepPx = 0U;
     uint32_t rem = 0U;
+    TEST_ASSERT_FALSE(ShowcaseCardRenderer::advanceCardScrollSubpixels(stepPx, rem, 4000U, 30U));
+    TEST_ASSERT_EQUAL_UINT32(0U, stepPx);
+
+    const uint32_t kJitterTicksUs[6] = {16000U, 24800U, 15900U, 22400U, 16667U, 25500U};
     for (uint32_t f = 1U; f <= 60U; ++f) {
-        const uint32_t dtUs = (f & 1U) ? 16000U : 17200U;
-        ShowcaseCardRenderer::advanceCardScrollSubpixels(stepPx, rem, dtUs, 60U);
-        TEST_ASSERT_EQUAL_UINT32(f, stepPx);
+        const uint32_t dtUs = kJitterTicksUs[(f - 1U) % 6U];
+        TEST_ASSERT_TRUE(ShowcaseCardRenderer::advanceCardScrollSubpixels(stepPx, rem, dtUs, 30U));
+        TEST_ASSERT_EQUAL_UINT32(f / 2U, stepPx);
     }
 
-    // On `128x32` (`effPxPerSec = 30`), 1,000 ms (`60 x 16,667 us` = `1,000,020 us`) advances 30 px smoothly
-    uint32_t step128 = 0U;
-    uint32_t rem128 = 0U;
-    for (int i = 0; i < 60; ++i) {
-        ShowcaseCardRenderer::advanceCardScrollSubpixels(step128, rem128, 16667U, 30U);
+    uint32_t step60 = 0U;
+    uint32_t rem60 = 0U;
+    for (uint32_t f = 1U; f <= 60U; ++f) {
+        TEST_ASSERT_TRUE(ShowcaseCardRenderer::advanceCardScrollSubpixels(step60, rem60, 16000U, 60U));
+        TEST_ASSERT_EQUAL_UINT32(f, step60);
     }
-    TEST_ASSERT_EQUAL_UINT32(30U, step128);
+
+    uint32_t step20 = 0U;
+    uint32_t rem20 = 0U;
+    for (uint32_t f = 1U; f <= 60U; ++f) {
+        TEST_ASSERT_TRUE(ShowcaseCardRenderer::advanceCardScrollSubpixels(step20, rem20, 16000U, 20U));
+        TEST_ASSERT_EQUAL_UINT32(f / 3U, step20);
+    }
+
+    uint32_t step30Hz = 0U;
+    uint32_t rem30Hz = 0U;
+    TEST_ASSERT_TRUE(ShowcaseCardRenderer::advanceCardScrollSubpixels(step30Hz, rem30Hz, 33333U, 30U));
+    TEST_ASSERT_EQUAL_UINT32(1U, step30Hz);
 }
 
 // =========================================================================

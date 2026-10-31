@@ -63,36 +63,28 @@ public:
         if (strcmp(speedStr, "10") == 0) return 150U;
         return 30U;
     }
-    static inline uint32_t effectiveScrollPxPerSec(uint32_t basePxPerSec, uint16_t panelW) {
-        if (basePxPerSec == 0U) return 0U;
-        if (panelW > 128U) {
-            uint32_t cappedW = (panelW > 512U) ? 512U : static_cast<uint32_t>(panelW);
-            return (basePxPerSec * cappedW + 64U) / 128U;
-        }
-        return basePxPerSec;
-    }
-    static inline uint32_t advanceCardScrollSubpixels(
+    static inline bool advanceCardScrollSubpixels(
         uint32_t& ioStepPx,
         uint32_t& ioSubpixelRem,
         uint32_t dtUs,
-        uint32_t effPxPerSec
+        uint32_t pxPerSec
     ) {
-        if (dtUs == 0U || effPxPerSec == 0U) {
-            return ioStepPx;
+        if (dtUs < 8000U || pxPerSec == 0U) {
+            return false;
         }
-        // Lock ~60 px/s (e.g. default speed "4" scaled onto a 256px-wide panel) strictly 1:1 to
-        // steady ~60 Hz display ticks (11..23 ms), eliminating both 30 Hz sample-and-hold ghosting
-        // and the 2.5 Hz beat hitch between `FrameScheduler`'s 16 ms (62.5 Hz) tick and 60.0 px/s.
-        if (effPxPerSec >= 54U && effPxPerSec <= 68U && dtUs >= 11000U && dtUs <= 23000U) {
-            ioStepPx += 1U;
-            return ioStepPx;
-        }
+        // Quantize nominal ~60 Hz display ticks (`8..27 ms`, covering `FrameScheduler`'s `16 ms` tick
+        // plus Core 0 Wi-Fi/PSRAM preload jitter) to strictly `1` discrete `1/60 s` frame unit so
+        // harmonic speeds (`15, 20, 30, 60, 120 px/s`) step at exact integer frame intervals with
+        // zero beat-frequency stutter or `+2 px` jumps; catch up proportionally only on true stalls.
         const uint32_t boundedUs = (dtUs > 50000U) ? 50000U : dtUs;
-        const uint32_t cappedSpeed = (effPxPerSec > 600U) ? 600U : effPxPerSec;
-        ioSubpixelRem += boundedUs * cappedSpeed;
-        ioStepPx += ioSubpixelRem / 1000000U;
-        ioSubpixelRem %= 1000000U;
-        return ioStepPx;
+        const uint32_t frameUnits = (boundedUs <= 27000U)
+            ? 1U
+            : ((boundedUs + 8333U) / 16667U);
+        const uint32_t cappedSpeed = (pxPerSec > 600U) ? 600U : pxPerSec;
+        ioSubpixelRem += frameUnits * cappedSpeed;
+        ioStepPx += ioSubpixelRem / 60U;
+        ioSubpixelRem %= 60U;
+        return true;
     }
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
     static int computeCardTextViewportWidth(uint16_t panelW, uint16_t panelH, bool showPoster);
