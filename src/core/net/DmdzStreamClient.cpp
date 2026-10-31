@@ -518,12 +518,15 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
     core::drawing::DmdzWsDemuxer wsDemux;
     HttpChunkedDecoder chunkDec;
 
+    const uint16_t reqWsChunkBytes = (scratchCap >= 4608U) ? 1360U : 1024U;
     if (core::drawing::buildDmdzWebSocketPath(
             rawPath,
             params.clientId,
             activePath,
             sizeof(activePath),
-            params.wsCredits)) {
+            params.wsCredits,
+            2U,
+            reqWsChunkBytes)) {
         char wsKey[25];
         formatRandomWsKeyBase64(wsKey);
         int wsReqLen = snprintf(
@@ -562,11 +565,11 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         if (hasPaced && hasCodec) {
             copySafeLocalStr(activePath, sizeof(activePath), rawPath);
         } else if (hasPaced && !hasCodec) {
-            snprintf(activePath, sizeof(activePath), "%s%scodec=dmdz1", rawPath, hasQ ? "&" : "?");
+            snprintf(activePath, sizeof(activePath), "%s%scodec=dmdz2", rawPath, hasQ ? "&" : "?");
         } else if (!hasPaced && hasCodec) {
             snprintf(activePath, sizeof(activePath), "%s%spaced=1", rawPath, hasQ ? "&" : "?");
         } else {
-            snprintf(activePath, sizeof(activePath), "%s%spaced=1&codec=dmdz1", rawPath, hasQ ? "&" : "?");
+            snprintf(activePath, sizeof(activePath), "%s%spaced=1&codec=dmdz2", rawPath, hasQ ? "&" : "?");
         }
 
         int reqLen = snprintf(
@@ -609,7 +612,10 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
 
     StreamByteRing rxRing;
     bool streamEof = false;
-    uint8_t rawRxBuf[520];
+    uint8_t rawRxBuf[704];
+    const size_t minFreeForCredit = (isWebSocket && scratchCap >= 4608U)
+        ? std::max<size_t>(effectiveWsCreditMinFreeBytes(scratchCap), static_cast<size_t>(reqWsChunkBytes) + 64U)
+        : effectiveWsCreditMinFreeBytes(scratchCap);
 
     auto flushWsControlAndCredits = [&](bool forceAllCredits) -> bool {
         if (!isWebSocket) {
@@ -629,7 +635,8 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                    forceAllCredits,
                    rxRing.size(),
                    rxRing.freeBytes(),
-                   rxRing.capacity())) {
+                   rxRing.capacity(),
+                   minFreeForCredit)) {
             const uint8_t batch = (pendingWsCredits > 16U) ? 16U : static_cast<uint8_t>(pendingWsCredits);
             uint8_t ackFrame[22];
             const size_t ackLen = core::drawing::DmdzWsDemuxer::buildMaskedCreditAckFrame(batch, ackFrame);
@@ -914,6 +921,11 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                 if (got >= wantLen) {
                     return true;
                 }
+                if (isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+                    if (!flushWsControlAndCredits(rxRing.empty())) {
+                        return false;
+                    }
+                }
                 continue;
             }
             if (streamEof) {
@@ -982,7 +994,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
 
     core::drawing::DmdzStreamDecoder dmdzDec;
     if (parsedHdr.isDmdz) {
-        dmdzDec.init(w, h);
+        dmdzDec.init(w, h, parsedHdr.version);
     }
 
     const bool singleBuffer = (params.frameBuf1 == nullptr);
@@ -993,7 +1005,6 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
         std::max<uint32_t>(params.configuredStreamMs + 4000U, (headerExpectedMs * 2U) + 4500U)
     );
     const uint32_t streamStartMs = millis();
-    const size_t minFreeForCredit = effectiveWsCreditMinFreeBytes(rxRing.capacity());
     const size_t safePrebufCap = (rxRing.capacity() > minFreeForCredit)
         ? (rxRing.capacity() - minFreeForCredit)
         : rxRing.capacity();
@@ -1147,12 +1158,20 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
                         }
                         rxRing.consumeRead(take);
                         rem -= take;
-                        if (rem > 0U && rxRing.empty() && isWebSocket &&
-                            (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
-                            if (!flushWsControlAndCredits(true)) {
-                                frameFailReason = lastReadFailReason;
-                                okFrame = false;
-                                break;
+                        if (rem > 0U) {
+                            if (!streamEof && !rxRing.full()) {
+                                if (!pumpSocketToRing(0U)) {
+                                    frameFailReason = lastReadFailReason;
+                                    okFrame = false;
+                                    break;
+                                }
+                            }
+                            if (isWebSocket && (pendingWsCredits > 0U || wsDemux.hasPendingPong())) {
+                                if (!flushWsControlAndCredits(rxRing.empty())) {
+                                    frameFailReason = lastReadFailReason;
+                                    okFrame = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1256,7 +1275,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
             endReason,
             lastSockErrno,
             isWebSocket ? "ws" : "http",
-            parsedHdr.isDmdz ? "dmdz1" : "dmds",
+            parsedHdr.isDmdz ? (parsedHdr.version >= 2U ? "dmdz2" : "dmdz1") : "dmds",
             activePath,
             static_cast<unsigned>(framesRead),
             static_cast<unsigned>(totalFrames),
@@ -1310,7 +1329,7 @@ bool DmdzStreamClient::stream(const DmdzStreamParams& params) {
 
     core::drawing::DmdzStreamDecoder dmdzDec;
     if (parsedHdr.isDmdz) {
-        dmdzDec.init(w, h);
+        dmdzDec.init(w, h, parsedHdr.version);
     }
     const bool singleBuffer = (params.frameBuf1 == nullptr);
     const uint32_t safeFps = std::max<uint32_t>(1U, static_cast<uint32_t>(parsedHdr.fps));

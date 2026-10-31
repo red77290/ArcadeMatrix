@@ -3742,16 +3742,34 @@ void test_showcase_and_ingame_odd_seqlock_skip_and_rearm(void) {
 }
 
 void test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants(void) {
-    // 1. `!hasPsram` (`wsCredits=2, ackBatch=1`) vs `hasPsram` (`wsCredits=8, ackBatch=2`)
+    // 1. `!hasPsram` (`wsCredits=4 -> ackBatch=2`, fallback `wsCredits=2 -> ackBatch=1`) & `hasPsram` (`wsCredits=8 -> ackBatch=2`)
     TEST_ASSERT_EQUAL_UINT8(1U, net::computeWsAckBatch(net::clampWsCredits(2U)));
+    TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(4U)));
     TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(8U)));
 
-    // 2. Credit backpressure withholds `'A'` when `ringFree < 1152U` and `ringCount > 0`,
+    // 2. Credit backpressure withholds `'A'` when `ringFree < minFree` and `ringCount > 0`,
     //    but always flushes when `ringCount == 0` (deadlock-freedom for frames > `ringCap`).
     TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 1U, false, 2944U, 1152U, 4096U));
     TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 1U, false, 2945U, 1151U, 4096U));
     TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 1U, true, 3072U, 1024U, 4096U));
     TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 4096U));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4720U, 1424U, 6144U, 1424U));
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4721U, 1423U, 6144U, 1424U));
+
+    char wsPathV2[288] = "";
+    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=true",
+        "esp32_dev_games",
+        wsPathV2,
+        sizeof(wsPathV2),
+        4U,
+        2U,
+        1360U
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/pkg_games_test.dmdz?purge=true&client_id=esp32_dev_games&credits=4&v=2&chunk=1360",
+        wsPathV2
+    );
 
     // 3. `StreamByteRing` circular wraparound & peek invariants on heap-backed 4096 B buffer
     std::unique_ptr<uint8_t[]> scratch(new uint8_t[4096]());
