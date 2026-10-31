@@ -8,6 +8,8 @@
 
 std::atomic<bool> WebUiSyncEngine::s_requested{false};
 std::atomic<bool> WebUiSyncEngine::s_readyForServing{false};
+std::atomic<bool> WebUiSyncEngine::s_hasDeadline{false};
+std::atomic<uint32_t> WebUiSyncEngine::s_syncDeadlineMs{0U};
 
 namespace {
 void drawCenteredClippedLine(
@@ -56,9 +58,7 @@ void WebUiSyncEngine::activate() {
 void WebUiSyncEngine::deactivate() {
     m_dirty = false;
     m_renderedNewFrame = false;
-    s_readyForServing.store(false, std::memory_order_release);
-    s_requested.store(false, std::memory_order_release);
-    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::DmdNetActivity::WebUiSync);
+    resetState();
 }
 
 void WebUiSyncEngine::update(EngineContext* context) {

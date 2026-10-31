@@ -66,10 +66,14 @@ ConfigLoader& AppRuntime::getConfig() {
 }
 
 void AppRuntime::requestWebUiSyncWindow(uint32_t durationMs) {
-    if (hardwareHAL.capabilities().hasPsram) {
+    if (hardwareHAL.capabilities().hasPsram || !canEngageWebUiSync()) {
         return;
     }
-    WebUiSyncEngine::markRequested();
+    const uint32_t nowMs = millis();
+    const uint32_t effectiveMs = WebUiSyncEngine::acquireOrExtendWindowMs(nowMs, durationMs);
+    if (effectiveMs == 0U) {
+        return;
+    }
     DisplayRequest req(
         DisplaySourceId::WEBUI_SYNC,
         DisplayPriority::WEBUI_SYNC,
@@ -77,8 +81,8 @@ void AppRuntime::requestWebUiSyncWindow(uint32_t durationMs) {
         /*pre=*/false,
         0,
         EngineHandle("webui_sync", "webui_sync_main"),
-        durationMs,
-        millis(),
+        effectiveMs,
+        nowMs,
         /*allowOv=*/false,
         /*clear=*/true,
         /*realtime=*/false

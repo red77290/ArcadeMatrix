@@ -11,6 +11,7 @@
 #include "core/net/DmdzStreamClient.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "engines/showcase/ShowcaseStreamPlayer.h"
+#include "engines/WebUiSyncEngine.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 #include "engines/mqttdata/GraphPayload.h"
@@ -3232,6 +3233,72 @@ void test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload(vo
     player.releaseAll();
 }
 
+void test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window(void) {
+    WebUiSyncEngine::resetState();
+
+    // 1. PSRAM boards never engage WEBUI_SYNC regardless of heap or cache state
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(true, false, false, 12000U, 4096U));
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(true, false, true, 12000U, 4096U));
+
+    // 2. Cached refreshes (`If-None-Match` -> 304 Not Modified, 0 B payload) NEVER interrupt DMD
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, true, false, 22284U, 19444U));
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, true, true, 12000U, 6000U));
+
+    // 3. Cold 200 OK with generous internal SRAM (e.g. panel blanked / night mode) skips WEBUI_SYNC
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 36000U, 20480U));
+
+    // 4. Cold 200 OK during active 8-bit HUB75 engine (`free8 ~ 22-28 KB`) engages short staging
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 26000U, 19444U));
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 36000U, 14000U));
+
+    // 5. Post-staging reload (`syncAlreadyActive == true`) preserves the cold-load window even after
+    //    engine eviction boosted free8 to ~55 KB
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, true, 55000U, 34804U));
+
+    // 6. Monotonic window tracker: short bootstrap tail (1200 ms) must NEVER shorten an active
+    //    cold-load window (2400 ms), and only extends when remaining time drops near expiry
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kStagingWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1000U, WebUiSyncEngine::kStagingWindowMs)
+    );
+    TEST_ASSERT_TRUE(WebUiSyncEngine::isRequested());
+
+    // Reload arrives 250 ms later with 2400 ms cold window (remaining 1750 ms < 2400 + 100 -> extends)
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kColdLoadWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1250U, WebUiSyncEngine::kColdLoadWindowMs)
+    );
+
+    // Rapid /api/* calls at t=1500 ms and t=1800 ms (remaining 2150 ms / 1850 ms >= 1300 ms):
+    // returns 0 so DisplayArbiter's 2400 ms window is neither shortened nor spammed
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1500U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1800U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+
+    // Slow Wi-Fi /api/* call near deadline (t=2800 ms, remaining 850 ms < 1300 ms): extends by 1200 ms
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kBootstrapTailWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(2800U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+
+    // Engine deactivation clears all flags and deadlines cleanly
+    WebUiSyncEngine syncEngine;
+    syncEngine.activate();
+    TEST_ASSERT_TRUE(WebUiSyncEngine::isReadyForServing());
+    syncEngine.deactivate();
+    TEST_ASSERT_FALSE(WebUiSyncEngine::isReadyForServing());
+    TEST_ASSERT_FALSE(WebUiSyncEngine::isRequested());
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3328,6 +3395,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_stream_byte_ring_and_spsc_byte_ring_non_pow2_wraparound);
     RUN_TEST(test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects);
     RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
+    RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
 
     return UNITY_END();
 }

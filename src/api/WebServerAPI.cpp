@@ -74,14 +74,14 @@ static bool deferForWebUiSyncIfLowHeap(AsyncWebServerRequest* request, size_t mi
 #if defined(ESP32)
     if (!hardwareHAL.capabilities().hasPsram) {
         if (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing()) {
-            app.requestWebUiSyncWindow(5000);
-            NetworkBudget::markBulkTransferActive(5000);
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kBootstrapTailWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kBootstrapTailWindowMs);
         }
         size_t free8 = freeInternal8BitHeap();
         size_t largest8 = largestInternal8BitBlock();
         if (largest8 < minLargest8 || free8 < minFree8) {
-            app.requestWebUiSyncWindow(5500);
-            NetworkBudget::markBulkTransferActive(5500);
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kLowHeapDeferralWindowMs);
             LOGI("WebServer", "Deferring %s to engage WEBUI_SYNC (free8=%u, largest8=%u, needFree=%u, needLargest=%u)",
                  request ? request->url().c_str() : "request",
                  (unsigned)free8, (unsigned)largest8, (unsigned)minFree8, (unsigned)minLargest8);
@@ -522,20 +522,39 @@ void WebServerAPI::begin() {
     // change when data/index.html is edited without committing, leaving stale UI in the browser.
     auto serveWebUi = [](AsyncWebServerRequest *request) {
         recordPeerCandidateFromRequest(request);
+
+        // Fast-path conditional refresh FIRST: 304 Not Modified sends 0 payload bytes and never
+        // interrupts active DMD playback with WEBUI_SYNC on cached browser reloads.
+        bool etagMatched = false;
+        if (request->hasHeader("If-None-Match")) {
+            const AsyncWebHeader* h = request->getHeader("If-None-Match");
+            if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
+                etagMatched = true;
+            }
+        }
+        if (etagMatched) {
+            request->send(304);
+            return;
+        }
+
+        const size_t free8 = freeInternal8BitHeap();
+        const size_t largest8 = largestInternal8BitBlock();
         LOGI("WebServer", "Serving WebUI to %s (Free8Bit: %u, MaxAlloc8Bit: %u)",
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
-             (unsigned)freeInternal8BitHeap(),
-             (unsigned)largestInternal8BitBlock());
+             (unsigned)free8,
+             (unsigned)largest8);
 
 #if defined(ESP32)
-        // On classic ESP32 without PSRAM (esp32dev), opening the WebUI preempts active DMD engines
-        // via DisplaySourceId::WEBUI_SYNC and temporarily drops HUB75 DMA depth to 2-bit so the
-        // 109 KB compressed SPA and initial /api/* bootstrap complete without 503 Low Memory errors.
-        if (!hardwareHAL.capabilities().hasPsram) {
-            app.requestWebUiSyncWindow(7000);
-            NetworkBudget::markBulkTransferActive(7000);
+        // On classic ESP32 without PSRAM (esp32dev), cold 200 OK SPA transfers only engage
+        // DisplaySourceId::WEBUI_SYNC when internal 8-bit DRAM is below the safe bulk watermark
+        // (or while a staging reload is already completing), using short non-sticky windows.
+        const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+        const bool syncActive = WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing();
+        if (WebUiSyncEngine::needsColdSpaStaging(hasPsram, /*etagMatched=*/false, syncActive, free8, largest8)) {
             if (app.canEngageWebUiSync() && !WebUiSyncEngine::isReadyForServing()) {
-                if (freeInternal8BitHeap() < 4096U || largestInternal8BitBlock() < 2048U) {
+                app.requestWebUiSyncWindow(WebUiSyncEngine::kStagingWindowMs);
+                NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kStagingWindowMs);
+                if (free8 < 4096U || largest8 < 2048U) {
                     AsyncWebServerResponse* r = request->beginResponse(503);
                     if (r) {
                         r->addHeader("Refresh", "1");
@@ -552,26 +571,17 @@ void WebServerAPI::begin() {
                     "<style>html,body{margin:0;height:100%;background:#0b0e14;display:flex;align-items:center;justify-content:center}"
                     ".s{width:28px;height:28px;border:3px solid #1e293b;border-top-color:#00e5ff;border-radius:50%;animation:r .7s linear infinite}"
                     "@keyframes r{to{transform:rotate(360deg)}}</style>"
-                    "<script>setTimeout(function(){location.replace(location.href)},400)</script>"
+                    "<script>setTimeout(function(){location.replace(location.href)},250)</script>"
                     "</head><body><div class='s'></div></body></html>";
                 AsyncWebServerResponse* staging = request->beginResponse(200, "text/html; charset=utf-8", kWebUiStagingHtml);
                 staging->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
                 request->send(staging);
                 return;
             }
-        }
-#endif
-
-        // If client sends conditional refresh, respond with 304 Not Modified instantly (0 bytes payload)
-        if (request->hasHeader("If-None-Match")) {
-            const AsyncWebHeader* h = request->getHeader("If-None-Match");
-            if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
-                request->send(304);
-                return;
-            }
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kColdLoadWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kColdLoadWindowMs);
         }
 
-#if defined(ESP32)
         if (largestInternal8BitBlock() < 6144U || freeInternal8BitHeap() < 8192U) {
             LOGW("WebServer", "Serving WebUI deferred: insufficient contiguous 8-bit DRAM (%u / %u bytes)",
                  (unsigned)largestInternal8BitBlock(), (unsigned)freeInternal8BitHeap());
@@ -580,12 +590,12 @@ void WebServerAPI::begin() {
         }
 
         // Memory-constrained platforms without PSRAM (classic ESP32 / esp32dev):
-        // When serving the heavy 109KB compressed SPA bundle while internal DRAM is below TLS watermark,
+        // When serving the heavy compressed SPA bundle while internal DRAM is below TLS watermark,
         // mark heavy transfer active to temporarily protect display pipeline and pause concurrent TLS bursts.
-        if (!hardwareHAL.capabilities().hasPsram) {
+        if (!hasPsram) {
             uint32_t largest = largestInternal8BitBlock();
             if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
-                NetworkBudget::markBulkTransferActive(4500);
+                NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kColdLoadWindowMs);
             }
         }
 #endif
@@ -678,8 +688,8 @@ static bool rejectIfLowHeap(AsyncWebServerRequest* request) {
     size_t minFree = hasPsram ? 20480 : 10240;
 #if defined(ESP32)
     if (!hasPsram && (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
-        app.requestWebUiSyncWindow(5000);
-        NetworkBudget::markBulkTransferActive(5000);
+        app.requestWebUiSyncWindow(WebUiSyncEngine::kBootstrapTailWindowMs);
+        NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kBootstrapTailWindowMs);
     }
 #endif
     size_t free8 = freeInternal8BitHeap();
@@ -687,8 +697,8 @@ static bool rejectIfLowHeap(AsyncWebServerRequest* request) {
     if (largest8 >= minLargest && free8 >= minFree) return false;
 #if defined(ESP32)
     if (!hasPsram) {
-        app.requestWebUiSyncWindow(5500);
-        NetworkBudget::markBulkTransferActive(5500);
+        app.requestWebUiSyncWindow(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+        NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kLowHeapDeferralWindowMs);
     }
 #endif
     LOGW("WebServer", "Rejecting config mutation: 8-bit DRAM pressure (free8=%u, largest8=%u, minFree=%u, minLargest=%u)",
@@ -811,7 +821,7 @@ void WebServerAPI::setupRoutes() {
              (unsigned)freeInternal8BitHeap(),
              (unsigned)largestInternal8BitBlock());
 
-        if (deferForWebUiSyncIfLowHeap(request, 10240U, 20480U)) {
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) {
             return;
         }
 #if defined(ESP32)
@@ -2404,16 +2414,18 @@ void WebServerAPI::setupRoutes() {
 
     // API: System settings (GET /api/system?section=system|matrix|mqtt|wifi|hardware)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
-        if (deferForWebUiSyncIfLowHeap(request, 10240U, 20480U)) return;
-        extern ConfigLoader config;
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const ConfigSnapshot& snap = guard.get();
-
         String section = "";
         if (request->hasParam("section")) {
             section = request->getParam("section")->value();
             section.toLowerCase();
         }
+        const size_t minLargest8 = section.isEmpty() ? 8192U : 6144U;
+        const size_t minFree8 = section.isEmpty() ? 18432U : 14336U;
+        if (deferForWebUiSyncIfLowHeap(request, minLargest8, minFree8)) return;
+
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
 
         size_t docCap = section.isEmpty() ? 6144 : 2048;
         SpiRamJsonDocument doc(docCap);
