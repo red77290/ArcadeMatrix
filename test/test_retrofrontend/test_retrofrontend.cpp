@@ -229,11 +229,11 @@ void test_mqtt_config_sanitization_and_roundtrip(void) {
 }
 
 /**
- * @brief Verifies that `InGameShowcaseEngine` shares `ShowcaseStreamPlayer` (`FRAME_PAL8` Zero-Copy
- *        `ScopedCanvasGuard` with `0 B` engine fallback buffer) and disables status overlays during
- *        live gameplay showcase playback (`allowsOverlay() == false`).
+ * @brief Verifies that `InGameShowcaseEngine` shares `ShowcaseStreamPlayer` (lossless 16-bit
+ *        `DMDZ` v2 Zero-Copy `ScopedCanvasGuard` with `0 B` engine fallback buffer) and disables
+ *        status overlays during live gameplay showcase playback (`allowsOverlay() == false`).
  */
-void test_ingame_showcase_engine_zero_copy_pal8_and_no_overlay(void) {
+void test_ingame_showcase_engine_zero_copy_dmdz2_and_no_overlay(void) {
     class MockInGameCanvasSurface : public IDrawingSurface {
     public:
         uint16_t pixels[128 * 32];
@@ -311,20 +311,30 @@ void test_ingame_showcase_engine_zero_copy_pal8_and_no_overlay(void) {
     TEST_ASSERT_TRUE(inGame.streamPlayer().isZeroCopyEligible());
     TEST_ASSERT_NULL(inGame.streamPlayer().fallbackFrameBuffer());
 
-    // Push a `DMDZ` v2 `FRAME_PAL8` (`0x05`) 1-color frame (`0x07FF` cyan) into the shared SPSC ring
+    // Push a lossless 16-bit `DMDZ` v2 `kFrameKey` (`0x07FF` cyan) into the shared `8,448 B` SPSC ring
     TEST_ASSERT_TRUE(inGame.streamPlayer().ensureDecoderAllocated(false));
-    TEST_ASSERT_TRUE(inGame.streamPlayer().allocateSpscRing(4096U, false));
+    TEST_ASSERT_TRUE(
+        inGame.streamPlayer().allocateSpscRing(
+            engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES,
+            false
+        )
+    );
     std::vector<uint8_t> wire;
-    const uint16_t payLen = 4U + 64U;
-    wire.push_back(static_cast<uint8_t>(payLen & 0xFFU));
-    wire.push_back(static_cast<uint8_t>(payLen >> 8));
-    wire.push_back(core::drawing::DmdzStreamDecoder::kFramePal8);
-    wire.push_back(0x00U);
+    wire.push_back(0U);
+    wire.push_back(0U);
+    wire.push_back(core::drawing::DmdzStreamDecoder::kFrameKey);
+    wire.push_back(0xE0U); // LIT 1: 0x07FF (cyan)
     wire.push_back(0xFFU);
     wire.push_back(0x07U);
-    for (int r = 0; r < 64; ++r) {
-        wire.push_back(0xFEU); // PAL_RUN 64 -> 64 * 64 = 4,096 px
+    uint32_t remPx = 128U * 32U - 1U;
+    while (remPx > 0U) {
+        const uint8_t run = static_cast<uint8_t>(remPx > 64U ? 64U : remPx);
+        wire.push_back(static_cast<uint8_t>(0x40U | (run - 1U))); // RUN(1..64)
+        remPx -= run;
     }
+    const uint16_t payLen = static_cast<uint16_t>(wire.size() - 2U);
+    wire[0] = static_cast<uint8_t>(payLen & 0xFFU);
+    wire[1] = static_cast<uint8_t>(payLen >> 8);
     TEST_ASSERT_EQUAL_UINT32(
         wire.size(),
         static_cast<uint32_t>(inGame.streamPlayer().spscRing().push(wire.data(), wire.size()))
@@ -355,7 +365,7 @@ void setup() {
     RUN_TEST(test_parse_showcase_health_broker);
     RUN_TEST(test_build_showcase_queue_request_json);
     RUN_TEST(test_mqtt_config_sanitization_and_roundtrip);
-    RUN_TEST(test_ingame_showcase_engine_zero_copy_pal8_and_no_overlay);
+    RUN_TEST(test_ingame_showcase_engine_zero_copy_dmdz2_and_no_overlay);
     UNITY_END();
 }
 

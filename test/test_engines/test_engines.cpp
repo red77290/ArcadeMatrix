@@ -991,7 +991,7 @@ void test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection() {
     TEST_ASSERT_EQUAL_MEMORY(expectedBody.data(), decoded.data(), expectedBody.size());
 }
 
-void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
+void test_media_showcase_compact_footprint_zero_copy_atomic_raw_and_rpi_turn_gate() {
     // 1. Compact instance footprint invariant (`<= 1,600 B`)
     TEST_ASSERT_LESS_OR_EQUAL_UINT32(1600U, static_cast<uint32_t>(sizeof(MediaShowcaseBase)));
 
@@ -1075,21 +1075,27 @@ void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
             m_streamPlayer.freeFallbackFrameBuffer();
         }
         void setPhaseForTest(uint8_t p) { m_phase.store(p, std::memory_order_release); }
-        void armZeroCopySpscPal8Frame(uint16_t fill565) {
+        void armZeroCopySpscRawFrame(uint16_t fill565) {
             TEST_ASSERT_TRUE(m_streamPlayer.ensureDecoderAllocated(false));
-            TEST_ASSERT_TRUE(m_streamPlayer.allocateSpscRing(4096U, false));
+            TEST_ASSERT_TRUE(
+                m_streamPlayer.allocateSpscRing(
+                    engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES,
+                    false
+                )
+            );
+            TEST_ASSERT_TRUE(m_streamPlayer.spscRing().capacity() >= 8448U);
 
-            // Encode 4,096 pixels (`64 * 64`) using `FRAME_PAL8` (`0x05`) 1-color + 64x `PAL_RUN(64)`
+            // Encode full `128x32` (`4,096` px) lossless 16-bit `kFrameRaw` (`2 + 1 + 8,192 = 8,195 B`)
+            // and verify it fits atomically in a single SPSC ring push & single Core 1 tick!
             std::vector<uint8_t> wire;
-            const uint16_t payLen = 4U + 64U;
+            const uint16_t payLen = 1U + 128U * 32U * 2U;
+            wire.reserve(2U + payLen);
             wire.push_back(static_cast<uint8_t>(payLen & 0xFFU));
             wire.push_back(static_cast<uint8_t>(payLen >> 8));
-            wire.push_back(core::drawing::DmdzStreamDecoder::kFramePal8);
-            wire.push_back(0x00U); // 1 color, no 2D scroll
-            wire.push_back(static_cast<uint8_t>(fill565 & 0xFFU));
-            wire.push_back(static_cast<uint8_t>(fill565 >> 8));
-            for (int r = 0; r < 64; ++r) {
-                wire.push_back(0xFEU); // PAL_RUN 64
+            wire.push_back(core::drawing::DmdzStreamDecoder::kFrameRaw);
+            for (int px = 0; px < 128 * 32; ++px) {
+                wire.push_back(static_cast<uint8_t>(fill565 & 0xFFU));
+                wire.push_back(static_cast<uint8_t>(fill565 >> 8));
             }
             TEST_ASSERT_EQUAL_UINT32(
                 wire.size(),
@@ -1135,10 +1141,10 @@ void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
     TEST_ASSERT_FALSE(probe.allowsOverlay());
     probe.setPhaseForTest(0U);
 
-    // 3. Zero-Copy `ScopedCanvasGuard` in-place `FRAME_PAL8` decode (`m_frame565 == nullptr`!)
+    // 3. Zero-Copy `ScopedCanvasGuard` atomic 1-tick `128x32` `kFrameRaw` (`8,195 B`) decode (`m_frame565 == nullptr`!)
     probe.forceDropEngineFrameBuffer();
     TEST_ASSERT_FALSE(probe.hasEngineFrameBuffer());
-    probe.armZeroCopySpscPal8Frame(0xF81FU);
+    probe.armZeroCopySpscRawFrame(0xF81FU);
     probe.update(&zCtx);
     probe.render(&zCtx);
     TEST_ASSERT_TRUE(probe.hasNewFrame());
@@ -1174,7 +1180,7 @@ void setup() {
     RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
     RUN_TEST(test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity);
     RUN_TEST(test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection);
-    RUN_TEST(test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate);
+    RUN_TEST(test_media_showcase_compact_footprint_zero_copy_atomic_raw_and_rpi_turn_gate);
     UNITY_END();
 }
 

@@ -1094,7 +1094,7 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     const int pathLen = snprintf(
         streamPath,
         sizeof(streamPath),
-        "/api/v1/games/stream/%s.rgb565.stream?purge=false&paced=1&codec=dmdz2",
+        "/api/v1/games/stream/%s.rgb565.stream?purge=false&codec=dmdz2",
         itemId
     );
     if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(streamPath)) {

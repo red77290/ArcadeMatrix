@@ -336,7 +336,9 @@ void appendShowcaseCommonConfigJson(
     appendRawToBuf(dst, cap, pos, ",\"video_type\":\"");
     appendJsonEscapedToBuf(dst, cap, pos, videoType);
     if (httpFieldNames) {
-        appendRawToBuf(dst, cap, pos, "\",\"include_poster\":false,\"include_synopsis\":");
+        appendRawToBuf(dst, cap, pos, "\",\"include_poster\":");
+        appendRawToBuf(dst, cap, pos, showPoster ? "true" : "false");
+        appendRawToBuf(dst, cap, pos, ",\"include_synopsis\":");
     } else {
         appendRawToBuf(dst, cap, pos, "\",\"show_poster\":");
         appendRawToBuf(dst, cap, pos, showPoster ? "true" : "false");
@@ -1037,6 +1039,7 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* cfg) {
         m_hasReadyItem.store(false, std::memory_order_release);
         m_mqttConnectedAtMs.store(0U, std::memory_order_release);
         m_skipTurnImmediately.store(false, std::memory_order_release);
+        m_workerBusyOrHolding.store(false, std::memory_order_release);
         m_turnDone.store(false, std::memory_order_release);
         m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
         clearLiveCardState();
@@ -1074,6 +1077,7 @@ void MediaShowcaseBase::activate() {
     m_mqttConnectedAtMs.store(0U, std::memory_order_release);
     m_skipTurnImmediately.store(false, std::memory_order_release);
     m_warmingFallback.store(false, std::memory_order_release);
+    m_workerBusyOrHolding.store(false, std::memory_order_release);
     m_turnDone.store(false, std::memory_order_release);
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
     clearLiveCardState();
@@ -1137,6 +1141,7 @@ void MediaShowcaseBase::deactivate() {
     }
     m_turnEvaluated.store(false, std::memory_order_release);
     m_readyStateReceived.store(false, std::memory_order_release);
+    m_workerBusyOrHolding.store(false, std::memory_order_release);
     m_mqttConnectedAtMs.store(0U, std::memory_order_release);
     m_dirty = false;
     m_renderedNewFrame = false;
@@ -1632,12 +1637,8 @@ bool openRawHttpSession(
 #endif
 
 static_assert(
-    sizeof(net::DmdzSpscStreamSession) <= 1472U,
-    "DmdzSpscStreamSession must fit inside MIN_IO_SCRATCH_BYTES (1472 B) with zero heap alloc"
-);
-static_assert(
-    sizeof(net::DmdzPreloadSession) <= 1472U,
-    "DmdzPreloadSession must fit inside MIN_IO_SCRATCH_BYTES (1472 B) with zero heap alloc"
+    sizeof(net::DmdzHttpStreamSession) <= 1472U,
+    "DmdzHttpStreamSession must fit inside MIN_IO_SCRATCH_BYTES (1472 B) with zero heap alloc"
 );
 
 } // namespace
@@ -1735,6 +1736,7 @@ void MediaShowcaseBase::runWorkerLoop() {
                 !shouldYieldShowcaseToWebUi(m_hasPsram) &&
                 m_cfgGen.load(std::memory_order_acquire) == startGen) {
                 LOGW("Showcase", "MQTT broker unreachable for '%s'; chaining same-turn HTTP fallback", domain);
+                m_mqttConnectedAtMs.store(0U, std::memory_order_release);
                 outcome = acquireItemViaHttp(
                     cfg,
                     extras,
@@ -1826,14 +1828,29 @@ void MediaShowcaseBase::runWorkerLoop() {
             if (prevSkips < 10U) {
                 m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
             }
-            m_readyStateReceived.store(true, std::memory_order_release);
-            m_turnEvaluated.store(true, std::memory_order_release);
             if (!soloSlot) {
-                // Part A.2: Zero `56 * 50 ms` wait loop — yield slot in `0 ms`!
+                // Hold the warming pixel-art banner briefly (`2.5 s`) on item 0 so multi-Showcase
+                // rotations do not thrash across slots every `720 ms` while the server warms up.
+#if defined(ESP32) && !defined(UNIT_TEST)
+                m_workerBusyOrHolding.store(true, std::memory_order_release);
+                for (int w = 0;
+                     w < 50 &&
+                     m_wantActive.load(std::memory_order_acquire) &&
+                     !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                     m_cfgGen.load(std::memory_order_acquire) == startGen;
+                     ++w) {
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+                m_workerBusyOrHolding.store(false, std::memory_order_release);
+#endif
+                m_readyStateReceived.store(true, std::memory_order_release);
+                m_turnEvaluated.store(true, std::memory_order_release);
                 m_skipTurnImmediately.store(true, std::memory_order_release);
                 m_turnDone.store(true, std::memory_order_release);
                 return;
             }
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_turnEvaluated.store(true, std::memory_order_release);
 #if defined(ESP32) && !defined(UNIT_TEST)
             for (int w = 0;
                  w < 8 &&
@@ -1860,13 +1877,27 @@ void MediaShowcaseBase::runWorkerLoop() {
         } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
             m_statusState.store(1, std::memory_order_release);
         }
-        m_readyStateReceived.store(true, std::memory_order_release);
-        m_turnEvaluated.store(true, std::memory_order_release);
         if (!soloSlot) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+            m_workerBusyOrHolding.store(true, std::memory_order_release);
+            for (int w = 0;
+                 w < 30 &&
+                 m_wantActive.load(std::memory_order_acquire) &&
+                 !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                 m_cfgGen.load(std::memory_order_acquire) == startGen;
+                 ++w) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            m_workerBusyOrHolding.store(false, std::memory_order_release);
+#endif
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_turnEvaluated.store(true, std::memory_order_release);
             m_skipTurnImmediately.store(true, std::memory_order_release);
             m_turnDone.store(true, std::memory_order_release);
             return;
         }
+        m_readyStateReceived.store(true, std::memory_order_release);
+        m_turnEvaluated.store(true, std::memory_order_release);
 #if defined(ESP32) && !defined(UNIT_TEST)
         for (int w = 0;
              w < 10 &&
@@ -2353,12 +2384,18 @@ MediaShowcaseBase::AcquireOutcome MediaShowcaseBase::acquireItemViaHttp(
     appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
     appendRawToBuf(m_ioScratch, scratchCap, pos, "\"}");
 
+    struct ScopedHttpBusyGuard {
+        std::atomic<bool>& flag;
+        explicit ScopedHttpBusyGuard(std::atomic<bool>& f) : flag(f) {
+            flag.store(true, std::memory_order_release);
+        }
+        ~ScopedHttpBusyGuard() {
+            flag.store(false, std::memory_order_release);
+        }
+    } busyGuard{m_workerBusyOrHolding};
+
     const uint8_t rotSlots = m_rotationSlotCount.load(std::memory_order_relaxed);
     const uint32_t httpConnTimeoutMs = (rotSlots <= 1U) ? 1200U : 550U;
-    {
-        const uint32_t httpStartMs = millis();
-        m_mqttConnectedAtMs.store(httpStartMs != 0U ? httpStartMs : 1U, std::memory_order_release);
-    }
 
     auto parseFilteredNextDoc = [&](JsonObjectConst rootObj) -> AcquireOutcome {
         const char* status = rootObj["status"] | "warming";
@@ -2437,8 +2474,6 @@ MediaShowcaseBase::AcquireOutcome MediaShowcaseBase::acquireItemViaHttp(
                     ? AcquireOutcome::ServerOffline
                     : AcquireOutcome::Aborted;
             }
-            const uint32_t postCfgAt = millis();
-            m_mqttConnectedAtMs.store(postCfgAt != 0U ? postCfgAt : 1U, std::memory_order_release);
         }
 
         if (!m_wantActive.load(std::memory_order_acquire) ||
@@ -2858,16 +2893,23 @@ void MediaShowcaseBase::update(EngineContext* context) {
                 m_skipTurnImmediately.store(true, std::memory_order_release);
             }
         } else if (rotSlots > 1U) {
-            const uint32_t mqttConnMs = m_mqttConnectedAtMs.load(std::memory_order_acquire);
-            const uint32_t graceMs = (m_consecutiveWarmSkips.load(std::memory_order_acquire) > 0U &&
-                                      m_itemsPlayedInTurn.load(std::memory_order_acquire) == 0U)
-                ? 350U
-                : 0U;
-            const bool retainedExpired = (mqttConnMs != 0U) && ((now - mqttConnMs) >= (250U + graceMs));
-            const bool connectExpired = (mqttConnMs == 0U) && ((now - m_activatedAtMs) >= 850U);
-            if (retainedExpired || connectExpired || !m_taskAlive.load(std::memory_order_acquire)) {
-                m_turnEvaluated.store(true, std::memory_order_release);
-                m_skipTurnImmediately.store(true, std::memory_order_release);
+            if (m_workerBusyOrHolding.load(std::memory_order_acquire)) {
+                if ((now - m_activatedAtMs) >= 4500U || !m_taskAlive.load(std::memory_order_acquire)) {
+                    m_turnEvaluated.store(true, std::memory_order_release);
+                    m_skipTurnImmediately.store(true, std::memory_order_release);
+                }
+            } else {
+                const uint32_t mqttConnMs = m_mqttConnectedAtMs.load(std::memory_order_acquire);
+                const uint32_t graceMs = (m_consecutiveWarmSkips.load(std::memory_order_acquire) > 0U &&
+                                          m_itemsPlayedInTurn.load(std::memory_order_acquire) == 0U)
+                    ? 350U
+                    : 0U;
+                const bool retainedExpired = (mqttConnMs != 0U) && ((now - mqttConnMs) >= (250U + graceMs));
+                const bool connectExpired = (mqttConnMs == 0U) && ((now - m_activatedAtMs) >= 850U);
+                if (retainedExpired || connectExpired || !m_taskAlive.load(std::memory_order_acquire)) {
+                    m_turnEvaluated.store(true, std::memory_order_release);
+                    m_skipTurnImmediately.store(true, std::memory_order_release);
+                }
             }
         }
     }

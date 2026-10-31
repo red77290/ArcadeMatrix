@@ -25,10 +25,11 @@ using HttpChunkedDecoder = net::HttpChunkedDecoder;
  * - 1:1 RPi turn-readiness gate (`m_turnEvaluated`, `m_readyStateReceived`, `m_mqttConnectedAtMs`),
  *   streaming filtered MQTT/HTTP JSON parsing (`0` drop `> 8 KB`), binary `.rgb565` poster fetch,
  *   and automatic same-turn `MQTT -> HTTP` fallback.
- * - Core 1 Zero-Copy `ScopedCanvasGuard` in-place `DMDZ` v2 (`FRAME_PAL8` + RLE/LZ/Scroll2D)
- *   decoding with dynamic `allowsOverlay() == false` during `StreamBlank` and `LiveStream`.
- * - 3-Tier adaptive stream delivery (`sram` lock-free SPSC ring, `psram` `<= 1.5 MB` full preload,
- *   `psram_hd` `<= 3.5 MB` progressive `16 KB` preload + PSRAM SPSC WS fallback).
+ * - Core 1 Zero-Copy `ScopedCanvasGuard` in-place `DMDZ` v2 (`16-bit` True-RGB565 lossless
+ *   `RLE` / `LZ` / `Scroll2D`) decoding with dynamic `allowsOverlay() == false` during
+ *   `StreamBlank` and `LiveStream`.
+ * - Shared `ShowcaseStreamPlayer` delivery (`esp32dev` `25 MHz` SD cache `/cache/showcase_live.dmdz`
+ *   with `0` Wi-Fi traffic during playback; `ESP32-S3` PSRAM preload `<= 4 MB` + `1 MB` PSRAM SPSC).
  */
 class MediaShowcaseBase : public IEngine {
 public:
@@ -249,6 +250,7 @@ protected:
     std::atomic<uint32_t> m_mqttConnectedAtMs{0};
     std::atomic<bool> m_skipTurnImmediately{false};
     std::atomic<bool> m_warmingFallback{false};
+    std::atomic<bool> m_workerBusyOrHolding{false};
     std::atomic<bool> m_turnDone{false};
     std::atomic<uint8_t> m_phase{static_cast<uint8_t>(Phase::Card)};
     std::atomic<uint8_t> m_statusState{3};

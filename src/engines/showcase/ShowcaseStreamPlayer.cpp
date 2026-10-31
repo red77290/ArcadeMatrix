@@ -6,9 +6,13 @@
 #include <new>
 
 #if defined(ESP32)
-#include "../../core/NetworkBudget.h"
 #include <esp_heap_caps.h>
 #if !defined(UNIT_TEST)
+#include "../../core/Logger.h"
+#include "../../core/NetworkBudget.h"
+#include "../../core/SDUtils.h"
+#include "../../core/SdLockGuard.h"
+#include "../../hal/BoardProfile.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #endif
@@ -19,12 +23,8 @@ namespace engines::showcase {
 namespace {
 
 static_assert(
-    sizeof(net::DmdzSpscStreamSession) <= ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES,
-    "DmdzSpscStreamSession must fit inside MIN_SESSION_SCRATCH_BYTES (1472 B) with zero heap alloc"
-);
-static_assert(
-    sizeof(net::DmdzPreloadSession) <= ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES,
-    "DmdzPreloadSession must fit inside MIN_SESSION_SCRATCH_BYTES (1472 B) with zero heap alloc"
+    sizeof(net::DmdzHttpStreamSession) <= ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES,
+    "DmdzHttpStreamSession must fit inside MIN_SESSION_SCRATCH_BYTES (1472 B) with zero heap alloc"
 );
 
 #if defined(ESP32)
@@ -54,6 +54,117 @@ struct ScratchSessionGuard {
     }
     ScratchSessionGuard(const ScratchSessionGuard&) = delete;
     ScratchSessionGuard& operator=(const ScratchSessionGuard&) = delete;
+};
+
+/**
+ * @struct ScopedSdCacheFile
+ * @brief Core 0 RAII SD cache file wrapper acquiring `SdLockGuard` strictly per bounded chunk
+ *        so `sdMutex` is never held across network waits or FreeRTOS sleeps.
+ */
+struct ScopedSdCacheFile {
+    FsFile file{};
+    size_t curPos = 0U;
+    bool isOpen = false;
+
+    ScopedSdCacheFile() = default;
+    ~ScopedSdCacheFile() {
+        closeFile();
+    }
+
+    ScopedSdCacheFile(const ScopedSdCacheFile&) = delete;
+    ScopedSdCacheFile& operator=(const ScopedSdCacheFile&) = delete;
+
+    bool openReadWrite(const char* cachePath) {
+        closeFile();
+        if (!cachePath || cachePath[0] == '\0') {
+            return false;
+        }
+        SdLockGuard guard(pdMS_TO_TICKS(600));
+        if (!guard) {
+            return false;
+        }
+        if (!sd.exists("/cache")) {
+            sd.mkdir("/cache");
+        }
+#if USE_SD_MMC
+        if (!sd.exists(cachePath)) {
+            FsFile createFile = sd.open(cachePath, FILE_OPEN_WRITE);
+            if (createFile) {
+                createFile.close();
+            }
+        }
+        file = sd.open(cachePath, "r+");
+#else
+        file = sd.open(cachePath, O_RDWR | O_CREAT);
+#endif
+        if (!file) {
+            return false;
+        }
+        file.seek(0);
+        curPos = 0U;
+        isOpen = true;
+        return true;
+    }
+
+    bool writeAt(size_t offset, const uint8_t* src, size_t len) {
+        if (!src || len == 0U) {
+            return true;
+        }
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (!guard || !isOpen) {
+            return false;
+        }
+        if (curPos != offset) {
+            if (!file.seek(offset)) {
+                return false;
+            }
+            curPos = offset;
+        }
+        const size_t w = file.write(src, len);
+        curPos += w;
+        return w == len;
+    }
+
+    void flushFile() {
+        SdLockGuard guard(pdMS_TO_TICKS(400));
+        if (guard && isOpen) {
+            file.flush();
+        }
+    }
+
+    bool readAt(size_t offset, uint8_t* dst, size_t len, size_t& outRead) {
+        outRead = 0U;
+        if (!dst || len == 0U) {
+            return true;
+        }
+        SdLockGuard guard(pdMS_TO_TICKS(250));
+        if (!guard || !isOpen) {
+            return false;
+        }
+        if (curPos != offset) {
+            if (!file.seek(offset)) {
+                return false;
+            }
+            curPos = offset;
+        }
+        const int r = file.read(dst, len);
+        if (r <= 0) {
+            return false;
+        }
+        outRead = static_cast<size_t>(r);
+        curPos += outRead;
+        return true;
+    }
+
+    void closeFile() {
+        if (isOpen) {
+            SdLockGuard guard(pdMS_TO_TICKS(600));
+            if (guard) {
+                file.close();
+            }
+            isOpen = false;
+        }
+    }
 };
 #endif
 
@@ -205,8 +316,8 @@ bool ShowcaseStreamPlayer::allocateSpscRing(size_t preferredBytes, bool hasPsram
 #if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
     if (hasPsram) {
         uint8_t* psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        if (!psBuf && preferredBytes > 65536U) {
-            preferredBytes = 65536U;
+        if (!psBuf && preferredBytes > 262144U) {
+            preferredBytes = 262144U;
             psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         }
         if (!psBuf) {
@@ -220,8 +331,8 @@ bool ShowcaseStreamPlayer::allocateSpscRing(size_t preferredBytes, bool hasPsram
     (void)hasPsram;
 #endif
 
-    // Tier 1 (`profile="sram"`): try `10,240 B` keeping `>= 20 KB` free 8-bit heap for `esp_wifi`/lwIP,
-    // else `8,192 B` (`>= 14 KB` free), else `6,144 B` / `4,096 B` step-down.
+    // Non-PSRAM (`esp32dev`): prefer `9,216 B` or `8,448 B` (`> 8,195 B` max `128x32` `FRAME_RAW`)
+    // so every `128x32` frame is decoded atomically in 1 Core 1 tick with zero tearing.
     const size_t candidates[4] = {
         SRAM_SPSC_HI_RING_BYTES,
         SRAM_SPSC_DEFAULT_RING_BYTES,
@@ -229,14 +340,14 @@ bool ShowcaseStreamPlayer::allocateSpscRing(size_t preferredBytes, bool hasPsram
         SRAM_SPSC_MIN_RING_BYTES
     };
     const size_t postAllocMinFree8[4] = {
-        20480U,
-        14336U,
-        10240U,
-        6144U
+        18432U,
+        12288U,
+        8192U,
+        5120U
     };
     for (size_t i = 0U; i < 4U; ++i) {
         const size_t cand = candidates[i];
-        if (cand > preferredBytes && i == 0U) {
+        if (cand > preferredBytes) {
             continue;
         }
         if (playerLargest8BitBlock() < cand) {
@@ -253,8 +364,8 @@ bool ShowcaseStreamPlayer::allocateSpscRing(size_t preferredBytes, bool hasPsram
         }
         free(mem);
     }
-    // Unit-test / synthetic small-ring fallback (e.g. `preferredBytes <= 4096`)
-    if (preferredBytes <= SRAM_SPSC_MIN_RING_BYTES && playerLargest8BitBlock() >= preferredBytes) {
+    // Unit-test / synthetic explicit ring size fallback
+    if (preferredBytes <= SRAM_SPSC_DEFAULT_RING_BYTES && playerLargest8BitBlock() >= preferredBytes) {
         uint8_t* mem = static_cast<uint8_t*>(malloc(preferredBytes));
         if (mem) {
             m_spscRingStorage = mem;
@@ -346,7 +457,10 @@ bool ShowcaseStreamPlayer::shouldMarkCore1Dirty(uint32_t nowMs) const {
         return false;
     }
     if (mode == ShowcaseStreamExecMode::SpscRing) {
-        return m_spscRing.consumerSize() > 0U;
+        if (m_core1DecPartialRem > 0U) {
+            return m_spscRing.consumerSize() > 0U;
+        }
+        return hasBufferedFrameInSpscRing();
     }
 #if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
     if (mode == ShowcaseStreamExecMode::PsramPreload) {
@@ -362,18 +476,27 @@ bool ShowcaseStreamPlayer::hasBufferedFrameInSpscRing() const {
     if (cap == 0U) {
         return false;
     }
-    const size_t safeThreshold = (cap > 1600U) ? (cap - 1600U) : (cap / 2U);
     if (m_streamHeaderIsDmdz) {
         uint16_t payLen = 0U;
         if (!m_spscRing.peekFrameLength(payLen)) {
             return false;
         }
-        const size_t need = std::min<size_t>(2U + static_cast<size_t>(payLen), safeThreshold);
-        return m_spscRing.consumerSize() >= need;
+        const size_t totalWire = 2U + static_cast<size_t>(payLen);
+        if (totalWire <= cap) {
+            return m_spscRing.consumerSize() >= totalWire;
+        }
+        const size_t oversizedTrigger = std::max<size_t>(2U, std::min<size_t>(cap / 2U, 2048U));
+        return m_spscRing.consumerSize() >= oversizedTrigger;
     }
     const size_t rawBytes = static_cast<size_t>(m_streamHeaderW) * static_cast<size_t>(m_streamHeaderH) * sizeof(uint16_t);
-    const size_t need = std::min<size_t>(rawBytes, safeThreshold);
-    return need > 0U && m_spscRing.consumerSize() >= need;
+    if (rawBytes == 0U) {
+        return false;
+    }
+    if (rawBytes <= cap) {
+        return m_spscRing.consumerSize() >= rawBytes;
+    }
+    const size_t oversizedTrigger = std::max<size_t>(2U, std::min<size_t>(cap / 2U, 2048U));
+    return m_spscRing.consumerSize() >= oversizedTrigger;
 }
 
 void ShowcaseStreamPlayer::armSpscStreamForTest(
@@ -454,7 +577,32 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         return false;
     }
 
+    const char* tag = (opts.logTag && opts.logTag[0] != '\0') ? opts.logTag : "Showcase";
+    const uint32_t cardT0 = (opts.cardStartedAtMs != 0U) ? opts.cardStartedAtMs : millis();
+    const uint32_t maxStreamMs = (opts.maxStreamMs >= 2000U) ? opts.maxStreamMs : 15000U;
+
+    auto waitRemainingCardDwell = [&]() {
+        if (opts.preStreamCardWaitMs == 0U) {
+            return;
+        }
+        while (checkStop() == net::StreamStopReason::Continue &&
+               (millis() - cardT0) < opts.preStreamCardWaitMs) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+    };
+
+    auto maybePurgeHttp = [&]() {
+        if (opts.purgeOnComplete && checkStop() == net::StreamStopReason::Continue) {
+            net::DmdzStreamClient::notifyHttpStreamPurge(
+                opts.baseServerUrl,
+                opts.streamPath,
+                opts.clientId
+            );
+        }
+    };
+
     if (!ensureDecoderAllocated(opts.hasPsram)) {
+        waitRemainingCardDwell();
         return false;
     }
 
@@ -462,10 +610,16 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         refreshZeroCopyFromSurfaceReadOnly(opts.surfaceForReadOnlyCheck, opts.panelWidth, opts.panelHeight);
     }
     const bool zeroCopyEligible = m_zeroCopyEligible.load(std::memory_order_acquire);
-    const char* profile = net::selectDmdzStreamProfile(opts.hasPsram, opts.panelWidth, opts.panelHeight);
-    const char* tag = (opts.logTag && opts.logTag[0] != '\0') ? opts.logTag : "Showcase";
-    const uint32_t cardT0 = (opts.cardStartedAtMs != 0U) ? opts.cardStartedAtMs : millis();
-    const uint32_t maxStreamMs = (opts.maxStreamMs >= 2000U) ? opts.maxStreamMs : 15000U;
+
+    auto applyParsedHeader = [&](const core::drawing::DmdzStreamHeader& hdr) {
+        m_streamHeaderW = hdr.width > 0U ? hdr.width : opts.panelWidth;
+        m_streamHeaderH = hdr.height > 0U ? hdr.height : opts.panelHeight;
+        m_streamHeaderVersion = hdr.version;
+        m_streamHeaderIsDmdz = hdr.isDmdz;
+        m_streamTotalFrames = hdr.totalFrames;
+        const uint32_t safeFps = std::max<uint32_t>(1U, hdr.fps);
+        m_streamFrameIntervalUs = 1000000U / safeFps;
+    };
 
     auto ensureFallbackBufferForHeader = [&](uint16_t hdrW, uint16_t hdrH, bool& outAllocatedTemp) -> bool {
         outAllocatedTemp = false;
@@ -482,58 +636,233 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         return true;
     };
 
-    auto runSpscSessionLoop = [&](net::DmdzSpscStreamSession& sess, bool alreadyOpened, uint8_t wsCredits, uint16_t wsChunk) -> bool {
-        if (!alreadyOpened) {
-            if (!sess.open(
-                    opts.baseServerUrl,
-                    opts.streamPath,
-                    opts.clientId,
-                    profile,
-                    wsCredits,
-                    wsChunk,
-                    m_spscRing,
-                    opts.checkStop,
-                    opts.userCtx,
-                    tag)) {
-                return false;
-            }
-        }
-        m_streamHeaderW = sess.header.width > 0U ? sess.header.width : opts.panelWidth;
-        m_streamHeaderH = sess.header.height > 0U ? sess.header.height : opts.panelHeight;
-        m_streamHeaderVersion = sess.header.version;
-        m_streamHeaderIsDmdz = sess.header.isDmdz;
-        m_streamTotalFrames = sess.header.totalFrames;
-        const uint32_t safeFps = std::max<uint32_t>(1U, sess.header.fps);
-        m_streamFrameIntervalUs = 1000000U / safeFps;
-
-        bool tempFallback = false;
-        if (!ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
-            sess.close(false);
-            freeSpscRing();
+    // =========================================================================
+    // NON-PSRAM (`esp32dev`): Plain HTTP TCP -> 25 MHz SD Cache -> SPSC Ring
+    // =========================================================================
+    if (!opts.hasPsram) {
+        if (!BoardProfile::current().isStorageAvailable() || sdMutex == nullptr) {
+            LOGW(tag, "SD storage unavailable on non-PSRAM board; holding Info Card without video stream");
+            waitRemainingCardDwell();
+            maybePurgeHttp();
             return false;
         }
 
-        // Late Preemption (`FrontendSyncEngine`): buffer Frame 0 BEFORE preempting the marquee!
+        NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
+        ScratchSessionGuard<net::DmdzHttpStreamSession> httpGuard(opts.ioScratch, opts.ioScratchCap);
+        if (!httpGuard.ptr ||
+            !httpGuard.ptr->open(
+                opts.baseServerUrl,
+                opts.streamPath,
+                opts.clientId,
+                false,
+                opts.checkStop,
+                opts.userCtx,
+                tag)) {
+            waitRemainingCardDwell();
+            maybePurgeHttp();
+            return false;
+        }
+
+        const char* cachePath = opts.waitFirstFrameBeforeLive
+            ? "/cache/showcase_sync.dmdz"
+            : "/cache/showcase_live.dmdz";
+
+        ScopedSdCacheFile sdCache;
+        if (!sdCache.openReadWrite(cachePath) ||
+            !sdCache.writeAt(0U, httpGuard.ptr->rawHeader16, 16U)) {
+            LOGW(tag, "Failed to open/write SD stream cache '%s'", cachePath);
+            httpGuard.ptr->close();
+            waitRemainingCardDwell();
+            maybePurgeHttp();
+            return false;
+        }
+
+        const size_t sessionAlignedBytes =
+            (sizeof(net::DmdzHttpStreamSession) + alignof(std::max_align_t) - 1U) &
+            ~(alignof(std::max_align_t) - 1U);
+        uint8_t fallbackStage[256];
+        uint8_t* sdStageBuf = fallbackStage;
+        size_t sdStageCap = sizeof(fallbackStage);
+        if (opts.ioScratchCap > sessionAlignedBytes + 256U) {
+            sdStageBuf = reinterpret_cast<uint8_t*>(opts.ioScratch + sessionAlignedBytes);
+            sdStageCap = opts.ioScratchCap - sessionAlignedBytes;
+        }
+
+        size_t sdWritePos = 16U;
+        size_t sdReadPos = 16U;
+        bool tcpClosedCleanly = false;
+        if (httpGuard.ptr->streamEof) {
+            sdCache.flushFile();
+            httpGuard.ptr->close();
+            tcpClosedCleanly = true;
+        }
+
+        auto pumpTcpToSd = [&](size_t maxStepBytes, uint32_t sockWaitMs) -> bool {
+            if (tcpClosedCleanly) {
+                return true;
+            }
+            size_t totalStep = 0U;
+            bool waited = false;
+            while (totalStep < maxStepBytes && !httpGuard.ptr->streamEof) {
+                const size_t want = std::min<size_t>(sdStageCap, maxStepBytes - totalStep);
+                size_t got = 0U;
+                const bool ok = httpGuard.ptr->readSome(
+                    sdStageBuf,
+                    want,
+                    got,
+                    waited ? 0U : sockWaitMs,
+                    opts.checkStop,
+                    opts.userCtx
+                );
+                waited = true;
+                if (got > 0U) {
+                    if (!sdCache.writeAt(sdWritePos, sdStageBuf, got)) {
+                        httpGuard.ptr->close();
+                        tcpClosedCleanly = true;
+                        return false;
+                    }
+                    sdWritePos += got;
+                    totalStep += got;
+                }
+                if (!ok) {
+                    httpGuard.ptr->streamEof = true;
+                    break;
+                }
+                if (got == 0U) {
+                    break;
+                }
+            }
+            if (httpGuard.ptr->streamEof && !tcpClosedCleanly) {
+                sdCache.flushFile();
+                httpGuard.ptr->close();
+                tcpClosedCleanly = true;
+            }
+            return true;
+        };
+
+        // 1. Pre-download `.dmdz2` stream onto SD during Info Card dwell (or Late Preemption)
+        if (opts.preStreamCardWaitMs > 0U) {
+            while (checkStop() == net::StreamStopReason::Continue) {
+                const uint32_t elapsed = millis() - cardT0;
+                if (elapsed >= opts.preStreamCardWaitMs) {
+                    break;
+                }
+                if (!tcpClosedCleanly) {
+                    const uint32_t remCard = opts.preStreamCardWaitMs - elapsed;
+                    if (!pumpTcpToSd(4096U, std::min<uint32_t>(20U, remCard))) {
+                        break;
+                    }
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(25));
+                }
+            }
+            const uint32_t finishT0 = millis();
+            while (!tcpClosedCleanly &&
+                   checkStop() == net::StreamStopReason::Continue &&
+                   (millis() - finishT0) < 1000U) {
+                if (!pumpTcpToSd(4096U, 20U)) {
+                    break;
+                }
+            }
+        } else {
+            // `FrontendSyncEngine` Late Preemption: download while local marquee plays uninterrupted
+            const uint32_t syncDlT0 = millis();
+            while (!tcpClosedCleanly &&
+                   checkStop() == net::StreamStopReason::Continue &&
+                   (millis() - syncDlT0) < 4000U) {
+                if (!pumpTcpToSd(1536U, 15U)) {
+                    break;
+                }
+                vTaskDelay(1);
+            }
+        }
+
+        if (checkStop() != net::StreamStopReason::Continue || sdWritePos <= 16U) {
+            httpGuard.ptr->close();
+            sdCache.closeFile();
+            if (sdWritePos <= 16U) {
+                maybePurgeHttp();
+            }
+            return false;
+        }
+
+        // 2. Free poster (`+2 KB`) & allocate `8,448–9,216 B` SPSC ring for atomic `128x32` frames
+        if (opts.onBeforeLiveStream) {
+            opts.onBeforeLiveStream(opts.userCtx);
+        }
+
+        applyParsedHeader(httpGuard.ptr->header);
+
+        if (m_spscRingStorage == nullptr && !allocateSpscRing(SRAM_SPSC_HI_RING_BYTES, false)) {
+            httpGuard.ptr->close();
+            sdCache.closeFile();
+            maybePurgeHttp();
+            return false;
+        }
+
+        bool tempFallback = false;
+        if (!ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
+            httpGuard.ptr->close();
+            sdCache.closeFile();
+            freeSpscRing();
+            maybePurgeHttp();
+            return false;
+        }
+
+        auto pumpSdToRing = [&](size_t maxStepBytes) -> bool {
+            size_t totalRead = 0U;
+            while (sdReadPos < sdWritePos && totalRead < maxStepBytes) {
+                const size_t contig = m_spscRing.contiguousWriteCap();
+                if (contig == 0U) {
+                    break;
+                }
+                const size_t availSd = sdWritePos - sdReadPos;
+                const size_t remStep = maxStepBytes - totalRead;
+                const size_t toRead = std::min<size_t>(
+                    std::min<size_t>(contig, availSd),
+                    std::min<size_t>(remStep, 2048U)
+                );
+                size_t got = 0U;
+                if (!sdCache.readAt(sdReadPos, m_spscRing.writePtr(), toRead, got) || got == 0U) {
+                    return false;
+                }
+                m_spscRing.commitWrite(got);
+                sdReadPos += got;
+                totalRead += got;
+            }
+            return true;
+        };
+
+        (void)pumpSdToRing(m_spscRing.capacity());
+
         if (opts.waitFirstFrameBeforeLive) {
             const uint32_t firstFrameT0 = millis();
             while (!hasBufferedFrameInSpscRing() &&
-                   !sess.streamEof &&
                    checkStop() == net::StreamStopReason::Continue &&
-                   (millis() - firstFrameT0) < 1500U) {
-                if (!sess.pump(m_spscRing, 15U, opts.checkStop, opts.userCtx)) {
+                   (millis() - firstFrameT0) < 1000U) {
+                if (!tcpClosedCleanly) {
+                    (void)pumpTcpToSd(2048U, 12U);
+                }
+                (void)pumpSdToRing(4096U);
+                if (tcpClosedCleanly && sdReadPos >= sdWritePos) {
                     break;
                 }
             }
             if (checkStop() != net::StreamStopReason::Continue || m_spscRing.empty()) {
-                sess.close(false);
+                httpGuard.ptr->close();
+                sdCache.closeFile();
                 if (tempFallback) {
                     freeFallbackFrameBuffer();
                 }
                 freeSpscRing();
+                if (m_spscRing.empty()) {
+                    maybePurgeHttp();
+                }
                 return false;
             }
         }
 
+        // 3. Arm Core 1 Zero-Copy playback (`0` Wi-Fi traffic when `tcpClosedCleanly == true`!)
         m_presentedFrames.store(0U, std::memory_order_release);
         m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
         m_core1DecPartialRem = 0U;
@@ -547,28 +876,45 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         }
 
         const uint32_t streamT0 = millis();
-        uint32_t eofDrainStartMs = 0U;
+        uint32_t eofStallSinceMs = 0U;
+        size_t lastRingSize = m_spscRing.consumerSize();
+        uint32_t lastPresented = 0U;
+
         while (checkStop() == net::StreamStopReason::Continue &&
                (millis() - streamT0) < maxStreamMs &&
                !m_core1StreamFinished.load(std::memory_order_acquire)) {
-            if (!sess.streamEof) {
-                (void)sess.pump(m_spscRing, 14U, opts.checkStop, opts.userCtx);
-            } else {
-                if (m_spscRing.empty() && m_core1DecPartialRem == 0U) {
+            if (!tcpClosedCleanly) {
+                (void)pumpTcpToSd(4096U, 6U);
+            }
+            if (sdReadPos < sdWritePos && m_spscRing.producerFreeBytes() >= 512U) {
+                if (!pumpSdToRing(tcpClosedCleanly ? 4096U : 2048U)) {
+                    sdReadPos = sdWritePos;
+                }
+            }
+
+            if (tcpClosedCleanly && sdReadPos >= sdWritePos) {
+                const size_t curRingSize = m_spscRing.consumerSize();
+                const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
+                if (curRingSize == 0U && m_core1DecPartialRem == 0U) {
                     break;
                 }
-                if (eofDrainStartMs == 0U) {
-                    eofDrainStartMs = millis();
-                } else if ((millis() - eofDrainStartMs) > 2500U) {
+                if (curRingSize != lastRingSize || curPresented != lastPresented) {
+                    lastRingSize = curRingSize;
+                    lastPresented = curPresented;
+                    eofStallSinceMs = millis();
+                } else if (eofStallSinceMs == 0U) {
+                    eofStallSinceMs = millis();
+                } else if ((millis() - eofStallSinceMs) >= 400U) {
                     break;
                 }
-                vTaskDelay(pdMS_TO_TICKS(8));
+                vTaskDelay(pdMS_TO_TICKS(6));
+            } else if (m_spscRing.producerFreeBytes() < 512U) {
+                vTaskDelay(pdMS_TO_TICKS(5));
             }
         }
 
         const uint32_t framesShown = m_presentedFrames.load(std::memory_order_acquire);
-        sess.close(true);
-
+        httpGuard.ptr->close();
         m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::LegacyFramePtr), std::memory_order_release);
         m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
         if (opts.onExitLiveStream) {
@@ -578,63 +924,153 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             freeFallbackFrameBuffer();
         }
         freeSpscRing();
+        sdCache.closeFile();
+        maybePurgeHttp();
         return framesShown > 0U;
-    };
+    }
 
+#if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
     // =========================================================================
-    // TIER 1 (`profile == "sram"`, `!opts.hasPsram`)
+    // PSRAM (`ESP32-S3`): 100% PSRAM-Only (`0` SD Card), RPi-Style Preload + 1 MB SPSC Fallback
     // =========================================================================
-    if (!opts.hasPsram) {
-        NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
-        ScratchSessionGuard<net::DmdzSpscStreamSession> spscGuard(opts.ioScratch, opts.ioScratchCap);
-        bool preOpened = false;
+    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
+    ScratchSessionGuard<net::DmdzHttpStreamSession> httpGuard(opts.ioScratch, opts.ioScratchCap);
+    if (!httpGuard.ptr ||
+        !httpGuard.ptr->open(
+            opts.baseServerUrl,
+            opts.streamPath,
+            opts.clientId,
+            false,
+            opts.checkStop,
+            opts.userCtx,
+            tag)) {
+        waitRemainingCardDwell();
+        maybePurgeHttp();
+        return false;
+    }
+
+    applyParsedHeader(httpGuard.ptr->header);
+
+    const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t maxPreloadPsram = (freePsram > PSRAM_MIN_FREE_RESERVE_BYTES)
+        ? std::min<size_t>(PSRAM_MAX_PRELOAD_BYTES, freePsram - PSRAM_MIN_FREE_RESERVE_BYTES)
+        : 0U;
+
+    uint8_t* preloadBuf = nullptr;
+    size_t preloadCap = 0U;
+    if (httpGuard.ptr->hasContentLength &&
+        httpGuard.ptr->contentLength >= 16U &&
+        httpGuard.ptr->contentLength <= maxPreloadPsram) {
+        preloadCap = httpGuard.ptr->contentLength;
+        preloadBuf = static_cast<uint8_t*>(
+            heap_caps_malloc(preloadCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        );
+    }
+
+    // Branch A: Full / Progressive PSRAM Preload (`Content-Length <= 4 MB`, `0` Wi-Fi during playback)
+    if (preloadBuf != nullptr) {
+        memcpy(preloadBuf, httpGuard.ptr->rawHeader16, 16U);
+        size_t downloaded = 16U;
+        m_preloadBytesDownloaded.store(16U, std::memory_order_release);
+        m_preloadComplete.store(httpGuard.ptr->streamEof, std::memory_order_release);
+        if (httpGuard.ptr->streamEof) {
+            httpGuard.ptr->close();
+        }
+
+        auto pumpPsramPreload = [&](uint32_t waitMs) -> bool {
+            if (m_preloadComplete.load(std::memory_order_relaxed)) {
+                return true;
+            }
+            bool waited = false;
+            while (downloaded < preloadCap && !httpGuard.ptr->streamEof) {
+                const size_t want = std::min<size_t>(preloadCap - downloaded, 32768U);
+                size_t got = 0U;
+                const bool ok = httpGuard.ptr->readSome(
+                    preloadBuf + downloaded,
+                    want,
+                    got,
+                    waited ? 0U : waitMs,
+                    opts.checkStop,
+                    opts.userCtx
+                );
+                waited = true;
+                if (got > 0U) {
+                    downloaded += got;
+                    m_preloadBytesDownloaded.store(downloaded, std::memory_order_release);
+                }
+                if (downloaded >= preloadCap || httpGuard.ptr->streamEof || !ok) {
+                    m_preloadComplete.store(true, std::memory_order_release);
+                    httpGuard.ptr->close();
+                    return ok || downloaded > 16U;
+                }
+                if (got == 0U) {
+                    break;
+                }
+            }
+            if (downloaded >= preloadCap || httpGuard.ptr->streamEof) {
+                m_preloadComplete.store(true, std::memory_order_release);
+                httpGuard.ptr->close();
+            }
+            return true;
+        };
+
         if (opts.preStreamCardWaitMs > 0U) {
-            const uint32_t preConnectOffsetMs = (opts.preStreamCardWaitMs > 300U)
-                ? (opts.preStreamCardWaitMs - 300U)
-                : 0U;
             while (checkStop() == net::StreamStopReason::Continue) {
                 const uint32_t elapsed = millis() - cardT0;
                 if (elapsed >= opts.preStreamCardWaitMs) {
                     break;
                 }
-                if (!preOpened &&
-                    zeroCopyEligible &&
-                    spscGuard.ptr != nullptr &&
-                    elapsed >= preConnectOffsetMs) {
-                    if (m_spscRingStorage != nullptr || allocateSpscRing(SRAM_SPSC_HI_RING_BYTES, false)) {
-                        preOpened = spscGuard.ptr->open(
-                            opts.baseServerUrl,
-                            opts.streamPath,
-                            opts.clientId,
-                            profile,
-                            4U,
-                            1360U,
-                            m_spscRing,
-                            opts.checkStop,
-                            opts.userCtx,
-                            tag
-                        );
-                    }
-                }
-                if (preOpened && !spscGuard.ptr->streamEof) {
+                if (!m_preloadComplete.load(std::memory_order_acquire)) {
                     const uint32_t remCard = opts.preStreamCardWaitMs - elapsed;
-                    (void)spscGuard.ptr->pump(
-                        m_spscRing,
-                        std::min<uint32_t>(20U, remCard),
-                        opts.checkStop,
-                        opts.userCtx
-                    );
+                    (void)pumpPsramPreload(std::min<uint32_t>(25U, remCard));
                 } else {
-                    vTaskDelay(pdMS_TO_TICKS(20));
+                    vTaskDelay(pdMS_TO_TICKS(25));
                 }
             }
         }
 
-        if (checkStop() != net::StreamStopReason::Continue) {
-            if (preOpened && spscGuard.ptr) {
-                spscGuard.ptr->close(true);
+        const uint32_t finishBudgetMs = (opts.preStreamCardWaitMs > 0U) ? 1200U : 2500U;
+        const uint32_t finishT0 = millis();
+        while (!m_preloadComplete.load(std::memory_order_acquire) &&
+               checkStop() == net::StreamStopReason::Continue &&
+               (millis() - finishT0) < finishBudgetMs) {
+            (void)pumpPsramPreload(20U);
+        }
+
+        if (opts.waitFirstFrameBeforeLive && !m_preloadComplete.load(std::memory_order_acquire)) {
+            const uint32_t firstT0 = millis();
+            while (checkStop() == net::StreamStopReason::Continue &&
+                   (millis() - firstT0) < 1200U) {
+                const size_t dl = m_preloadBytesDownloaded.load(std::memory_order_acquire);
+                if (m_streamHeaderIsDmdz) {
+                    if (dl >= 18U) {
+                        const uint16_t f0Len = static_cast<uint16_t>(preloadBuf[16]) |
+                                               (static_cast<uint16_t>(preloadBuf[17]) << 8);
+                        if (dl >= 18U + static_cast<size_t>(f0Len)) {
+                            break;
+                        }
+                    }
+                } else {
+                    const size_t rawBytes =
+                        static_cast<size_t>(m_streamHeaderW) * static_cast<size_t>(m_streamHeaderH) * sizeof(uint16_t);
+                    if (dl >= 16U + rawBytes) {
+                        break;
+                    }
+                }
+                if (m_preloadComplete.load(std::memory_order_acquire)) {
+                    break;
+                }
+                (void)pumpPsramPreload(20U);
             }
-            freeSpscRing();
+        }
+
+        if (checkStop() != net::StreamStopReason::Continue ||
+            m_preloadBytesDownloaded.load(std::memory_order_acquire) <= 16U) {
+            httpGuard.ptr->close();
+            free(preloadBuf);
+            if (checkStop() == net::StreamStopReason::Continue) {
+                maybePurgeHttp();
+            }
             return false;
         }
 
@@ -642,230 +1078,191 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             opts.onBeforeLiveStream(opts.userCtx);
         }
 
-        if (spscGuard.ptr != nullptr &&
-            (m_spscRingStorage != nullptr || allocateSpscRing(SRAM_SPSC_HI_RING_BYTES, false))) {
-            return runSpscSessionLoop(*spscGuard.ptr, preOpened, 4U, 1360U);
+        uint32_t framesShown = 0U;
+        bool tempFallback = false;
+        if (ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
+            m_preloadReadPtr = preloadBuf;
+            m_presentedFrames.store(0U, std::memory_order_release);
+            m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
+            m_core1PreloadOffset = 16U;
+            m_core1PreloadFrameIdx = 0U;
+            m_core1DecPartialRem = 0U;
+            m_core1DecoderInitialized = false;
+            m_core1StreamArmed = false;
+            m_core1StreamFinished.store(false, std::memory_order_release);
+            m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::PsramPreload), std::memory_order_release);
+
+            if (opts.onEnterLiveStream) {
+                opts.onEnterLiveStream(opts.userCtx);
+            }
+
+            const uint32_t streamT0 = millis();
+            while (checkStop() == net::StreamStopReason::Continue &&
+                   (millis() - streamT0) < maxStreamMs &&
+                   !m_core1StreamFinished.load(std::memory_order_acquire)) {
+                if (!m_preloadComplete.load(std::memory_order_acquire)) {
+                    (void)pumpPsramPreload(16U);
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(18));
+                }
+            }
+
+            framesShown = m_presentedFrames.load(std::memory_order_acquire);
+            httpGuard.ptr->close();
+            m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::LegacyFramePtr), std::memory_order_release);
+            m_preloadReadPtr = nullptr;
+            m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
+            if (opts.onExitLiveStream) {
+                opts.onExitLiveStream(opts.userCtx);
+            }
+            if (tempFallback) {
+                freeFallbackFrameBuffer();
+            }
         }
 
-        if (preOpened && spscGuard.ptr) {
-            spscGuard.ptr->close(true);
+        httpGuard.ptr->close();
+        free(preloadBuf);
+        maybePurgeHttp();
+        return framesShown > 0U;
+    }
+
+    // Branch B: Giant HD Clip (`> 4 MB` or chunked) -> Keep ALREADY-OPEN HTTP socket + `1 MB` PSRAM SPSC Ring
+    if (!allocateSpscRing(PSRAM_STREAM_SPSC_RING_BYTES, true)) {
+        httpGuard.ptr->close();
+        waitRemainingCardDwell();
+        maybePurgeHttp();
+        return false;
+    }
+
+    if (opts.preStreamCardWaitMs > 0U) {
+        while (checkStop() == net::StreamStopReason::Continue) {
+            const uint32_t elapsed = millis() - cardT0;
+            if (elapsed >= opts.preStreamCardWaitMs) {
+                break;
+            }
+            if (!httpGuard.ptr->streamEof && m_spscRing.producerFreeBytes() >= 4096U) {
+                const uint32_t remCard = opts.preStreamCardWaitMs - elapsed;
+                if (!httpGuard.ptr->pumpToRing(
+                        m_spscRing,
+                        std::min<uint32_t>(25U, remCard),
+                        opts.checkStop,
+                        opts.userCtx)) {
+                    httpGuard.ptr->streamEof = true;
+                    httpGuard.ptr->close();
+                } else if (httpGuard.ptr->streamEof) {
+                    httpGuard.ptr->close();
+                }
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(25));
+            }
         }
+    }
+
+    if (checkStop() != net::StreamStopReason::Continue) {
+        httpGuard.ptr->close();
         freeSpscRing();
         return false;
     }
 
-#if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
-    // =========================================================================
-    // TIER 2 (`profile == "psram"`, `W*H <= 8192`) & TIER 3 (`profile == "psram_hd"`, `W*H > 8192`)
-    // =========================================================================
-    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
-    const bool isTier3Hd = (static_cast<uint32_t>(opts.panelWidth) * static_cast<uint32_t>(opts.panelHeight)) > 8192U;
-    size_t maxPreloadCap = PSRAM_TIER2_MAX_PRELOAD_BYTES;
-    if (isTier3Hd) {
-        const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        maxPreloadCap = (freePsram > PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
-            ? std::min<size_t>(PSRAM_TIER3_MAX_PRELOAD_BYTES, freePsram - PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
-            : 0U;
-    }
-
-    auto maybePurgeHttp = [&]() {
-        if (opts.purgeOnComplete) {
-            net::DmdzStreamClient::notifyHttpStreamPurge(
-                opts.baseServerUrl,
-                opts.streamPath,
-                opts.clientId,
-                profile
-            );
-        }
-    };
-
-    bool usePreloadPlayback = false;
-    {
-        ScratchSessionGuard<net::DmdzPreloadSession> preloadGuard(opts.ioScratch, opts.ioScratchCap);
-        bool preloadOpened = false;
-        if (preloadGuard.ptr != nullptr && maxPreloadCap >= 131072U) {
-            m_preloadBytesDownloaded.store(0U, std::memory_order_release);
-            m_preloadComplete.store(false, std::memory_order_release);
-            preloadOpened = preloadGuard.ptr->open(
-                opts.baseServerUrl,
-                opts.streamPath,
-                opts.clientId,
-                profile,
-                maxPreloadCap,
-                m_preloadBytesDownloaded,
-                m_preloadComplete,
-                opts.checkStop,
-                opts.userCtx,
-                tag
-            );
-        }
-
-        if (opts.preStreamCardWaitMs > 0U) {
-            while (checkStop() == net::StreamStopReason::Continue) {
-                const uint32_t elapsed = millis() - cardT0;
-                if (elapsed >= opts.preStreamCardWaitMs) {
-                    break;
-                }
-                if (preloadOpened && !m_preloadComplete.load(std::memory_order_acquire)) {
-                    const uint32_t remCard = opts.preStreamCardWaitMs - elapsed;
-                    (void)preloadGuard.ptr->pump(
-                        m_preloadBytesDownloaded,
-                        m_preloadComplete,
-                        std::min<uint32_t>(30U, remCard),
-                        opts.checkStop,
-                        opts.userCtx
-                    );
-                } else {
-                    vTaskDelay(pdMS_TO_TICKS(25));
-                }
-            }
-        }
-
-        if (checkStop() != net::StreamStopReason::Continue) {
-            if (preloadOpened && preloadGuard.ptr) {
-                preloadGuard.ptr->releasePreloadBuffer();
-                maybePurgeHttp();
-            }
-            return false;
-        }
-
-        if (preloadOpened && preloadGuard.ptr && preloadGuard.ptr->headerParsed && !preloadGuard.ptr->tooLargeForPreload) {
-            if (!isTier3Hd) {
-                // Tier 2: finish remaining tail before `LiveStream` (`0` Wi-Fi contention during playback)
-                const uint32_t finishBudgetMs = (opts.preStreamCardWaitMs > 0U) ? 900U : 2500U;
-                const uint32_t finishT0 = millis();
-                while (!m_preloadComplete.load(std::memory_order_acquire) &&
-                       checkStop() == net::StreamStopReason::Continue &&
-                       (millis() - finishT0) < finishBudgetMs) {
-                    (void)preloadGuard.ptr->pump(
-                        m_preloadBytesDownloaded,
-                        m_preloadComplete,
-                        25U,
-                        opts.checkStop,
-                        opts.userCtx
-                    );
-                }
-                if (m_preloadComplete.load(std::memory_order_acquire)) {
-                    preloadGuard.ptr->closeSocket();
-                }
-            } else {
-                // Tier 3: ensure `>= 128 KB` or `>= 15` frames buffered before progressive playback
-                const uint32_t cushionT0 = millis();
-                while (!m_preloadComplete.load(std::memory_order_acquire) &&
-                       m_preloadBytesDownloaded.load(std::memory_order_acquire) < PSRAM_TIER3_START_CUSHION_BYTES &&
-                       preloadGuard.ptr->framesBuffered < 15U &&
-                       checkStop() == net::StreamStopReason::Continue &&
-                       (millis() - cushionT0) < 1200U) {
-                    (void)preloadGuard.ptr->pump(
-                        m_preloadBytesDownloaded,
-                        m_preloadComplete,
-                        25U,
-                        opts.checkStop,
-                        opts.userCtx
-                    );
-                }
-            }
-
-            const bool firstFrameReady = !opts.waitFirstFrameBeforeLive || (preloadGuard.ptr->framesBuffered >= 1U);
-            if (preloadGuard.ptr->preloadBuf != nullptr &&
-                m_preloadBytesDownloaded.load(std::memory_order_acquire) > 16U &&
-                firstFrameReady) {
-                usePreloadPlayback = true;
-            }
-        }
-
-        if (usePreloadPlayback) {
-            if (opts.onBeforeLiveStream) {
-                opts.onBeforeLiveStream(opts.userCtx);
-            }
-
-            m_streamHeaderW = preloadGuard.ptr->header.width > 0U ? preloadGuard.ptr->header.width : opts.panelWidth;
-            m_streamHeaderH = preloadGuard.ptr->header.height > 0U ? preloadGuard.ptr->header.height : opts.panelHeight;
-            m_streamHeaderVersion = preloadGuard.ptr->header.version;
-            m_streamHeaderIsDmdz = preloadGuard.ptr->header.isDmdz;
-            m_streamTotalFrames = preloadGuard.ptr->header.totalFrames;
-            const uint32_t safeFps = std::max<uint32_t>(1U, preloadGuard.ptr->header.fps);
-            m_streamFrameIntervalUs = 1000000U / safeFps;
-
-            uint32_t framesShown = 0U;
-            bool tempFallback = false;
-            if (ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
-                m_preloadReadPtr = preloadGuard.ptr->preloadBuf;
-                m_presentedFrames.store(0U, std::memory_order_release);
-                m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
-                m_core1PreloadOffset = 16U;
-                m_core1PreloadFrameIdx = 0U;
-                m_core1DecPartialRem = 0U;
-                m_core1DecoderInitialized = false;
-                m_core1StreamArmed = false;
-                m_core1StreamFinished.store(false, std::memory_order_release);
-                m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::PsramPreload), std::memory_order_release);
-
-                if (opts.onEnterLiveStream) {
-                    opts.onEnterLiveStream(opts.userCtx);
-                }
-
-                const uint32_t streamT0 = millis();
-                while (checkStop() == net::StreamStopReason::Continue &&
-                       (millis() - streamT0) < maxStreamMs &&
-                       !m_core1StreamFinished.load(std::memory_order_acquire)) {
-                    if (!m_preloadComplete.load(std::memory_order_acquire)) {
-                        (void)preloadGuard.ptr->pump(
-                            m_preloadBytesDownloaded,
-                            m_preloadComplete,
-                            18U,
-                            opts.checkStop,
-                            opts.userCtx
-                        );
-                        if (m_preloadComplete.load(std::memory_order_acquire)) {
-                            preloadGuard.ptr->closeSocket();
-                        }
-                    } else {
-                        vTaskDelay(pdMS_TO_TICKS(20));
-                    }
-                }
-
-                framesShown = m_presentedFrames.load(std::memory_order_acquire);
-                m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::LegacyFramePtr), std::memory_order_release);
-                m_preloadReadPtr = nullptr;
-                m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
-                if (opts.onExitLiveStream) {
-                    opts.onExitLiveStream(opts.userCtx);
-                }
-                if (tempFallback) {
-                    freeFallbackFrameBuffer();
-                }
-            }
-
-            preloadGuard.ptr->releasePreloadBuffer();
-            maybePurgeHttp();
-            return framesShown > 0U;
-        }
-
-        if (preloadOpened && preloadGuard.ptr) {
-            preloadGuard.ptr->releasePreloadBuffer();
-        }
-    }
-
-    // Fallback for Tier 2 (`> 1.5 MB` -> `256 KB` PSRAM SPSC WS `credits=12, chunk=1400`)
-    // and Tier 3 (`> maxPreloadCap` -> `768 KB` PSRAM SPSC WS `credits=16, chunk=1400`)
     if (opts.onBeforeLiveStream) {
         opts.onBeforeLiveStream(opts.userCtx);
     }
 
-    const size_t psramRingTarget = isTier3Hd ? PSRAM_TIER3_SPSC_RING_BYTES : PSRAM_TIER2_SPSC_RING_BYTES;
-    const uint8_t psramWsCredits = isTier3Hd ? 16U : 12U;
-    ScratchSessionGuard<net::DmdzSpscStreamSession> wsFallbackGuard(opts.ioScratch, opts.ioScratchCap);
-    if (wsFallbackGuard.ptr != nullptr && allocateSpscRing(psramRingTarget, true)) {
-        const bool ok = runSpscSessionLoop(*wsFallbackGuard.ptr, false, psramWsCredits, 1400U);
-        if (!ok) {
-            maybePurgeHttp();
-        }
-        return ok;
+    bool tempFallback = false;
+    if (!ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
+        httpGuard.ptr->close();
+        freeSpscRing();
+        maybePurgeHttp();
+        return false;
     }
 
+    if (opts.waitFirstFrameBeforeLive) {
+        const uint32_t firstFrameT0 = millis();
+        while (!hasBufferedFrameInSpscRing() &&
+               !httpGuard.ptr->streamEof &&
+               checkStop() == net::StreamStopReason::Continue &&
+               (millis() - firstFrameT0) < 2000U) {
+            if (!httpGuard.ptr->pumpToRing(m_spscRing, 15U, opts.checkStop, opts.userCtx)) {
+                httpGuard.ptr->streamEof = true;
+                break;
+            }
+        }
+        if (checkStop() != net::StreamStopReason::Continue || m_spscRing.empty()) {
+            httpGuard.ptr->close();
+            if (tempFallback) {
+                freeFallbackFrameBuffer();
+            }
+            freeSpscRing();
+            if (checkStop() == net::StreamStopReason::Continue) {
+                maybePurgeHttp();
+            }
+            return false;
+        }
+    }
+
+    m_presentedFrames.store(0U, std::memory_order_release);
+    m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
+    m_core1DecPartialRem = 0U;
+    m_core1DecoderInitialized = false;
+    m_core1StreamArmed = false;
+    m_core1StreamFinished.store(false, std::memory_order_release);
+    m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::SpscRing), std::memory_order_release);
+
+    if (opts.onEnterLiveStream) {
+        opts.onEnterLiveStream(opts.userCtx);
+    }
+
+    const uint32_t streamT0 = millis();
+    uint32_t eofStallSinceMs = 0U;
+    size_t lastRingSize = m_spscRing.consumerSize();
+    uint32_t lastPresented = 0U;
+
+    while (checkStop() == net::StreamStopReason::Continue &&
+           (millis() - streamT0) < maxStreamMs &&
+           !m_core1StreamFinished.load(std::memory_order_acquire)) {
+        if (!httpGuard.ptr->streamEof) {
+            if (m_spscRing.producerFreeBytes() >= 4096U) {
+                if (!httpGuard.ptr->pumpToRing(m_spscRing, 14U, opts.checkStop, opts.userCtx)) {
+                    httpGuard.ptr->streamEof = true;
+                    httpGuard.ptr->close();
+                } else if (httpGuard.ptr->streamEof) {
+                    httpGuard.ptr->close();
+                }
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(8));
+            }
+        } else {
+            const size_t curRingSize = m_spscRing.consumerSize();
+            const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
+            if (curRingSize == 0U && m_core1DecPartialRem == 0U) {
+                break;
+            }
+            if (curRingSize != lastRingSize || curPresented != lastPresented) {
+                lastRingSize = curRingSize;
+                lastPresented = curPresented;
+                eofStallSinceMs = millis();
+            } else if (eofStallSinceMs == 0U) {
+                eofStallSinceMs = millis();
+            } else if ((millis() - eofStallSinceMs) >= 400U) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(8));
+        }
+    }
+
+    const uint32_t framesShown = m_presentedFrames.load(std::memory_order_acquire);
+    httpGuard.ptr->close();
+    m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::LegacyFramePtr), std::memory_order_release);
+    m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
+    if (opts.onExitLiveStream) {
+        opts.onExitLiveStream(opts.userCtx);
+    }
+    if (tempFallback) {
+        freeFallbackFrameBuffer();
+    }
+    freeSpscRing();
     maybePurgeHttp();
-    return false;
+    return framesShown > 0U;
 #else
     return false;
 #endif
@@ -921,7 +1318,10 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
 
     if (mode == ShowcaseStreamExecMode::SpscRing) {
         const size_t ringCap = m_spscRing.capacity();
-        const size_t safeFullFrameThreshold = (ringCap > 1600U) ? (ringCap - 1600U) : (ringCap / 2U);
+        if (ringCap == 0U) {
+            return false;
+        }
+        const size_t safeFullFrameThreshold = ringCap;
         if (m_streamHeaderIsDmdz) {
             if (m_core1DecPartialRem > 0U) {
                 if (m_spscRing.consumerSize() == 0U) {

@@ -23,7 +23,7 @@ enum class ShowcaseStreamExecMode : uint8_t {
 
 /**
  * @struct ShowcaseStreamRunOptions
- * @brief Zero-allocation POD parameters driving a 3-Tier adaptive Showcase stream session on Core 0.
+ * @brief Zero-allocation POD parameters driving a Showcase `DMDZ` v2 stream session on Core 0.
  *        Shared 1:1 between `MediaShowcaseBase` (autonomous rotation engines) and
  *        `FrontendSyncEngine` + `InGameShowcaseEngine` (late-preempting Batocera/Recalbox sync).
  */
@@ -53,28 +53,32 @@ struct ShowcaseStreamRunOptions {
 
 /**
  * @class ShowcaseStreamPlayer
- * @brief Reusable 3-Tier (`sram` / `psram` / `psram_hd`) `DMDZ` v2 (`FRAME_PAL8` + RLE/LZ/Scroll2D)
+ * @brief Shared lossless `16-bit` True-RGB565 `DMDZ` v2 (`RLE` / `LZ` / `Scroll2D` / `Delta` / `Raw`)
  *        stream orchestrator (Core 0) and Zero-Copy `ScopedCanvasGuard` frame presenter (Core 1).
  *
+ * Target strategies (100% shared between `MediaShowcaseBase` and `FrontendSyncEngine`):
+ * - `esp32dev` (`!hasPsram`): downloads `.rgb565.stream?purge=false&codec=dmdz2` over plain HTTP TCP
+ *   onto the `25 MHz` SD card (`/cache/showcase_live.dmdz` or `/cache/showcase_sync.dmdz`) during Info Card
+ *   dwell (`0` heap alloc during download), closes the TCP socket (`0` Wi-Fi traffic during playback),
+ *   and streams from SD into an `8,448–9,216 B` SPSC ring (`> 8,195 B` max `128x32` `FRAME_RAW`) for
+ *   atomic single-tick Zero-Copy `SRAM1` Canvas presentation on Core 1.
+ * - `ESP32-S3` (`hasPsram`): 100% PSRAM-only (`0` SD card), preloading clips `<= 4 MB` into PSRAM during
+ *   Info Card dwell (closing TCP before Frame 0) and falling back on the same open HTTP socket to a
+ *   `1 MB` PSRAM SPSC ring for giant `256x64` HD clips (`> 4 MB`).
+ *
  * Real-time invariants on Core 1 (`computeCore1NextFrameDueInMs`, `shouldMarkCore1Dirty`, `renderFrameCore1`):
- * - Zero heap allocations (`malloc`, `free`, `new`, `String`), zero `std::mutex`, zero blocking waits.
- * - Decodes directly in-place into `ScopedCanvasGuard::data()` when `hasCanvas() && getRotation() == 0`
- *   (`0 B` private engine RGB565 buffer on `esp32dev`), falling back automatically to a Core 0-allocated
- *   `m_fallbackFrame565` + `IDrawingSurface::blit565` when rotated (`90/180/270 deg`) or canvasless.
+ * - Zero heap allocations (`malloc`, `free`, `new`, `String`), zero `std::mutex`, zero SD/socket I/O.
  */
 class ShowcaseStreamPlayer {
 public:
     static constexpr size_t MIN_SESSION_SCRATCH_BYTES = 1472U;
-    static constexpr size_t SRAM_SPSC_HI_RING_BYTES = 10240U;
-    static constexpr size_t SRAM_SPSC_DEFAULT_RING_BYTES = 8192U;
+    static constexpr size_t SRAM_SPSC_HI_RING_BYTES = 9216U;
+    static constexpr size_t SRAM_SPSC_DEFAULT_RING_BYTES = 8448U;
     static constexpr size_t SRAM_SPSC_LOW_RING_BYTES = 6144U;
     static constexpr size_t SRAM_SPSC_MIN_RING_BYTES = 4096U;
-    static constexpr size_t PSRAM_TIER2_MAX_PRELOAD_BYTES = 1572864U;     // 1.5 MB
-    static constexpr size_t PSRAM_TIER2_SPSC_RING_BYTES = 262144U;        // 256 KB
-    static constexpr size_t PSRAM_TIER3_MAX_PRELOAD_BYTES = 3670016U;     // 3.5 MB
-    static constexpr size_t PSRAM_TIER3_MIN_FREE_RESERVE_BYTES = 2621440U; // 2.5 MB
-    static constexpr size_t PSRAM_TIER3_SPSC_RING_BYTES = 786432U;        // 768 KB
-    static constexpr size_t PSRAM_TIER3_START_CUSHION_BYTES = 131072U;    // 128 KB
+    static constexpr size_t PSRAM_MAX_PRELOAD_BYTES = 4194304U;       // 4.0 MB
+    static constexpr size_t PSRAM_MIN_FREE_RESERVE_BYTES = 1572864U;  // 1.5 MB
+    static constexpr size_t PSRAM_STREAM_SPSC_RING_BYTES = 1048576U;  // 1.0 MB
 
     ShowcaseStreamPlayer() = default;
     ~ShowcaseStreamPlayer();
@@ -115,7 +119,7 @@ public:
     void resetCore1StreamState();
     void releaseAll();
 
-    // --- Core 0 3-Tier Adaptive Stream Runner ---
+    // --- Core 0 Stream Session Runner ---
     bool runStreamSession(const ShowcaseStreamRunOptions& opts);
 
     // --- Core 1 Lock-Free Real-Time Pacing & Presentation ---

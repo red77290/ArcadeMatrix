@@ -11,9 +11,8 @@ namespace net {
 
 /**
  * @struct StreamByteRing
- * @brief Zero-heap circular byte ring buffer backed by caller-owned scratch memory (`ioScratch`).
- *        Stores already-demuxed stream payload bytes (`DMDZ` / `DMDS`) so Core 0 continuously drains
- *        Wi-Fi / lwIP RX packets during `dueMs` frame pacing and decodes frames from RAM in `< 0.5 ms`.
+ * @brief Zero-heap circular byte ring buffer backed by caller-owned scratch memory.
+ *        Stores sequential stream payload bytes (`DMDZ` / `DMDS`) on single-threaded producers.
  */
 struct StreamByteRing {
     uint8_t* buf = nullptr;
@@ -143,7 +142,7 @@ struct StreamByteRing {
  * with `acquire`/`release` memory ordering:
  * - Zero mutexes, zero integer divisions on Core 1, zero 32-bit monotonic wrap discontinuities.
  * - Full 100% capacity utilization (`0 .. cap` bytes) for arbitrary non-power-of-two sizes
- *   (`6,144 B`, `8,192 B`, `10,240 B`, `256 KB`, `768 KB`).
+ *   (`8,448 B`, `9,216 B`, `1,048,576 B`).
  */
 struct DmdzSpscByteRing {
     uint8_t* buf = nullptr;
@@ -420,66 +419,6 @@ struct DmdzSpscByteRing {
 };
 
 /**
- * @brief Selects the 3-tier Showcase adaptive stream profile (`"sram"`, `"psram"`, `"psram_hd"`).
- */
-inline constexpr const char* selectDmdzStreamProfile(bool hasPsram, uint16_t width, uint16_t height) {
-    return !hasPsram
-        ? "sram"
-        : (((static_cast<uint32_t>(width) * static_cast<uint32_t>(height)) <= 8192U) ? "psram" : "psram_hd");
-}
-
-/**
- * @brief Minimum free space (`1,536 B`) required in `DmdzSpscByteRing` before granting additional
- *        `'A'` WebSocket credits when unread compressed frames are already buffered.
- */
-static constexpr size_t kSpscWsCreditMinRingFreeBytes = 1536U;
-
-/**
- * @brief Minimum free space required in `StreamByteRing` (`>= 1 WS chunk` + headroom) before
- *        granting additional `'A'` WebSocket credits when unread frames are already buffered.
- */
-static constexpr size_t kWsCreditMinRingFreeBytes = 1152U;
-
-inline constexpr uint8_t clampWsCredits(uint8_t credits) {
-    return (credits < 1U) ? 1U : ((credits > 16U) ? 16U : credits);
-}
-
-/**
- * @brief Computes WebSocket `'A'` credit ACK batch size:
- *        - `wsCredits = 2` (`!hasPsram` `esp32dev`) -> `ackBatch = 1`
- *        - `wsCredits = 8` (`hasPsram` `esp32s3`)   -> `ackBatch = 2`
- */
-inline constexpr uint8_t computeWsAckBatch(uint8_t clampedCredits) {
-    return (clampedCredits >= 4U) ? 2U : 1U;
-}
-
-inline constexpr size_t effectiveWsCreditMinFreeBytes(size_t ringCap) {
-    return (ringCap >= 2048U) ? kWsCreditMinRingFreeBytes : (ringCap / 2U);
-}
-
-/**
- * @brief Deadlock-free WebSocket credit backpressure predicate:
- *        - Withholds `'A'` credits when `ringFree < minFree` AND `ringCount > 0` so at most 0-1
- *          packets can ever sit in `esp_wifi` / lwIP while `StreamByteRing` holds unread frames.
- *        - Always permits flushing when `ringCount == 0` so oversized keyframes (`> ringCap`)
- *          actively consumed by Core 0 stream through with zero deadlock.
- */
-inline constexpr bool canFlushWsCredits(
-    uint16_t pendingWsCredits,
-    uint8_t ackBatch,
-    bool forceAll,
-    size_t ringCount,
-    size_t ringFree,
-    size_t ringCap,
-    size_t minFreeOverride = 0U
-) {
-    return (pendingWsCredits > 0U) &&
-           (ringFree >= ((minFreeOverride > 0U) ? minFreeOverride : effectiveWsCreditMinFreeBytes(ringCap)) ||
-            ringCount == 0U) &&
-           (pendingWsCredits >= (forceAll ? 1U : ((ackBatch > 0U) ? static_cast<uint16_t>(ackBatch) : 1U)));
-}
-
-/**
  * @struct HttpChunkedDecoder
  * @brief Zero-heap streaming RFC 9112 HTTP/1.1 `Transfer-Encoding: chunked` decoder.
  *        Strips `<hex>[;ext]\r\n` headers and `\r\n` trailers in bulk `memcpy` slices
@@ -525,6 +464,11 @@ struct HttpChunkedDecoder {
 bool hasChunkedTransferEncoding(const char* rawHeaders);
 
 /**
+ * @brief Case-insensitive `Content-Length` parser over raw HTTP response headers.
+ */
+bool parseContentLengthHeader(const char* rawHeaders, size_t& outLen);
+
+/**
  * @brief Extracts host, port, and scheme flag from an `http://`, `https://`, `mqtt://`, or `tcp://` URL
  *        with zero heap allocations.
  */
@@ -545,144 +489,104 @@ enum class StreamStopReason : uint8_t {
 };
 
 /**
- * @brief Formats a Showcase HTTP `.rgb565.stream` request path with explicit `purge`, `paced`,
- *        `codec=dmdz2`, optional `client_id`, preserved `api_key`, and adaptive `profile`.
+ * @brief Formats a Showcase HTTP `GET` `.rgb565.stream` request path with explicit `purge`,
+ *        `codec=dmdz2`, optional `client_id`, and preserved `api_key`.
  */
 bool formatDmdzHttpStreamPath(
     const char* rawPath,
     const char* clientId,
     bool purge,
-    bool paced,
-    const char* profile,
     char* outPath,
     size_t outCap
 );
 
 /**
- * @struct DmdzSpscStreamSession
- * @brief Stateful Core 0 producer session pumping compressed `DMDZ` frames over credit-acked
- *        WebSocket (or paced HTTP fallback) directly into a lock-free `DmdzSpscByteRing` for
- *        Core 1 Zero-Copy `ScopedCanvasGuard` decoding.
- *
- * Supports pre-connecting ~300 ms before `Phase::Card` ends so 7-12 compressed frames are
- * pre-buffered in `DmdzSpscByteRing` before `Phase::LiveStream` begins.
+ * @brief Formats a Showcase HTTP `DELETE` `.rgb565.stream` purge path with optional
+ *        `client_id` and preserved `api_key`.
  */
-struct DmdzSpscStreamSession {
-    int fd = -1;
-    char resolvedHost[64] = "";
-    char activePath[288] = "";
-    uint16_t resolvedPort = 8890U;
-    uint16_t pendingWsCredits = 0U;
-    uint8_t ackBatch = 1U;
-    bool isWebSocket = false;
-    bool isChunked = false;
-    bool serverPaced = false;
-    bool streamEof = false;
-    int lastSockErrno = 0;
-    const char* lastFailReason = "eof";
-    core::drawing::DmdzStreamHeader header{};
-    core::drawing::DmdzWsDemuxer wsDemux{};
-    HttpChunkedDecoder chunkDec{};
-    uint8_t rawRxBuf[704] = {0};
-
-    ~DmdzSpscStreamSession() {
-        close(false);
-    }
-
-    bool open(
-        const char* serverUrl,
-        const char* streamPath,
-        const char* clientId,
-        const char* profile,
-        uint8_t wsCredits,
-        uint16_t wsChunkBytes,
-        DmdzSpscByteRing& spscRing,
-        StreamStopReason (*checkStop)(void*),
-        void* userCtx,
-        const char* logTag = "Showcase"
-    );
-
-    bool pump(
-        DmdzSpscByteRing& spscRing,
-        uint32_t maxWaitMs,
-        StreamStopReason (*checkStop)(void*),
-        void* userCtx
-    );
-
-    void close(bool sendGracefulWsClose);
-};
+bool formatDmdzHttpDeletePath(
+    const char* rawPath,
+    const char* clientId,
+    char* outPath,
+    size_t outCap
+);
 
 /**
- * @struct DmdzPreloadSession
- * @brief Stateful Core 0 HTTP bulk preload / progressive download session (`?purge=false&paced=0&codec=dmdz2`)
- *        writing compressed `DMDZ` bytes into PSRAM (`<= 1.5 MB` Tier 2 full preload, `<= 3.5 MB` Tier 3
- *        progressive preload with `16 KB` socket reads).
+ * @struct DmdzHttpStreamSession
+ * @brief Zero-heap plain HTTP/1.1 `DMDZ` v2 (`16-bit` True-RGB565 lossless) stream reader
+ *        with `SO_LINGER {1, 0}` zero-`TIME_WAIT` socket reclamation (`<= 1,472 B` scratch).
+ *
+ * Supports:
+ * - `esp32dev` (`!hasPsram`): `readSome(...)` into `ioScratch` tail -> `25 MHz` SD cache file.
+ * - `ESP32-S3` (`hasPsram`): single-open `Content-Length` inspection -> either full PSRAM preload
+ *   (`<= 4 MB` via `readSome(...)`) or `1 MB` PSRAM `DmdzSpscByteRing` (`> 4 MB` via `pumpToRing(...)`).
  */
-struct DmdzPreloadSession {
+struct DmdzHttpStreamSession {
+    static constexpr size_t RAW_BUF_BYTES = 896U;
+
     int fd = -1;
-    char resolvedHost[64] = "";
-    char activePath[288] = "";
     uint16_t resolvedPort = 8890U;
-    uint8_t* preloadBuf = nullptr;
-    uint8_t* chunkScratch = nullptr;
-    size_t preloadCap = 0U;
-    size_t contentLength = 0U;
-    size_t scanOffset = 16U;
-    uint32_t framesBuffered = 0U;
-    bool hasContentLength = false;
+    uint16_t rawOff = 0U;
+    uint16_t rawLen = 0U;
     bool isChunked = false;
-    bool headerParsed = false;
-    bool tooLargeForPreload = false;
+    bool hasContentLength = false;
     bool streamEof = false;
+    bool headerParsed = false;
+    bool sockError = false;
     int lastSockErrno = 0;
+    size_t contentLength = 0U;
+    size_t bodyBytesDelivered = 0U;
     core::drawing::DmdzStreamHeader header{};
     HttpChunkedDecoder chunkDec{};
+    char resolvedHost[64] = "";
+    char activePath[256] = "";
+    uint8_t rawHeader16[16] = {0};
+    uint8_t rawBuf[RAW_BUF_BYTES] = {0};
 
-    ~DmdzPreloadSession() {
-        closeSocket();
-        if (chunkScratch) {
-            free(chunkScratch);
-            chunkScratch = nullptr;
-        }
+    ~DmdzHttpStreamSession() {
+        close();
     }
 
     bool open(
         const char* serverUrl,
         const char* streamPath,
         const char* clientId,
-        const char* profile,
-        size_t maxPreloadBytes,
-        std::atomic<size_t>& outBytesDownloaded,
-        std::atomic<bool>& outDownloadComplete,
+        bool purge,
         StreamStopReason (*checkStop)(void*),
         void* userCtx,
         const char* logTag = "Showcase"
     );
 
-    bool pump(
-        std::atomic<size_t>& outBytesDownloaded,
-        std::atomic<bool>& outDownloadComplete,
+    bool readSome(
+        uint8_t* dst,
+        size_t dstCap,
+        size_t& outBytesRead,
         uint32_t maxWaitMs,
         StreamStopReason (*checkStop)(void*),
         void* userCtx
     );
 
-    void closeSocket();
-    void releasePreloadBuffer();
+    bool pumpToRing(
+        DmdzSpscByteRing& spscRing,
+        uint32_t maxWaitMs,
+        StreamStopReason (*checkStop)(void*),
+        void* userCtx
+    );
+
+    void close();
 };
 
 /**
  * @class DmdzStreamClient
- * @brief Zero-heap HTTP stream purge helper with `SO_LINGER {1, 0}` zero-`TIME_WAIT` socket reclamation
- *        paired with `DmdzSpscStreamSession` and `DmdzPreloadSession`.
+ * @brief Zero-heap HTTP `DELETE` stream purge helper (`SO_LINGER {1, 0}`, `0` `TIME_WAIT` PCBs)
+ *        shared across `esp32dev` (SD cache) and `ESP32-S3` (PSRAM preload / stream).
  */
 class DmdzStreamClient {
 public:
     static void notifyHttpStreamPurge(
         const char* serverUrl,
         const char* streamPath,
-        const char* clientId,
-        const char* profile
+        const char* clientId
     );
 };
 
