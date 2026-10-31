@@ -46,7 +46,7 @@ public:
     inline const MatrixRecoveryStatus& getMatrixRecoveryStatus() const { return m_matrixRecovery; }
     inline void clearMatrixRecoveryStatus() { m_matrixRecovery = MatrixRecoveryStatus{}; }
     inline bool canEngageWebUiSync() const { return !m_firstLoop && !m_matrixRecovery.headlessMode; }
-    void requestWebUiSyncWindow(uint32_t durationMs = 4500);
+    void requestWebUiSyncWindow(uint32_t durationMs = WebUiSyncEngine::kLowHeapDeferralWindowMs);
 
 private:
     DisplayArbiter m_displayArbiter;

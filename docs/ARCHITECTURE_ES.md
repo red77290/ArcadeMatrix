@@ -296,7 +296,7 @@ Soporte nativo de inglés, francés y español:
 ## 12. El Árbitro de Pantalla y Runtime de Pantalla (`DisplayArbiter`, `DisplayRuntime`)
 
 ArcadeMatrix separa estrictamente la decisión de arbitraje de la ejecución del ciclo de vida de los motores:
-1. **Carga Inicial de WebUI en ESP32 sin PSRAM (`WEBUI_SYNC`)** (Prioridad 110, `TIMED` 4.5s).
+1. **Carga WebUI Cold-SPA en ESP32 sin PSRAM con SRAM Baja (`WEBUI_SYNC`)** (Prioridad 110, `TIMED` 2.4s).
 2. **Alertas de Emergencia / OTA** (Prioridad 100).
 3. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
 4. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).

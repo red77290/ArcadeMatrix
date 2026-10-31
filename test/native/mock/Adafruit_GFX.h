@@ -8,7 +8,14 @@ public:
     Adafruit_GFX(int16_t w = 0, int16_t h = 0) : _width(w), _height(h) {}
     virtual ~Adafruit_GFX() = default;
     virtual void drawPixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
+    virtual void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) { (void)x; (void)y; (void)w; (void)color; }
     virtual void fillScreen(uint16_t color) { (void)color; }
+    void setCursor(int16_t x, int16_t y) { (void)x; (void)y; }
+    void setTextColor(uint16_t c) { (void)c; }
+    void setTextSize(uint8_t s) { (void)s; }
+    void setTextWrap(bool w) { (void)w; }
+    void setFont(const void* f = nullptr) { (void)f; }
+    void print(const char* s) { (void)s; }
     int16_t width() const { return _width; }
     int16_t height() const { return _height; }
     uint8_t getRotation() const { return rotation; }
