@@ -704,6 +704,14 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
             m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
         }
         void invokeBlankCardBeforeStream() { blankCardBeforeStream(); }
+        void simulateExitLiveStreamHold() {
+            freePosterAfterBlank();
+            m_publishedFramePtr.store(nullptr, std::memory_order_release);
+            m_phase.store(static_cast<uint8_t>(Phase::StreamEndHold), std::memory_order_release);
+            m_seq.fetch_add(1U, std::memory_order_acq_rel);
+            m_liveCard.hasVideoFrame = false;
+            m_seq.fetch_add(1U, std::memory_order_release);
+        }
         bool liveHasPoster() const { return m_liveCard.hasPoster; }
         uint16_t firstPosterPixel() const { return m_poster565 ? m_poster565[0] : 0U; }
         bool isEngineDirty() const { return m_dirty; }
@@ -798,6 +806,18 @@ void test_media_showcase_live_stream_handoff_and_online_status_no_false_offline(
     TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[128 * 32 - 1]);
     TEST_ASSERT_EQUAL_UINT32(4U, eng.consumedSeq());
     TEST_ASSERT_EQUAL_UINT32(1U, eng.presentedCount());
+
+    // 3. Stream end hold (`Phase::StreamEndHold`): exiting video stream MUST hold the final
+    //    presented video frame (`0x07E0`) with zero redraws instead of flashing an empty Card!
+    eng.simulateExitLiveStreamHold();
+    TEST_ASSERT_FALSE(eng.allowsOverlay());
+    TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, eng.nextFrameDueInMs());
+    eng.update(&ctx);
+    TEST_ASSERT_FALSE(eng.isEngineDirty());
+    eng.render(&ctx);
+    TEST_ASSERT_FALSE(eng.hasNewFrame());
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, surf0.pixels[128 * 32 - 1]);
 
     eng.deactivate();
 }
