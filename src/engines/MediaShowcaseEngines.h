@@ -16,13 +16,18 @@ using HttpChunkedDecoder = net::HttpChunkedDecoder;
 
 /**
  * @class MediaShowcaseBase
- * @brief Shared V3.0 orchestrator for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
+ * @brief Shared V3.1 orchestrator for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
  *        RetroGamesEngine, MovieShowcaseEngine, SeriesShowcaseEngine, and AnimeShowcaseEngine.
  *
- * Delegates single-responsibility concerns to dedicated reusable modules:
- * - Scoped zero-heap MQTT 3.1.1 control session: `net::RawMqttSocket` (`src/core/net/RawMqttSocket.*`)
- * - Credit-acked WebSocket `DMDZ` + Paced HTTP `DMDZ`/`DMDS` stream client: `net::DmdzStreamClient` (`src/core/net/DmdzStreamClient.*`)
- * - Core 1 UTF-8 pixel-font, waiting pixel-art & adaptive Card layouts: `engines::showcase::ShowcaseCardRenderer` (`src/engines/showcase/ShowcaseCardRenderer.*`)
+ * Architecture highlights:
+ * - Compact `<= 1,600 B` C++ instance footprint (`~1.2 KB` on ESP32) with task-first activation.
+ * - 1:1 RPi turn-readiness gate (`m_turnEvaluated`, `m_readyStateReceived`, `m_mqttConnectedAtMs`),
+ *   streaming filtered MQTT/HTTP JSON parsing (`0` drop `> 8 KB`), binary `.rgb565` poster fetch,
+ *   and automatic same-turn `MQTT -> HTTP` fallback.
+ * - Core 1 Zero-Copy `ScopedCanvasGuard` in-place `DMDZ` v2 (`FRAME_PAL8` + RLE/LZ/Scroll2D)
+ *   decoding with dynamic `allowsOverlay() == false` during `StreamBlank` and `LiveStream`.
+ * - 3-Tier adaptive stream delivery (`sram` lock-free SPSC ring, `psram` `<= 1.5 MB` full preload,
+ *   `psram_hd` `<= 3.5 MB` progressive `16 KB` preload + PSRAM SPSC WS fallback).
  */
 class MediaShowcaseBase : public IEngine {
 public:
@@ -38,19 +43,7 @@ public:
     void resume() override;
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
-    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
-        uint16_t newW = geometry.width > 0 ? geometry.width : 128;
-        uint16_t newH = geometry.height > 0 ? geometry.height : 32;
-        if (newW != m_width || newH != m_height) {
-            m_width = newW;
-            m_height = newH;
-            m_lastPublishedCfgGen = 0;
-            m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-            clearLiveCardState();
-            m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
-        }
-        m_dirty = true;
-    }
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     uint16_t currentWidth() const { return m_width; }
     uint16_t currentHeight() const { return m_height; }
@@ -61,6 +54,13 @@ public:
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool selfPaced() const override { return true; }
+
+    bool allowsOverlay() const override {
+        const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
+        return curPhase != static_cast<uint8_t>(Phase::StreamBlank) &&
+               curPhase != static_cast<uint8_t>(Phase::LiveStream);
+    }
+
     uint32_t nextFrameDueInMs() const override {
         const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
         if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
@@ -68,8 +68,14 @@ public:
         }
         if (curPhase == static_cast<uint8_t>(Phase::LiveStream) &&
             m_renderCard.hasVideoFrame) {
-            const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
-            if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
+            const uint8_t execMode = m_streamExecMode.load(std::memory_order_acquire);
+            if (execMode == static_cast<uint8_t>(StreamExecMode::LegacyFramePtr)) {
+                const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+                if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
+                    return 1U;
+                }
+            } else if (m_presentedStreamFrames.load(std::memory_order_relaxed) == 0U ||
+                       m_core1DecPartialRem > 0U) {
                 return 1U;
             }
             const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
@@ -90,6 +96,7 @@ public:
         }
         return 0xFFFFFFFFU;
     }
+
     void setRotationBudget(uint32_t budget) override {
         uint32_t clamped = budget > 0 ? budget : 1;
         m_rotationBudget.store(clamped, std::memory_order_relaxed);
@@ -98,6 +105,7 @@ public:
             m_turnDone.store(true, std::memory_order_release);
         }
     }
+
     uint32_t computeTurnSafetyTimeoutMs() const;
     bool isFinished() const override;
     bool evictOnInactiveLowMemory() const override { return true; }
@@ -151,13 +159,21 @@ protected:
     static constexpr size_t MAX_SYNOPSIS_LEN = engines::showcase::ShowcaseCardData::MAX_SYNOPSIS_LEN;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
-    static constexpr size_t IO_SCRATCH_BYTES = 6144;
-    static constexpr size_t MID_IO_SCRATCH_BYTES = 4608;
-    static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 3072;
-    static constexpr size_t LOW_IO_SCRATCH_BYTES = 2048;
+    static constexpr size_t IO_SCRATCH_BYTES = 3072;
+    static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 2048;
     static constexpr size_t MIN_IO_SCRATCH_BYTES = 1472;
-    static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 8192;
-    static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
+    static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 6144;
+
+    static constexpr size_t SRAM_SPSC_HI_RING_BYTES = 10240;
+    static constexpr size_t SRAM_SPSC_DEFAULT_RING_BYTES = 8192;
+    static constexpr size_t SRAM_SPSC_LOW_RING_BYTES = 6144;
+    static constexpr size_t SRAM_SPSC_MIN_RING_BYTES = 4096;
+    static constexpr size_t PSRAM_TIER2_MAX_PRELOAD_BYTES = 1572864; // 1.5 MB
+    static constexpr size_t PSRAM_TIER2_SPSC_RING_BYTES = 262144;    // 256 KB
+    static constexpr size_t PSRAM_TIER3_MAX_PRELOAD_BYTES = 3670016; // 3.5 MB
+    static constexpr size_t PSRAM_TIER3_MIN_FREE_RESERVE_BYTES = 2621440; // 2.5 MB
+    static constexpr size_t PSRAM_TIER3_SPSC_RING_BYTES = 786432;    // 768 KB
+    static constexpr size_t PSRAM_TIER3_START_CUSHION_BYTES = 131072; // 128 KB
 
     enum class Phase : uint8_t {
         Card = 0,
@@ -165,19 +181,21 @@ protected:
         LiveStream = 2
     };
 
+    enum class StreamExecMode : uint8_t {
+        LegacyFramePtr = 0,
+        SpscRing = 1,
+        PsramPreload = 2
+    };
+
     struct ConfigSlot {
         char serverUrl[MAX_URL_LEN] = "http://dmdmediashowcase.local:8890";
         char transportMode[16] = "mqtt_tcp";
         char mqttBrokerSource[12] = "global";
-        char mqttCustomUrl[MAX_URL_LEN] = "";
-        char globalMqttHost[64] = "";
         char lang[8] = "system";
         char textScrollSpeed[12] = "4";
         char videoMode[16] = "auto_action";
-        char systems[MAX_SYSTEMS_FILTER_LEN] = "";
-        char genres[MAX_FILTER_LEN] = "";
-        char decades[MAX_FILTER_LEN] = "";
         char videoType[16] = "any";
+        char colorBoost[16] = "auto";
         uint16_t globalMqttPort = 1883;
         uint8_t snapshotPanoramaCount = 0;
         uint8_t videoMaxDurationS = 8;
@@ -189,7 +207,23 @@ protected:
         bool jacketPanorama = true;
         bool marqueePanorama = false;
         bool showVideo = true;
-        char colorBoost[16] = "auto";
+    };
+
+    struct ConfigExtras {
+        char systems[MAX_SYSTEMS_FILTER_LEN] = "";
+        char genres[MAX_FILTER_LEN] = "";
+        char decades[MAX_FILTER_LEN] = "";
+        char mqttCustomUrl[MAX_URL_LEN] = "";
+        char globalMqttHost[64] = "";
+    };
+
+    struct AcquiredItemInfo {
+        char itemId[MAX_ITEM_ID_LEN] = "";
+        char streamPath[224] = "";
+        char posterPath[224] = "";
+        char baseServerUrl[112] = "";
+        uint32_t streamMaxMs = 12000U;
+        bool hasStream = false;
     };
 
     using CardSnapshot = engines::showcase::ShowcaseCardData;
@@ -200,9 +234,15 @@ protected:
     uint16_t m_height = 32;
     bool m_hasPsram = false;
 
-    ConfigSlot m_cfg[2];
-    std::atomic<uint8_t> m_cfgIdx{0};
+    ConfigSlot m_cfg;
+    ConfigExtras* m_cfgExtras = nullptr;
     std::atomic<uint32_t> m_cfgGen{1};
+    std::atomic<uint32_t> m_cfgStreamBaseMs{12000};
+    std::atomic<uint16_t> m_cfgSynopsisSpeedPx{20};
+    std::atomic<bool> m_cfgEnabled{true};
+    std::atomic<bool> m_cfgHasServerUrl{true};
+    std::atomic<bool> m_cfgShowPoster{true};
+    std::atomic<bool> m_cfgShowSynopsis{true};
 
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
     std::atomic<uint32_t> m_seq{0};
@@ -214,12 +254,28 @@ protected:
     std::atomic<uint32_t> m_blankPresentedSeq{0};
     std::atomic<uint32_t> m_activeItemStreamMaxMs{0};
     std::atomic<const uint16_t*> m_publishedFramePtr{nullptr};
+
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr;
     uint16_t* m_frame565 = nullptr;
     uint16_t* m_frame565Back = nullptr;
     char* m_ioScratch = nullptr;
-    char* m_psramMqttRx = nullptr;
+    uint8_t* m_spscRingStorage = nullptr;
+    core::drawing::DmdzStreamDecoder* m_core1Decoder = nullptr;
+    net::DmdzSpscByteRing m_spscRing;
+
+    const uint8_t* m_preloadReadPtr = nullptr;
+    std::atomic<size_t> m_preloadBytesDownloaded{0};
+    std::atomic<bool> m_preloadComplete{false};
+    std::atomic<bool> m_core1StreamFinished{false};
+    std::atomic<uint8_t> m_streamExecMode{static_cast<uint8_t>(StreamExecMode::LegacyFramePtr)};
+    uint32_t m_streamFrameIntervalUs = 50000U;
+    uint16_t m_streamHeaderW = 128U;
+    uint16_t m_streamHeaderH = 32U;
+    uint16_t m_streamTotalFrames = 0U;
+    uint8_t m_streamHeaderVersion = 2U;
+    bool m_streamHeaderIsDmdz = true;
+
     size_t m_ioScratchCap = 0;
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
@@ -231,6 +287,12 @@ protected:
 
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};
+    std::atomic<bool> m_buffersReady{false};
+    std::atomic<bool> m_zeroCopyCanvasEligible{false};
+    std::atomic<bool> m_turnEvaluated{false};
+    std::atomic<bool> m_readyStateReceived{false};
+    std::atomic<bool> m_hasReadyItem{false};
+    std::atomic<uint32_t> m_mqttConnectedAtMs{0};
     std::atomic<bool> m_skipTurnImmediately{false};
     std::atomic<bool> m_warmingFallback{false};
     std::atomic<bool> m_turnDone{false};
@@ -246,6 +308,12 @@ protected:
 #endif
 
     CardSnapshot m_renderCard;
+    size_t m_core1PreloadOffset = 16U;
+    uint32_t m_core1PreloadFrameIdx = 0U;
+    uint32_t m_core1NextFrameDueUs = 0U;
+    uint16_t m_core1DecPartialRem = 0U;
+    bool m_core1StreamArmed = false;
+
     uint32_t m_activatedAtMs = 0;
     uint32_t m_phaseStartedAtMs = 0;
     uint32_t m_lastScrollStepMs = 0;
@@ -275,32 +343,76 @@ protected:
         return engines::showcase::ShowcaseCardRenderer::synopsisPxPerSec(speedStr);
     }
     static uint32_t configuredMaxStreamMs(const ConfigSlot& cfg);
-    uint32_t effectiveMaxStreamMs(const ConfigSlot& cfg) const;
+    uint32_t effectiveMaxStreamMs() const;
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH) {
         engines::showcase::ShowcaseCardRenderer::computeCardPosterDims(panelW, panelH, outW, outH);
     }
-    static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
+    static bool resolveMqttBroker(
+        const ConfigSlot& cfg,
+        const ConfigExtras* extras,
+        char* outHost,
+        size_t hostCap,
+        uint16_t& outPort
+    );
+    void probeZeroCopyCanvasEligibility();
     bool allocateBuffers();
     void freeBuffers();
+    void freePosterAfterBlank();
     void blankCardBeforeStream();
     bool acquireStepCFrameBuffer();
     void releaseStepCFrameBuffer();
+    bool allocateSpscRingBuffer(size_t preferredBytes);
+    void freeSpscRingBuffer();
     void waitRenderBlitQuiescent() const;
     void clearLiveCardState();
-    void finishTurnItem();
+    void resetCore1StreamState();
     bool startWorkerTask();
     void stopWorkerTaskBounded(uint32_t timeoutMs);
     static void workerTaskEntry(void* arg);
     void runWorkerLoop();
-    bool runMqttUdpTurn(
+
+    enum class AcquireOutcome : uint8_t {
+        ReadyItem = 0,
+        ServerWarming = 1,
+        ServerOffline = 2,
+        BrokerUnreachable = 3,
+        Aborted = 4
+    };
+
+    AcquireOutcome acquireItemViaMqtt(
         const ConfigSlot& cfg,
+        const ConfigExtras* extras,
         const char* domain,
         const char* reqLang,
-        char* outHttpFallbackItemId,
-        size_t fallbackItemCap
+        uint32_t startGen,
+        bool isFollowUpItemInTurn,
+        CardSnapshot& outCard,
+        AcquiredItemInfo& outInfo
     );
-    void runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
-    bool streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath);
+    AcquireOutcome acquireItemViaHttp(
+        const ConfigSlot& cfg,
+        const ConfigExtras* extras,
+        const char* domain,
+        const char* reqLang,
+        uint32_t startGen,
+        CardSnapshot& outCard,
+        AcquiredItemInfo& outInfo
+    );
+    bool fetchBinaryPosterRgb565(
+        const char* baseServerUrl,
+        const char* posterPath,
+        uint16_t* dst565,
+        size_t expectedBytes
+    );
+    void executeAcquiredItem(
+        const ConfigSlot& cfg,
+        const char* domain,
+        uint32_t startGen,
+        CardSnapshot& card,
+        const AcquiredItemInfo& info
+    );
+    bool renderStreamFrameCore1(IDrawingSurface* s);
+
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
     void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t stepPx) {
@@ -310,6 +422,11 @@ protected:
         engines::showcase::ShowcaseCardRenderer::drawSinglePassSynopsis(s, text, minX, maxX, y, color, scrollPx);
     }
 };
+
+static_assert(
+    sizeof(MediaShowcaseBase) <= 1600,
+    "MediaShowcaseBase instance footprint must remain <= 1600 bytes"
+);
 
 class RetroGamesEngine : public MediaShowcaseBase {
 public:

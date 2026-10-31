@@ -3811,6 +3811,61 @@ void test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants(void) {
     TEST_ASSERT_TRUE(verdict.compatible());
 }
 
+void test_dmdz_pal8_spsc_ring_and_3tier_profile_contracts(void) {
+    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 32U));
+    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 64U));
+    TEST_ASSERT_EQUAL_STRING("psram_hd", net::selectDmdzStreamProfile(true, 256U, 64U));
+
+    char wsPath[288] = "";
+    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
+        "/api/v1/games/stream/pkg_games_sf2.rgb565.stream",
+        "esp32_dev_games",
+        wsPath,
+        sizeof(wsPath),
+        4U,
+        2U,
+        1360U,
+        "sram"
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/pkg_games_sf2.dmdz?purge=true&client_id=esp32_dev_games&credits=4&v=2&chunk=1360&profile=sram",
+        wsPath
+    );
+
+    uint16_t fb[16] = {0};
+    core::drawing::DmdzStreamDecoder dec;
+    dec.init(4U, 4U, 2U);
+    const uint8_t pal8Key[] = {
+        core::drawing::DmdzStreamDecoder::kFramePal8,
+        0x01U,        // 2 colors, no scroll
+        0x1FU, 0x00U, // m_pal[0] = 0x001F
+        0x00U, 0xF8U, // m_pal[1] = 0xF800
+        static_cast<uint8_t>(0xC0U | 6U), // PAL_RUN 8 of m_pal[0] (0x001F)
+        0x01U,        // PAL_INDEX 1 (0xF800)
+        static_cast<uint8_t>(0xC0U | 5U)  // PAL_RUN 7 of 0xF800
+    };
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(pal8Key)));
+    for (size_t i = 0U; i < sizeof(pal8Key); ++i) {
+        TEST_ASSERT_TRUE(dec.feed(pal8Key + i, 1U, fb));
+    }
+    TEST_ASSERT_TRUE(dec.finishFrame());
+    for (size_t i = 0U; i < 8U; ++i) TEST_ASSERT_EQUAL_HEX16(0x001FU, fb[i]);
+    for (size_t i = 8U; i < 16U; ++i) TEST_ASSERT_EQUAL_HEX16(0xF800U, fb[i]);
+
+    uint8_t ringMem[96] = {0};
+    net::DmdzSpscByteRing spsc;
+    spsc.init(ringMem, sizeof(ringMem));
+    for (int r = 0; r < 25; ++r) {
+        const uint8_t msg[19] = {17, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
+        TEST_ASSERT_EQUAL_UINT32(19U, static_cast<uint32_t>(spsc.push(msg, sizeof(msg))));
+        uint16_t pLen = 0U;
+        TEST_ASSERT_TRUE(spsc.hasCompleteFrame(pLen));
+        TEST_ASSERT_EQUAL_UINT16(17U, pLen);
+        spsc.consumeRead(19U);
+        TEST_ASSERT_TRUE(spsc.empty());
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -3945,6 +4000,7 @@ void setup() {
     RUN_TEST(test_showcase_and_ingame_next_frame_due_ms_pacing);
     RUN_TEST(test_showcase_and_ingame_odd_seqlock_skip_and_rearm);
     RUN_TEST(test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants);
+    RUN_TEST(test_dmdz_pal8_spsc_ring_and_3tier_profile_contracts);
 
     UNITY_END();
 }

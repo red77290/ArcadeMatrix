@@ -137,7 +137,7 @@ public:
         bool& outOnline,
         char* outVersion,
         size_t verCap,
-        uint32_t maxAgeMs = 180000U
+        uint32_t maxAgeMs = 120000U
     );
 
     /**

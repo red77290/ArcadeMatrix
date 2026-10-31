@@ -33,6 +33,7 @@ public:
     static constexpr uint8_t kFrameKey = 2;
     static constexpr uint8_t kFrameScroll2D = 3;
     static constexpr uint8_t kFrameRaw = 4;
+    static constexpr uint8_t kFramePal8 = 5;
 
     /**
      * @brief Parses a 16-byte `DMDZ` or `DMDS` container header.
@@ -75,9 +76,20 @@ private:
         TLumaLo,
         LzLo,
         LzHi,
+        PalHdr,
+        PalScrollDx,
+        PalScrollDy,
+        PalTableLo,
+        PalTableHi,
+        PalOp,
+        PalLongSkipLo,
+        PalLongSkipHi,
     };
 
-    uint16_t m_cache[64] = {0};
+    union {
+        uint16_t m_cache[64];
+        uint16_t m_pal[128] = {0};
+    };
     uint32_t m_numPixels = 0;
     uint32_t m_pos = 0;
     uint16_t m_width = 0;
@@ -88,6 +100,8 @@ private:
     uint8_t m_litRemaining = 0;
     uint8_t m_loByte = 0;
     uint8_t m_opHeader = 0;
+    uint8_t m_palCount = 0;
+    uint8_t m_palIdx = 0;
     int8_t m_scrollDx = 0;
     State m_state = State::FrameType;
     bool m_error = false;
@@ -105,7 +119,8 @@ bool buildDmdzWebSocketPath(
     size_t outCap,
     uint8_t credits = 2U,
     uint8_t codecVersion = 1U,
-    uint16_t chunkBytes = 1024U
+    uint16_t chunkBytes = 1024U,
+    const char* profile = nullptr
 );
 
 /**
