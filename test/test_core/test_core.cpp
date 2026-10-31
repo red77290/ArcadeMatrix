@@ -3227,6 +3227,40 @@ void test_modular_config_migration_and_partitioning(void) {
     TEST_ASSERT_EQUAL_STRING("canvas_single", dualHw.render_pipeline.c_str());
 }
 
+void test_config_loader_heap_backup_auto_heal_and_matrix_fallback(void) {
+    MemoryConfigStorage storage;
+    ModularConfigManager mgr(storage);
+
+    const char* legacyBakJson = "{"
+        "\"display\":{\"width\":64,\"height\":64,\"chain_length\":2,\"driver_chip\":\"FM6126A\"},"
+        "\"wifi\":{\"ssid\":\"ArcadeNet\",\"password\":\"secret42\",\"hostname\":\"dmd-cab\"},"
+        "\"mqtt\":{\"enabled\":true,\"broker\":\"192.168.1.50\",\"port\":1883}"
+    "}";
+    storage.writeStringAtomic("/config.json.bak", legacyBakJson);
+
+    std::unique_ptr<ConfigLoader> cfg(new ConfigLoader());
+    TEST_ASSERT_TRUE(cfg->wifi.ssid.isEmpty());
+    TEST_ASSERT_TRUE(cfg->autoHealNetworkFromBackups(storage, mgr, "/config.json"));
+    TEST_ASSERT_EQUAL_STRING("ArcadeNet", cfg->wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING("secret42", cfg->wifi.password.c_str());
+    TEST_ASSERT_EQUAL_STRING("dmd-cab", cfg->wifi.hostname.c_str());
+    TEST_ASSERT_TRUE(cfg->mqtt.enabled);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.50", cfg->mqtt.broker.c_str());
+    TEST_ASSERT_TRUE(storage.exists("/config/network.json"));
+
+    // Subsequent call when SSID is already populated must be a fast no-op
+    TEST_ASSERT_FALSE(cfg->autoHealNetworkFromBackups(storage, mgr, "/config.json"));
+
+    // Matrix fallback respects maxTotalW / maxTotalH bounds and reads .bak on heap
+    MatrixConfig recovered;
+    TEST_ASSERT_FALSE(cfg->tryLoadFallbackMatrixFromStorage(storage, recovered, 64, 32, "/config.json"));
+    TEST_ASSERT_TRUE(cfg->tryLoadFallbackMatrixFromStorage(storage, recovered, 128, 64, "/config.json"));
+    TEST_ASSERT_EQUAL(64, recovered.width);
+    TEST_ASSERT_EQUAL(64, recovered.height);
+    TEST_ASSERT_EQUAL(2, recovered.chainLength);
+    TEST_ASSERT_EQUAL_STRING("FM6126A", recovered.driverChip.c_str());
+}
+
 // =========================================================================
 // 11. Runtime Engine Capability & Compatibility System Tests
 // =========================================================================
@@ -3981,6 +4015,7 @@ void setup() {
     RUN_TEST(test_memory_config_storage_crud);
     RUN_TEST(test_working_set_cache_synchronization_and_eviction);
     RUN_TEST(test_modular_config_migration_and_partitioning);
+    RUN_TEST(test_config_loader_heap_backup_auto_heal_and_matrix_fallback);
     RUN_TEST(test_modular_playlist_long_rotation_round_trip);
     RUN_TEST(test_modular_network_keeps_data_mqtt);
 
