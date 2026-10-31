@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 namespace net {
@@ -544,52 +545,6 @@ enum class StreamStopReason : uint8_t {
 };
 
 /**
- * @struct DmdzStreamParams
- * @brief Zero-overhead POD configuration & callback table for `DmdzStreamClient::stream()`.
- *        Shared by `MediaShowcaseBase` (autonomous Showcase engines) and `FrontendSyncEngine`
- *        (late-preempting In-Game Showcase sequences).
- */
-struct DmdzStreamParams {
-    const char* serverUrl = nullptr;
-    const char* streamPath = nullptr;
-    const char* clientId = nullptr;
-    const char* profile = nullptr;
-    const char* logTag = "Showcase";
-    uint16_t ownerId = 0U;
-    uint8_t wsCredits = 2U;
-    uint16_t wsChunkBytes = 0U;
-    uint16_t panelWidth = 128U;
-    uint16_t panelHeight = 32U;
-    uint32_t configuredStreamMs = 12000U;
-    size_t maxFramePixels = 0U;
-    uint16_t* frameBuf0 = nullptr;
-    uint16_t* frameBuf1 = nullptr;
-    char* ioScratch = nullptr;
-    size_t ioScratchCap = 0U;
-
-    void* userCtx = nullptr;
-    StreamStopReason (*checkStop)(void* ctx) = nullptr;
-    void (*onBeginFrameWrite)(
-        void* ctx,
-        uint16_t frameIdx,
-        uint16_t* dstBuf,
-        bool singleBuffer,
-        uint32_t safeFps
-    ) = nullptr;
-    void (*onFinishFrameWrite)(
-        void* ctx,
-        uint16_t frameIdx,
-        const uint16_t* dstBuf,
-        uint16_t width,
-        uint16_t height,
-        bool okFrame,
-        bool singleBuffer
-    ) = nullptr;
-    uint32_t (*getPresentedFrames)(void* ctx) = nullptr;
-    void (*onNextFrameDueMs)(void* ctx, uint32_t dueMs) = nullptr;
-};
-
-/**
  * @brief Formats a Showcase HTTP `.rgb565.stream` request path with explicit `purge`, `paced`,
  *        `codec=dmdz2`, optional `client_id`, preserved `api_key`, and adaptive `profile`.
  */
@@ -718,13 +673,11 @@ struct DmdzPreloadSession {
 
 /**
  * @class DmdzStreamClient
- * @brief Reusable zero-heap ZeDMD-style Credit-Acknowledged WebSocket (`DMDZ` v1/v2) + Paced HTTP
- *        (`DMDZ`/`DMDS`) stream client with `SO_LINGER {1, 0}` zero-`TIME_WAIT` socket reclamation.
+ * @brief Zero-heap HTTP stream purge helper with `SO_LINGER {1, 0}` zero-`TIME_WAIT` socket reclamation
+ *        paired with `DmdzSpscStreamSession` and `DmdzPreloadSession`.
  */
 class DmdzStreamClient {
 public:
-    static bool stream(const DmdzStreamParams& params);
-
     static void notifyHttpStreamPurge(
         const char* serverUrl,
         const char* streamPath,

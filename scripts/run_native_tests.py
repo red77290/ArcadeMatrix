@@ -96,6 +96,7 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "DmdzStreamDecoder.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "DmdzStreamClient.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "ShowcaseDiscovery.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "engines", "showcase", "ShowcaseStreamPlayer.cpp"),
         os.path.join(PROJECT_ROOT, "src", "services", "IconService.cpp"),
         os.path.join(PROJECT_ROOT, "test", "native", "test_native_core.cpp"),
     ]

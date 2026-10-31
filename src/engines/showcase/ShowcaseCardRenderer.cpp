@@ -20,8 +20,12 @@ void copySafeCardStr(char* dst, size_t cap, const char* src) {
         dst[0] = '\0';
         return;
     }
-    strncpy(dst, src, cap - 1U);
-    dst[cap - 1U] = '\0';
+    size_t n = 0U;
+    while (n + 1U < cap && src[n] != '\0') {
+        dst[n] = src[n];
+        ++n;
+    }
+    dst[n] = '\0';
 }
 
 struct CustomGlyph5x7 {

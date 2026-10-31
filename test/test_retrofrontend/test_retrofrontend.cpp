@@ -228,6 +228,122 @@ void test_mqtt_config_sanitization_and_roundtrip(void) {
     TEST_ASSERT_EQUAL_INT(600, reloaded.mqtt.ingame_marquee_interval_sec);
 }
 
+/**
+ * @brief Verifies that `InGameShowcaseEngine` shares `ShowcaseStreamPlayer` (`FRAME_PAL8` Zero-Copy
+ *        `ScopedCanvasGuard` with `0 B` engine fallback buffer) and disables status overlays during
+ *        live gameplay showcase playback (`allowsOverlay() == false`).
+ */
+void test_ingame_showcase_engine_zero_copy_pal8_and_no_overlay(void) {
+    class MockInGameCanvasSurface : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        MockInGameCanvasSurface() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 128 * 32; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 128U, 32U, 128U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    class MockInGameContext : public EngineContext {
+    public:
+        IDrawingSurface* surf = nullptr;
+        explicit MockInGameContext(IDrawingSurface* s) : surf(s) {}
+        IDrawingSurface* getSurface() override { return surf; }
+        FrontendSyncEngine* getEventBus() override { return nullptr; }
+        void getSystemTime(struct tm* t) override {
+            if (t) memset(t, 0, sizeof(*t));
+        }
+        DisplayGeometry getGeometry() const override {
+            DisplayGeometry g;
+            g.width = 128;
+            g.height = 32;
+            g.nativeWidth = 128;
+            g.nativeHeight = 32;
+            return g;
+        }
+    };
+
+    MockInGameCanvasSurface surf;
+    MockInGameContext ctx(&surf);
+    InGameShowcaseEngine inGame;
+
+    TEST_ASSERT_FALSE(inGame.allowsOverlay());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(inGame.initialize(&ctx, nullptr)));
+    inGame.activate();
+    TEST_ASSERT_TRUE(inGame.isDisplayEngaged());
+    TEST_ASSERT_TRUE(inGame.streamPlayer().isZeroCopyEligible());
+    TEST_ASSERT_NULL(inGame.streamPlayer().fallbackFrameBuffer());
+
+    // Push a `DMDZ` v2 `FRAME_PAL8` (`0x05`) 1-color frame (`0x07FF` cyan) into the shared SPSC ring
+    TEST_ASSERT_TRUE(inGame.streamPlayer().ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(inGame.streamPlayer().allocateSpscRing(4096U, false));
+    std::vector<uint8_t> wire;
+    const uint16_t payLen = 4U + 64U;
+    wire.push_back(static_cast<uint8_t>(payLen & 0xFFU));
+    wire.push_back(static_cast<uint8_t>(payLen >> 8));
+    wire.push_back(core::drawing::DmdzStreamDecoder::kFramePal8);
+    wire.push_back(0x00U);
+    wire.push_back(0xFFU);
+    wire.push_back(0x07U);
+    for (int r = 0; r < 64; ++r) {
+        wire.push_back(0xFEU); // PAL_RUN 64 -> 64 * 64 = 4,096 px
+    }
+    TEST_ASSERT_EQUAL_UINT32(
+        wire.size(),
+        static_cast<uint32_t>(inGame.streamPlayer().spscRing().push(wire.data(), wire.size()))
+    );
+    inGame.streamPlayer().armSpscStreamForTest(128U, 32U, 2U, true, 1U, 20U);
+
+    inGame.update(&ctx);
+    inGame.render(&ctx);
+
+    TEST_ASSERT_NULL(inGame.streamPlayer().fallbackFrameBuffer());
+    TEST_ASSERT_EQUAL_UINT32(1U, surf.extDraws);
+    TEST_ASSERT_EQUAL_UINT32(1U, inGame.presentedFrames());
+    TEST_ASSERT_EQUAL_HEX16(0x07FFU, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x07FFU, surf.pixels[128 * 32 - 1]);
+
+    inGame.deactivate();
+    inGame.streamPlayer().releaseAll();
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -239,6 +355,7 @@ void setup() {
     RUN_TEST(test_parse_showcase_health_broker);
     RUN_TEST(test_build_showcase_queue_request_json);
     RUN_TEST(test_mqtt_config_sanitization_and_roundtrip);
+    RUN_TEST(test_ingame_showcase_engine_zero_copy_pal8_and_no_overlay);
     UNITY_END();
 }
 
