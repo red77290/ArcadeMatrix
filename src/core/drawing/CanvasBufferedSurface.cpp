@@ -77,6 +77,16 @@ void CanvasBufferedSurface::clear(uint16_t color) {
 
 void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     if (!_canvas) return;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    if (getRotation() == 0) {
+        int16_t pw = physicalWidth();
+        int16_t ph = physicalHeight();
+        if (x < 0 || x >= pw || y < 0 || y >= ph) return;
+        markModified();
+        _canvas[(size_t)y * pw + x] = color;
+        return;
+    }
+#endif
     Point p = SurfaceCoordinates::logicalToPhysical(x, y, physicalWidth(), physicalHeight(), getRotation());
     if (p.x < 0 || p.x >= physicalWidth() || p.y < 0 || p.y >= physicalHeight()) return;
 
@@ -98,21 +108,44 @@ void CanvasBufferedSurface::fillScreen(uint16_t color) {
 }
 
 void CanvasBufferedSurface::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
-    if (h <= 0) return;
-    for (int16_t i = 0; i < h; ++i) {
-        drawPixel(x, y + i, color);
-    }
+    fillRect(x, y, 1, h, color);
 }
 
 void CanvasBufferedSurface::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
-    if (w <= 0) return;
-    for (int16_t i = 0; i < w; ++i) {
-        drawPixel(x + i, y, color);
-    }
+    fillRect(x, y, w, 1, color);
 }
 
 void CanvasBufferedSurface::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    if (w <= 0 || h <= 0) return;
+    if (!_canvas || w <= 0 || h <= 0) return;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    if (getRotation() == 0) {
+        int16_t pw = physicalWidth();
+        int16_t ph = physicalHeight();
+        int32_t x0 = (x < 0) ? 0 : x;
+        int32_t y0 = (y < 0) ? 0 : y;
+        int32_t x1 = static_cast<int32_t>(x) + w;
+        int32_t y1 = static_cast<int32_t>(y) + h;
+        if (x1 > pw) x1 = pw;
+        if (y1 > ph) y1 = ph;
+        if (x0 >= x1 || y0 >= y1) return;
+        markModified();
+        int32_t span = x1 - x0;
+        if (color == 0) {
+            size_t rowBytes = (size_t)span * sizeof(uint16_t);
+            for (int32_t row = y0; row < y1; ++row) {
+                memset(_canvas + ((size_t)row * pw + x0), 0, rowBytes);
+            }
+        } else {
+            for (int32_t row = y0; row < y1; ++row) {
+                uint16_t* dst = _canvas + ((size_t)row * pw + x0);
+                for (int32_t i = 0; i < span; ++i) {
+                    dst[i] = color;
+                }
+            }
+        }
+        return;
+    }
+#endif
     for (int16_t row = 0; row < h; ++row) {
         for (int16_t col = 0; col < w; ++col) {
             drawPixel(x + col, y + row, color);

@@ -105,11 +105,14 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
         // Resource-aware Auto resolution for PSRAM-capable board (`SPIRAM_DMA_BUFFER`):
         // HUB75 `rowBitStruct` pixel planes (`dmaBytesSingle` / `dmaBytesDouble`) reside in external
         // Octal/Quad PSRAM, while ONLY GDMA descriptor chains (`~4-15 KB` per buffer) occupy internal
-        // `MALLOC_CAP_DMA` SRAM.
+        // `MALLOC_CAP_DMA` SRAM. On large geometries (`> 80 KB` double-DMA, e.g. `128x64` / `256x64`),
+        // prioritize `CANVAS_BURST_SINGLE` ("Canvas + Single DMA") to maximize FPS while saving 50% PSRAM DMA.
         size_t internalDescDouble = (size_t)(height / 2) * sizingDepth * 2U * 16U + 16384U;
+        bool preferSingleCanvasHighFps = (dmaBytesDouble > 81920U);
         bool psramCanFitCanvas = (effectiveMem.largestPsramBlock == 0 || effectiveMem.largestPsramBlock >= canvasBytes) &&
                                  (effectiveMem.freePsram == 0 || effectiveMem.freePsram >= (canvasBytes + dmaBytesSingle));
-        bool dmaCanFitDouble = (effectiveMem.freePsram == 0 || effectiveMem.freePsram >= (canvasBytes + dmaBytesDouble)) &&
+        bool dmaCanFitDouble = !preferSingleCanvasHighFps &&
+                               (effectiveMem.freePsram == 0 || effectiveMem.freePsram >= (canvasBytes + dmaBytesDouble)) &&
                                (effectiveMem.freeDmaHeap == 0 || effectiveMem.freeDmaHeap >= internalDescDouble);
 
         if (psramCanFitCanvas && dmaCanFitDouble) {
@@ -132,8 +135,12 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
             res.descriptor.requiresInternalDMA = false;
             res.descriptor.estimatedCanvasBytes = canvasBytes;
             res.descriptor.estimatedDmaBytes = dmaBytesSingle;
-            res.reason = SurfaceSelectionReason::FallbackDirectDma;
-            res.reasonText = "Auto-resolved Canvas PSRAM + Single DMA (Constrained DMA heap)";
+            res.reason = preferSingleCanvasHighFps
+                ? SurfaceSelectionReason::AutoResolvedPsramCanvas
+                : SurfaceSelectionReason::FallbackDirectDma;
+            res.reasonText = preferSingleCanvasHighFps
+                ? "Auto-selected Canvas PSRAM + Single DMA (High-FPS large geometry)"
+                : "Auto-resolved Canvas PSRAM + Single DMA (Constrained DMA heap)";
         } else {
             bool sramCanFitCanvas = (effectiveMem.largestInternalBlock == 0 || effectiveMem.largestInternalBlock >= canvasBytes) &&
                                     (effectiveMem.freeInternalHeap == 0 || effectiveMem.freeInternalHeap >= (canvasBytes + 45000));

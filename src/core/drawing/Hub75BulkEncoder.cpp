@@ -91,8 +91,10 @@ uint32_t Hub75BulkEncoder::encode(
     const uint8_t* const lutR = params.lutR;
     const uint8_t* const lutG = params.lutG;
     const uint8_t* const lutB = params.lutB;
+    const int baseRow = (rpf > 0) ? (static_cast<int>(params.startRow) % rpf) : 0;
 
-    for (int y = 0; y < rpf; y++) {
+    for (int step = 0; step < rpf; step++) {
+        const int y = (rpf > 0) ? ((baseRow + step) % rpf) : step;
         const uint16_t* src1;
         const uint16_t* src2;
 
@@ -106,40 +108,90 @@ uint32_t Hub75BulkEncoder::encode(
 
         uint16_t* dmaRows[8] = {nullptr};
         bool anyPlane = false;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(UNIT_TEST)
+        bool allPlanesValid = (effDepth > 0U);
+#endif
         for (uint8_t p = 0; p < effDepth; p++) {
             dmaRows[p] = rowAccessor(accessorCtx, static_cast<uint8_t>(y), p);
             if (dmaRows[p]) {
                 anyPlane = true;
             }
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(UNIT_TEST)
+            else {
+                allPlanesValid = false;
+            }
+#endif
         }
         if (!anyPlane) continue;
 
-        for (int x = 0; x < w; x++) {
-            const int sx = rot180 ? (w - 1 - x) : x;
-            const uint16_t c1 = src1[sx];
-            const uint16_t c2 = src2[sx];
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(UNIT_TEST)
+        if (effDepth == 8U && allPlanesValid) {
+            uint16_t* const d0 = dmaRows[0];
+            uint16_t* const d1 = dmaRows[1];
+            uint16_t* const d2 = dmaRows[2];
+            uint16_t* const d3 = dmaRows[3];
+            uint16_t* const d4 = dmaRows[4];
+            uint16_t* const d5 = dmaRows[5];
+            uint16_t* const d6 = dmaRows[6];
+            uint16_t* const d7 = dmaRows[7];
 
-            const uint8_t r1 = lutR[(c1 >> 11) & 0x1F];
-            const uint8_t g1 = lutG[(c1 >> 5) & 0x3F];
-            const uint8_t b1 = lutB[c1 & 0x1F];
+            for (int x = 0; x < w; x++) {
+                const int sx = rot180 ? (w - 1 - x) : x;
+                const uint16_t c1 = src1[sx];
+                const uint16_t c2 = src2[sx];
 
-            const uint8_t r2 = lutR[(c2 >> 11) & 0x1F];
-            const uint8_t g2 = lutG[(c2 >> 5) & 0x3F];
-            const uint8_t b2 = lutB[c2 & 0x1F];
+                const uint32_t r1 = lutR[(c1 >> 11) & 0x1F];
+                const uint32_t g1 = lutG[(c1 >> 5) & 0x3F];
+                const uint32_t b1 = lutB[c1 & 0x1F];
 
-            const int ax = MATRIX_TX_ADJUST(x);
-            for (uint8_t p = 0; p < effDepth; p++) {
-                uint16_t* dmaRow = dmaRows[p];
-                if (!dmaRow) continue;
-                const uint16_t rgb =
-                    static_cast<uint16_t>((r1 >> p) & 1U) |
-                    (static_cast<uint16_t>((g1 >> p) & 1U) << 1) |
-                    (static_cast<uint16_t>((b1 >> p) & 1U) << 2) |
-                    (static_cast<uint16_t>((r2 >> p) & 1U) << 3) |
-                    (static_cast<uint16_t>((g2 >> p) & 1U) << 4) |
-                    (static_cast<uint16_t>((b2 >> p) & 1U) << 5);
-                dmaRow[ax] = (dmaRow[ax] & HUB75_BITMASK_RGB12_CLEAR) | rgb;
+                const uint32_t r2 = lutR[(c2 >> 11) & 0x1F];
+                const uint32_t g2 = lutG[(c2 >> 5) & 0x3F];
+                const uint32_t b2 = lutB[c2 & 0x1F];
+
+                const int ax = MATRIX_TX_ADJUST(x);
+                d0[ax] = static_cast<uint16_t>((d0[ax] & HUB75_BITMASK_RGB12_CLEAR) | ((r1 & 1U) | ((g1 & 1U) << 1) | ((b1 & 1U) << 2) | ((r2 & 1U) << 3) | ((g2 & 1U) << 4) | ((b2 & 1U) << 5)));
+                d1[ax] = static_cast<uint16_t>((d1[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 1) & 1U) | (((g1 >> 1) & 1U) << 1) | (((b1 >> 1) & 1U) << 2) | (((r2 >> 1) & 1U) << 3) | (((g2 >> 1) & 1U) << 4) | (((b2 >> 1) & 1U) << 5)));
+                d2[ax] = static_cast<uint16_t>((d2[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 2) & 1U) | (((g1 >> 2) & 1U) << 1) | (((b1 >> 2) & 1U) << 2) | (((r2 >> 2) & 1U) << 3) | (((g2 >> 2) & 1U) << 4) | (((b2 >> 2) & 1U) << 5)));
+                d3[ax] = static_cast<uint16_t>((d3[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 3) & 1U) | (((g1 >> 3) & 1U) << 1) | (((b1 >> 3) & 1U) << 2) | (((r2 >> 3) & 1U) << 3) | (((g2 >> 3) & 1U) << 4) | (((b2 >> 3) & 1U) << 5)));
+                d4[ax] = static_cast<uint16_t>((d4[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 4) & 1U) | (((g1 >> 4) & 1U) << 1) | (((b1 >> 4) & 1U) << 2) | (((r2 >> 4) & 1U) << 3) | (((g2 >> 4) & 1U) << 4) | (((b2 >> 4) & 1U) << 5)));
+                d5[ax] = static_cast<uint16_t>((d5[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 5) & 1U) | (((g1 >> 5) & 1U) << 1) | (((b1 >> 5) & 1U) << 2) | (((r2 >> 5) & 1U) << 3) | (((g2 >> 5) & 1U) << 4) | (((b2 >> 5) & 1U) << 5)));
+                d6[ax] = static_cast<uint16_t>((d6[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 6) & 1U) | (((g1 >> 6) & 1U) << 1) | (((b1 >> 6) & 1U) << 2) | (((r2 >> 6) & 1U) << 3) | (((g2 >> 6) & 1U) << 4) | (((b2 >> 6) & 1U) << 5)));
+                d7[ax] = static_cast<uint16_t>((d7[ax] & HUB75_BITMASK_RGB12_CLEAR) | (((r1 >> 7) & 1U) | (((g1 >> 7) & 1U) << 1) | (((b1 >> 7) & 1U) << 2) | (((r2 >> 7) & 1U) << 3) | (((g2 >> 7) & 1U) << 4) | (((b2 >> 7) & 1U) << 5)));
             }
+        } else
+#endif
+        {
+            for (int x = 0; x < w; x++) {
+                const int sx = rot180 ? (w - 1 - x) : x;
+                const uint16_t c1 = src1[sx];
+                const uint16_t c2 = src2[sx];
+
+                const uint8_t r1 = lutR[(c1 >> 11) & 0x1F];
+                const uint8_t g1 = lutG[(c1 >> 5) & 0x3F];
+                const uint8_t b1 = lutB[c1 & 0x1F];
+
+                const uint8_t r2 = lutR[(c2 >> 11) & 0x1F];
+                const uint8_t g2 = lutG[(c2 >> 5) & 0x3F];
+                const uint8_t b2 = lutB[c2 & 0x1F];
+
+                const int ax = MATRIX_TX_ADJUST(x);
+                for (uint8_t p = 0; p < effDepth; p++) {
+                    uint16_t* dmaRow = dmaRows[p];
+                    if (!dmaRow) continue;
+                    const uint16_t rgb =
+                        static_cast<uint16_t>((r1 >> p) & 1U) |
+                        (static_cast<uint16_t>((g1 >> p) & 1U) << 1) |
+                        (static_cast<uint16_t>((b1 >> p) & 1U) << 2) |
+                        (static_cast<uint16_t>((r2 >> p) & 1U) << 3) |
+                        (static_cast<uint16_t>((g2 >> p) & 1U) << 4) |
+                        (static_cast<uint16_t>((b2 >> p) & 1U) << 5);
+                    dmaRow[ax] = (dmaRow[ax] & HUB75_BITMASK_RGB12_CLEAR) | rgb;
+                }
+            }
+        }
+
+        if (params.rowFlush) {
+            params.rowFlush(params.flushCtx, static_cast<uint8_t>(y));
         }
     }
 
@@ -152,12 +204,17 @@ uint32_t Hub75BulkEncoder::encode(
     const Hub75DmaTarget& target,
     const Hub75EncodingParams& params
 ) {
+    Hub75EncodingParams effParams = params;
+    if (!effParams.rowFlush && target.rowFlush) {
+        effParams.rowFlush = target.rowFlush;
+        effParams.flushCtx = target.accessorCtx;
+    }
     if (target.rowAccessor) {
-        return encode(canvas, canvasStridePixels, target.rowAccessor, target.accessorCtx, params);
+        return encode(canvas, canvasStridePixels, target.rowAccessor, target.accessorCtx, effParams);
     }
     auto targetAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
         const auto* t = static_cast<const Hub75DmaTarget*>(ctx);
         return t->getRowPtr(row, plane);
     };
-    return encode(canvas, canvasStridePixels, targetAccessor, const_cast<void*>(static_cast<const void*>(&target)), params);
+    return encode(canvas, canvasStridePixels, targetAccessor, const_cast<void*>(static_cast<const void*>(&target)), effParams);
 }

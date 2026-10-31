@@ -3301,7 +3301,7 @@ void test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window(v
 
 #include "engines/showcase/ShowcaseCardRenderer.h"
 
-void test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll(void) {
+void test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll(void) {
     // 1. Real `dmd_media_showcase` `GET /api/v1/health` response truncated inside `providers_detailed`
     //    (contains NO `"dmd-media-showcase"` string and `"mqtt_port"` sits >2 KB later).
     const char* realTruncatedShowcaseHealth =
@@ -3365,20 +3365,25 @@ void test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll
     ));
     TEST_ASSERT_FALSE(online);
 
-    // 2. `WAVESHARE_S3` (`hasPsram = true`, `-D SPIRAM_DMA_BUFFER`) at `256x64` must select
-    //    `CANVAS_BURST_DOUBLE` (`double_buff = true`) at full `8-bit` color depth both with
-    //    reference memory (`freeDmaHeap = 80 KB`, `freePsram = 8 MB`) and live S3 memory,
-    //    eliminating single-buffer mid-scan tearing across center rows `y = 31 / 32`.
+    // 2. `WAVESHARE_S3` (`hasPsram = true`, `-D SPIRAM_DMA_BUFFER`) at `256x64` under `"auto"`
+    //    must prioritize `CANVAS_BURST_SINGLE` ("Canvas + Single DMA") at full `8-bit` color depth
+    //    both with reference memory (`freeDmaHeap = 80 KB`, `freePsram = 8 MB`) and live S3 memory
+    //    to maximize FPS while saving 50% PSRAM DMA, while `128x32` `"auto"` selects `CANVAS_BURST_DOUBLE`
+    //    and explicit `"canvas_double"` on `256x64` selects `CANVAS_BURST_DOUBLE` at `8-bit`.
     extern void setMockProfile(HwProfile p);
     setMockProfile(HwProfile::WAVESHARE_S3);
 
     auto refEval256 = PipelineSelectionPolicy::evaluate(256, 64, 0, "auto", /*hasPsram=*/true);
     TEST_ASSERT_TRUE(refEval256.valid);
     TEST_ASSERT_EQUAL_INT(
-        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_SINGLE),
         static_cast<int>(refEval256.descriptor.strategy)
     );
-    TEST_ASSERT_TRUE(refEval256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(CanvasStorage::PSRAM),
+        static_cast<int>(refEval256.descriptor.canvasStorage)
+    );
+    TEST_ASSERT_FALSE(refEval256.descriptor.dmaDoubleBuffered);
     TEST_ASSERT_EQUAL_UINT8(8, refEval256.effectiveColorDepth);
 
     MemoryBudgetConstraints liveS3Mem(
@@ -3391,13 +3396,35 @@ void test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll
     auto liveEval256 = PipelineSelectionPolicy::evaluate(256, 64, 0, "auto", /*hasPsram=*/true, liveS3Mem);
     TEST_ASSERT_TRUE(liveEval256.valid);
     TEST_ASSERT_EQUAL_INT(
-        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_SINGLE),
         static_cast<int>(liveEval256.descriptor.strategy)
     );
-    TEST_ASSERT_TRUE(liveEval256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(CanvasStorage::PSRAM),
+        static_cast<int>(liveEval256.descriptor.canvasStorage)
+    );
+    TEST_ASSERT_FALSE(liveEval256.descriptor.dmaDoubleBuffered);
     TEST_ASSERT_EQUAL_UINT8(8, liveEval256.effectiveColorDepth);
 
-    // Constrained internal DMA SRAM (`8 KB` < descriptor requirement) still falls back safely to single buffer
+    auto autoEval128 = PipelineSelectionPolicy::evaluate(128, 32, 0, "auto", /*hasPsram=*/true, liveS3Mem);
+    TEST_ASSERT_TRUE(autoEval128.valid);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(autoEval128.descriptor.strategy)
+    );
+    TEST_ASSERT_TRUE(autoEval128.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_UINT8(8, autoEval128.effectiveColorDepth);
+
+    auto explicitDouble256 = PipelineSelectionPolicy::evaluate(256, 64, 0, "canvas_double", /*hasPsram=*/true, liveS3Mem);
+    TEST_ASSERT_TRUE(explicitDouble256.valid);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(explicitDouble256.descriptor.strategy)
+    );
+    TEST_ASSERT_TRUE(explicitDouble256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_UINT8(8, explicitDouble256.effectiveColorDepth);
+
+    // Constrained internal DMA SRAM (`8 KB` < descriptor requirement) on `128x32` falls back safely to single buffer
     MemoryBudgetConstraints starvedDmaS3Mem(
         /*freeInt=*/40000U,
         /*largestInt=*/20000U,
@@ -3405,15 +3432,82 @@ void test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll
         /*freePsram=*/8U * 1024U * 1024U,
         /*largestPsram=*/8U * 1024U * 1024U
     );
-    auto fallbackEval256 = PipelineSelectionPolicy::evaluate(256, 64, 8, "auto", /*hasPsram=*/true, starvedDmaS3Mem);
-    TEST_ASSERT_TRUE(fallbackEval256.valid);
+    auto fallbackEval128 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", /*hasPsram=*/true, starvedDmaS3Mem);
+    TEST_ASSERT_TRUE(fallbackEval128.valid);
     TEST_ASSERT_EQUAL_INT(
         static_cast<int>(PresentationStrategy::CANVAS_BURST_SINGLE),
-        static_cast<int>(fallbackEval256.descriptor.strategy)
+        static_cast<int>(fallbackEval128.descriptor.strategy)
     );
-    TEST_ASSERT_FALSE(fallbackEval256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_FALSE(fallbackEval128.descriptor.dmaDoubleBuffered);
 
     setMockProfile(HwProfile::ESP32_STD);
+
+    // 2b. `Hub75BulkEncoder::encode` rotated `startRow` + per-row `rowFlush` invariant (`256x64` 1/32 scan, 8-bit):
+    //     Every `startRow` (`0, 1, 7, 19, 31`) must produce 100% bit-exact HUB75 bitplanes while invoking
+    //     `rowFlush` once per scan row in the exact `(startRow + step) % 32` order.
+    {
+        constexpr uint16_t kTestW = 16;
+        constexpr uint16_t kTestH = 64;
+        constexpr uint8_t kTestRpf = 32;
+        std::vector<uint16_t> gradCanvas(kTestW * kTestH);
+        for (uint16_t y = 0; y < kTestH; ++y) {
+            for (uint16_t x = 0; x < kTestW; ++x) {
+                uint16_t r5 = static_cast<uint16_t>((x * 2U + y) & 0x1FU);
+                uint16_t g6 = static_cast<uint16_t>((x * 3U + y * 2U) & 0x3FU);
+                uint16_t b5 = static_cast<uint16_t>((x + y * 5U) & 0x1FU);
+                gradCanvas[y * kTestW + x] = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
+            }
+        }
+
+        uint8_t lutR[32], lutG[64], lutB[32];
+        Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
+
+        struct MockScanBuffer {
+            uint16_t planes[32][8][16];
+            std::vector<uint8_t> flushedRows;
+        };
+        auto accessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+            auto* b = static_cast<MockScanBuffer*>(ctx);
+            return (row < 32 && plane < 8) ? b->planes[row][plane] : nullptr;
+        };
+        auto flusher = [](void* ctx, uint8_t row) {
+            auto* b = static_cast<MockScanBuffer*>(ctx);
+            b->flushedRows.push_back(row);
+        };
+
+        MockScanBuffer refBuf{};
+        memset(refBuf.planes, 0xA5, sizeof(refBuf.planes)); // verify upper control bits [15:6] are preserved
+        Hub75EncodingParams encParams;
+        encParams.colorDepth = 8;
+        encParams.rowsPerFrame = kTestRpf;
+        encParams.width = kTestW;
+        encParams.height = kTestH;
+        encParams.lutR = lutR;
+        encParams.lutG = lutG;
+        encParams.lutB = lutB;
+        encParams.rotation = 0;
+        encParams.startRow = 0;
+        encParams.rowFlush = flusher;
+        encParams.flushCtx = &refBuf;
+
+        Hub75BulkEncoder::encode(gradCanvas.data(), kTestW, accessor, &refBuf, encParams);
+        TEST_ASSERT_EQUAL_UINT32(32U, static_cast<uint32_t>(refBuf.flushedRows.size()));
+
+        const uint8_t kStartRows[] = {1, 7, 19, 31};
+        for (uint8_t sr : kStartRows) {
+            MockScanBuffer rotBuf{};
+            memset(rotBuf.planes, 0xA5, sizeof(rotBuf.planes));
+            encParams.startRow = sr;
+            encParams.flushCtx = &rotBuf;
+            Hub75BulkEncoder::encode(gradCanvas.data(), kTestW, accessor, &rotBuf, encParams);
+
+            TEST_ASSERT_EQUAL_UINT32(32U, static_cast<uint32_t>(rotBuf.flushedRows.size()));
+            for (uint8_t step = 0; step < kTestRpf; ++step) {
+                TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((sr + step) % kTestRpf), rotBuf.flushedRows[step]);
+            }
+            TEST_ASSERT_EQUAL_INT(0, memcmp(refBuf.planes, rotBuf.planes, sizeof(refBuf.planes)));
+        }
+    }
 
     // 3. `ShowcaseCardRenderer` geometry-proportional scroll speed & 1-px/frame 60 Hz lock on `256x64`
     using engines::showcase::ShowcaseCardRenderer;
@@ -3538,7 +3632,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects);
     RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
     RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
-    RUN_TEST(test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll);
+    RUN_TEST(test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll);
 
     return UNITY_END();
 }

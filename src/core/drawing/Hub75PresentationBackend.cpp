@@ -34,6 +34,14 @@ Hub75DmaTarget Hub75PresentationBackend::acquireDmaTarget() {
             auto* p = static_cast<FastMatrixPanel*>(ctx);
             return p ? p->getBackbufferRowPlane(row, plane) : nullptr;
         };
+#if defined(SPIRAM_DMA_BUFFER)
+        target.rowFlush = [](void* ctx, uint8_t row) {
+            auto* p = static_cast<FastMatrixPanel*>(ctx);
+            if (p) {
+                p->flushBackbufferRow(row);
+            }
+        };
+#endif
         target.accessorCtx = panel;
         target.buffer = reinterpret_cast<uint8_t*>(panel->getBackbufferRowPlane(0, 0));
         target.lutR = panel->getLutR();
@@ -58,12 +66,7 @@ PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& po
     if (panel) {
         uint16_t rpf = _height / 2;
         for (uint8_t y = 0; y < rpf; y++) {
-            for (uint8_t p = 0; p < _colorDepth; p++) {
-                uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
-                if (dmaRow) {
-                    Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
-                }
-            }
+            panel->flushBackbufferRow(y);
         }
     }
 #endif
@@ -137,12 +140,7 @@ PresentationTiming Hub75PresentationBackend::commitFirstFrame() {
 #if defined(SPIRAM_DMA_BUFFER)
     uint16_t rpf = _height / 2;
     for (uint8_t y = 0; y < rpf; y++) {
-        for (uint8_t p = 0; p < _colorDepth; p++) {
-            uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
-            if (dmaRow) {
-                Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
-            }
-        }
+        panel->flushBackbufferRow(y);
     }
 #endif
 
@@ -154,12 +152,7 @@ PresentationTiming Hub75PresentationBackend::commitFirstFrame() {
         panel->clearScreen();
 #if defined(SPIRAM_DMA_BUFFER)
         for (uint8_t y = 0; y < rpf; y++) {
-            for (uint8_t p = 0; p < _colorDepth; p++) {
-                uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
-                if (dmaRow) {
-                    Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
-                }
-            }
+            panel->flushBackbufferRow(y);
         }
 #endif
     }
@@ -213,33 +206,10 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
     if (!isSingle) {
         // =========================================================================
         // DOUBLE BUFFER PIPELINE:
-        // 1. Ensure any prior asynchronous S3 GDMA descriptor flip has completed at
-        //    least 1 HUB75 scan cycle before modifying `m_back` (prevents center-row
-        //    `y = 31/32` tearing when `Bus_Parallel16::flip_dma_output_buffer` swaps at EOF).
-        // 2. Encode into inactive back-buffer (tear-free)
-        // 3. Safe-window synchronization
-        // 4. Swap buffers (`MatrixPanel_I2S_DMA::flipDMABuffer` flushes SPIRAM DCache)
+        // 1. Encode into inactive back-buffer (with L1-hot per-row writeback)
+        // 2. Safe-window synchronization
+        // 3. Swap buffers
         // =========================================================================
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-        if (_engine->flipCount() > 0U) {
-            const uint32_t guardUs = _engine->minFlipGuardUs();
-            if (guardUs > 0U) {
-                const uint32_t waitStartUs = micros();
-                while ((uint32_t)(micros() - _engine->lastFlipMicros()) < guardUs) {
-                    const uint32_t remUs = guardUs - (uint32_t)(micros() - _engine->lastFlipMicros());
-                    if (remUs >= 1500U) {
-                        delay(1);
-                    } else {
-                        delayMicroseconds(40);
-                    }
-                    if ((uint32_t)(micros() - waitStartUs) > guardUs) {
-                        break;
-                    }
-                }
-                timing.waitForSafeWindowUs += (micros() - waitStartUs);
-            }
-        }
-#endif
         uint32_t t_enc = micros();
         Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
         timing.encodeUs = micros() - t_enc;
@@ -275,16 +245,16 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         }
     } else {
         // =========================================================================
-        // SINGLE BUFFER PIPELINE:
-        // Writing directly to the active scanning buffer IS the critical section.
+        // SINGLE BUFFER WITH CANVAS PIPELINE (`CANVAS_BURST_SINGLE`):
         // 1. Compute dynamic transfer estimate (encode + writeback)
-        // 2. Pre-flight budget validation: reject BEFORE blacking out screen if budget exceeded
-        // 3. Wait for safe window (V-Blank / scan pause)
-        // 4. Transient blanking BEFORE writing begins (guarantees 0 tearing)
-        // 5. Encode directly into DMA buffer
-        // 6. Cache writeback (SPIRAM)
-        // 7. Refresh / commit
-        // 8. Unblank display
+        // 2. Pre-flight budget validation
+        // 3. Wait for safe window (if synchronizer configured)
+        // 4. Optional transient blanking
+        // 5. Rotate `startRow` by coprime `+7` (`gcd(7, rowsPerFrame) == 1`) so the
+        //    wrap boundary never parks between `row (rpf-1)` and `row 0` (`y = 31/32`
+        //    center seam on 64px-tall 1/32-scan panels during vertical panorama/video
+        //    motion), and flush each `rowBitStruct` immediately while hot in L1 DCache.
+        // 6. Commit frame
         // =========================================================================
         bool isSpiram = false;
 #if defined(SPIRAM_DMA_BUFFER)
@@ -323,20 +293,20 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(true);
         }
 
+        params.startRow = static_cast<uint8_t>(_nextStartRow % target.rowsPerFrame);
+        _nextStartRow = static_cast<uint8_t>((static_cast<uint16_t>(params.startRow) + 7U) % target.rowsPerFrame);
+
         uint32_t t_enc = micros();
         Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
         timing.encodeUs = micros() - t_enc;
 
 #if defined(SPIRAM_DMA_BUFFER)
-        FastMatrixPanel* panel = _engine->getFastPanel();
-        if (panel) {
-            uint16_t rpf = _height / 2;
-            for (uint8_t y = 0; y < rpf; y++) {
-                for (uint8_t p = 0; p < _colorDepth; p++) {
-                    uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
-                    if (dmaRow) {
-                        Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
-                    }
+        if (!target.rowFlush) {
+            FastMatrixPanel* panel = _engine->getFastPanel();
+            if (panel) {
+                uint16_t rpf = _height / 2;
+                for (uint8_t y = 0; y < rpf; y++) {
+                    panel->flushBackbufferRow(y);
                 }
             }
         }

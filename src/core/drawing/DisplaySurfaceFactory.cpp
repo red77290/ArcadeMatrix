@@ -57,7 +57,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     if (desc.strategy == PresentationStrategy::CANVAS_BURST_SINGLE ||
         desc.strategy == PresentationStrategy::CANVAS_BURST_DOUBLE)
     {
-        bool singleDma = !desc.dmaDoubleBuffered;
+        bool singleDma = !desc.dmaDoubleBuffered || (matrixEngine && !matrixEngine->isDoubleBuffered());
         result.surface.reset(new CanvasBufferedSurface(width, height, desc.canvasStorage, backend, singleDma, preallocatedCanvas));
 
         // Detect if CanvasBufferedSurface had to fall back internally (e.g. PSRAM -> SRAM)
