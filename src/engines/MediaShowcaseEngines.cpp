@@ -2769,7 +2769,10 @@ void MediaShowcaseBase::executeAcquiredItem(
     // Compute full-synopsis Card dwell (`900 ms` start hold + full scroll + `700 ms` end hold)
     uint32_t cardWaitMs = 4500U;
     const uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(card.synopsis));
-    const uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+    const uint32_t speedPx = engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(
+        synopsisPxPerSec(cfg.textScrollSpeed),
+        m_width
+    );
     if (cfg.showSynopsis && synGlyphs > 0U && speedPx > 0U) {
         const uint32_t textW = synGlyphs * 6U;
         const uint32_t availW = static_cast<uint32_t>(
@@ -2892,6 +2895,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
     m_rotationSlotCount.store(rotSlots, std::memory_order_relaxed);
 
     const uint32_t now = millis();
+    const uint32_t nowUs = micros();
 
     // Part A.2: 1:1 RPi `turn_evaluated` readiness gate on Core 1
     if (!m_turnEvaluated.load(std::memory_order_acquire)) {
@@ -2933,7 +2937,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
             m_renderCard = temp;
             m_lastRenderedCardSeq = s1;
             m_cardAnimStartMs = now;
-            m_cardLastTickMs = now;
+            m_cardLastTickUs = nowUs;
             m_synSubpixelRem = 0U;
             m_synScrollPx = 0U;
             m_titleSubpixelRem = 0U;
@@ -2945,7 +2949,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
     const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
     if (curPhase != m_lastRenderedPhase) {
         m_lastRenderedPhase = curPhase;
-        m_cardLastTickMs = now;
+        m_cardLastTickUs = nowUs;
         m_dirty = true;
     }
 
@@ -2973,27 +2977,33 @@ void MediaShowcaseBase::update(EngineContext* context) {
             m_dirty = true;
         }
     } else {
-        const uint32_t dtMs = now - m_cardLastTickMs;
-        if (dtMs > 0U) {
-            m_cardLastTickMs = now;
-            const uint32_t frameUnits = (dtMs <= 24U)
-                ? 1U
-                : std::max<uint32_t>(1U, (std::min<uint32_t>(dtMs, 2000U) * 60U + 500U) / 1000U);
-
+        const uint32_t dtUs = nowUs - m_cardLastTickUs;
+        if (dtUs > 0U) {
+            m_cardLastTickUs = nowUs;
             const uint32_t prevTitleStep = m_titleStepPx;
             const uint32_t prevSynPx = m_synScrollPx;
 
-            m_titleSubpixelRem += frameUnits * 30U;
-            m_titleStepPx += m_titleSubpixelRem / 60U;
-            m_titleSubpixelRem %= 60U;
+            const uint32_t effTitleSpeedPx =
+                engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(30U, m_width);
+            engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
+                m_titleStepPx,
+                m_titleSubpixelRem,
+                dtUs,
+                effTitleSpeedPx
+            );
 
             if (m_cfgShowSynopsis.load(std::memory_order_relaxed) &&
                 m_renderCard.synopsis[0] != '\0' &&
                 (now - m_cardAnimStartMs) >= 900U) {
-                const uint32_t speedPx = m_cfgSynopsisSpeedPx.load(std::memory_order_relaxed);
-                m_synSubpixelRem += frameUnits * speedPx;
-                m_synScrollPx += m_synSubpixelRem / 60U;
-                m_synSubpixelRem %= 60U;
+                const uint32_t baseSpeedPx = m_cfgSynopsisSpeedPx.load(std::memory_order_relaxed);
+                const uint32_t effSynSpeedPx =
+                    engines::showcase::ShowcaseCardRenderer::effectiveScrollPxPerSec(baseSpeedPx, m_width);
+                engines::showcase::ShowcaseCardRenderer::advanceCardScrollSubpixels(
+                    m_synScrollPx,
+                    m_synSubpixelRem,
+                    dtUs,
+                    effSynSpeedPx
+                );
             }
 
             if (m_titleStepPx != prevTitleStep || m_synScrollPx != prevSynPx) {

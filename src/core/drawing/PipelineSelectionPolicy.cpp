@@ -102,9 +102,15 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
         res.reason = SurfaceSelectionReason::ExplicitUserPolicy;
         res.reasonText = "User requested Direct DMA Single Buffer (Ultra-low RAM)";
     } else if (hasPsram) {
-        // Resource-aware Auto resolution for PSRAM-capable board:
-        bool psramCanFitCanvas = (effectiveMem.largestPsramBlock == 0 || effectiveMem.largestPsramBlock >= canvasBytes);
-        bool dmaCanFitDouble = (effectiveMem.freeDmaHeap == 0 || effectiveMem.freeDmaHeap >= dmaBytesDouble);
+        // Resource-aware Auto resolution for PSRAM-capable board (`SPIRAM_DMA_BUFFER`):
+        // HUB75 `rowBitStruct` pixel planes (`dmaBytesSingle` / `dmaBytesDouble`) reside in external
+        // Octal/Quad PSRAM, while ONLY GDMA descriptor chains (`~4-15 KB` per buffer) occupy internal
+        // `MALLOC_CAP_DMA` SRAM.
+        size_t internalDescDouble = (size_t)(height / 2) * sizingDepth * 2U * 16U + 16384U;
+        bool psramCanFitCanvas = (effectiveMem.largestPsramBlock == 0 || effectiveMem.largestPsramBlock >= canvasBytes) &&
+                                 (effectiveMem.freePsram == 0 || effectiveMem.freePsram >= (canvasBytes + dmaBytesSingle));
+        bool dmaCanFitDouble = (effectiveMem.freePsram == 0 || effectiveMem.freePsram >= (canvasBytes + dmaBytesDouble)) &&
+                               (effectiveMem.freeDmaHeap == 0 || effectiveMem.freeDmaHeap >= internalDescDouble);
 
         if (psramCanFitCanvas && dmaCanFitDouble) {
             res.descriptor.strategy = PresentationStrategy::CANVAS_BURST_DOUBLE;
@@ -251,16 +257,19 @@ bool PipelineSelectionPolicy::pipelineFits(
     size_t totalDmaBytes = dmaBytes + descOverhead;
 
     if (hasPsram) {
-        if (desc.canvasStorage == CanvasStorage::PSRAM) {
-            size_t psramCanvas = (size_t)width * height * sizeof(uint16_t);
-            if (memory.freePsram > 0 && psramCanvas > memory.freePsram) {
-                return false;
-            }
-            if (memory.largestPsramBlock > 0 && psramCanvas > memory.largestPsramBlock) {
-                return false;
-            }
+        size_t psramCanvas = (desc.canvasStorage == CanvasStorage::PSRAM)
+            ? ((size_t)width * height * sizeof(uint16_t))
+            : 0U;
+        if (psramCanvas > 0U && memory.largestPsramBlock > 0 && psramCanvas > memory.largestPsramBlock) {
+            return false;
         }
-        if (memory.freeDmaHeap > 0 && totalDmaBytes > memory.freeDmaHeap) {
+        // On PSRAM targets (`SPIRAM_DMA_BUFFER`), `rowBitStruct` pixel planes (`dmaBytes`) are allocated
+        // in PSRAM while internal `MALLOC_CAP_DMA` SRAM only holds the GDMA descriptor linked list.
+        if (memory.freePsram > 0 && (psramCanvas + dmaBytes) > memory.freePsram) {
+            return false;
+        }
+        size_t internalDmaNeeded = descOverhead + 12288U;
+        if (memory.freeDmaHeap > 0 && internalDmaNeeded > memory.freeDmaHeap) {
             return false;
         }
         return true;
@@ -390,11 +399,16 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         return maxDepthCeiling;
     }
 
-    // Calculate bytes reclaimed or consumed per bit of depth
+    // Calculate bytes reclaimed or consumed per bit of depth.
+    // On PSRAM boards (`SPIRAM_DMA_BUFFER`), pixel planes live in PSRAM; only GDMA descriptors
+    // (`(height / 2) * buffers * 16` bytes/bit) come from internal `MALLOC_CAP_DMA` SRAM.
     size_t bytesPerBit = DmaMemoryLayout::calculateTotalBytes(width, height, 1, isDoubleBuffer);
     if (bytesPerBit == 0) {
         bytesPerBit = (size_t)(width * height / 2) * (isDoubleBuffer ? 2 : 1);
     }
+    const size_t internalBytesPerBit = hasPsram
+        ? ((size_t)(height / 2) * (isDoubleBuffer ? 2U : 1U) * 16U)
+        : bytesPerBit;
 
     // If current depth is unset or invalid, assume maxDepthCeiling
     if (panelReleased) {
@@ -529,7 +543,7 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
 
     for (size_t i = 0; i < numCandidates; ++i) {
         uint8_t candidate = candidateDepths[i];
-        int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)bytesPerBit;
+        int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)internalBytesPerBit;
         int64_t estimatedFree = (int64_t)currentFreeInternalHeap + deltaMem;
         // HUB75 DMA bit-planes are many small per-row chunks (e.g. sixteen 2 KB rows on 128x32),
         // so on an emptied zone the DMA cost does not monolithically carve the largest block, and
@@ -565,7 +579,10 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)reqFreeThreshold);
         bool blockOk = (currentLargestBlock == 0) || (estimatedBlock >= (int64_t)reqBlockThreshold);
         bool dmaOk = (currentFreeDma == 0) || (estimatedDma >= (int64_t)minDmaNeeded);
-        bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + 65536));
+        size_t psramDmaDelta = (hasPsram && candidate > currentDepth)
+            ? (static_cast<size_t>(candidate - currentDepth) * bytesPerBit)
+            : 0U;
+        bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + psramDmaDelta + 65536U));
 
         if (freeOk && blockOk && dmaOk && psramOk) {
             return candidate;

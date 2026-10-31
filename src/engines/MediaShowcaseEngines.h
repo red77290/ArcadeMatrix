@@ -277,7 +277,7 @@ protected:
     uint32_t m_phaseStartedAtMs = 0;
     uint32_t m_lastScrollStepMs = 0;
     uint32_t m_cardAnimStartMs = 0;
-    uint32_t m_cardLastTickMs = 0;
+    uint32_t m_cardLastTickUs = 0;
     uint32_t m_synSubpixelRem = 0;
     uint32_t m_synScrollPx = 0;
     uint32_t m_titleSubpixelRem = 0;

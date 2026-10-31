@@ -3299,6 +3299,148 @@ void test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window(v
     );
 }
 
+#include "engines/showcase/ShowcaseCardRenderer.h"
+
+void test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll(void) {
+    // 1. Real `dmd_media_showcase` `GET /api/v1/health` response truncated inside `providers_detailed`
+    //    (contains NO `"dmd-media-showcase"` string and `"mqtt_port"` sits >2 KB later).
+    const char* realTruncatedShowcaseHealth =
+        "HTTP/1.1 200 OK\r\n"
+        "server: uvicorn\r\n"
+        "content-type: application/json\r\n\r\n"
+        "{\"status\":\"ok\",\"version\":\"1.2.3\",\"converter_version\":\"1.2.3\",\"active_workers\":0,"
+        "\"providers_configured\":{\"screenscraper\":true,\"tmdb\":true,\"tvdb\":false,\"anilist\":true},"
+        "\"providers_detailed\":{\"screenscraper\":{\"name\":\"ScreenScraper\",\"configured\":true";
+
+    char parsedVer[24] = "";
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::parseHealthHttpResponse(
+        realTruncatedShowcaseHealth, parsedVer, sizeof(parsedVer)
+    ));
+    TEST_ASSERT_EQUAL_STRING("1.2.3", parsedVer);
+
+    // Spaced JSON formatting (`"status": "ok"`) must also succeed
+    const char* spacedHealth =
+        "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n"
+        "{\"status\": \"ok\", \"version\": \"1.3.0\", \"converter_version\": \"1.3.0\"}";
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::parseHealthHttpResponse(
+        spacedHealth, parsedVer, sizeof(parsedVer)
+    ));
+    TEST_ASSERT_EQUAL_STRING("1.3.0", parsedVer);
+
+    // Non-200 HTTP responses and unrelated `{"status":"ok"}` services must be rejected
+    const char* err500 =
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n"
+        "{\"status\":\"ok\",\"version\":\"1.2.3\",\"converter_version\":\"1.2.3\"}";
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::parseHealthHttpResponse(err500, parsedVer, sizeof(parsedVer)));
+
+    const char* unrelatedOk =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
+        "{\"status\":\"ok\",\"version\":\"9.9.9\",\"service\":\"other-api\"}";
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::parseHealthHttpResponse(unrelatedOk, parsedVer, sizeof(parsedVer)));
+
+    // `invalidateCache()` must clear positive `peekCachedUrlStatus` so `force=1` always re-probes live
+    net::ShowcaseDiscovery::resetCacheForTests();
+    net::ShowcaseDiscovery::touchVerifiedHost("192.168.1.42", 8890);
+    char resolvedUrl[112] = "";
+    char resolvedHost[64] = "";
+    char cachedVer[24] = "";
+    uint16_t port = 8890;
+    bool online = false;
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, cachedVer, sizeof(cachedVer)
+    ));
+    TEST_ASSERT_TRUE(online);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.42", resolvedHost);
+
+    net::ShowcaseDiscovery::invalidateCache();
+    online = true;
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, cachedVer, sizeof(cachedVer)
+    ));
+    TEST_ASSERT_FALSE(online);
+
+    // 2. `WAVESHARE_S3` (`hasPsram = true`, `-D SPIRAM_DMA_BUFFER`) at `256x64` must select
+    //    `CANVAS_BURST_DOUBLE` (`double_buff = true`) at full `8-bit` color depth both with
+    //    reference memory (`freeDmaHeap = 80 KB`, `freePsram = 8 MB`) and live S3 memory,
+    //    eliminating single-buffer mid-scan tearing across center rows `y = 31 / 32`.
+    extern void setMockProfile(HwProfile p);
+    setMockProfile(HwProfile::WAVESHARE_S3);
+
+    auto refEval256 = PipelineSelectionPolicy::evaluate(256, 64, 0, "auto", /*hasPsram=*/true);
+    TEST_ASSERT_TRUE(refEval256.valid);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(refEval256.descriptor.strategy)
+    );
+    TEST_ASSERT_TRUE(refEval256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_UINT8(8, refEval256.effectiveColorDepth);
+
+    MemoryBudgetConstraints liveS3Mem(
+        /*freeInt=*/190000U,
+        /*largestInt=*/110000U,
+        /*freeDma=*/145000U,
+        /*freePsram=*/15U * 1024U * 1024U,
+        /*largestPsram=*/15U * 1024U * 1024U
+    );
+    auto liveEval256 = PipelineSelectionPolicy::evaluate(256, 64, 0, "auto", /*hasPsram=*/true, liveS3Mem);
+    TEST_ASSERT_TRUE(liveEval256.valid);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_DOUBLE),
+        static_cast<int>(liveEval256.descriptor.strategy)
+    );
+    TEST_ASSERT_TRUE(liveEval256.descriptor.dmaDoubleBuffered);
+    TEST_ASSERT_EQUAL_UINT8(8, liveEval256.effectiveColorDepth);
+
+    // Constrained internal DMA SRAM (`8 KB` < descriptor requirement) still falls back safely to single buffer
+    MemoryBudgetConstraints starvedDmaS3Mem(
+        /*freeInt=*/40000U,
+        /*largestInt=*/20000U,
+        /*freeDma=*/8000U,
+        /*freePsram=*/8U * 1024U * 1024U,
+        /*largestPsram=*/8U * 1024U * 1024U
+    );
+    auto fallbackEval256 = PipelineSelectionPolicy::evaluate(256, 64, 8, "auto", /*hasPsram=*/true, starvedDmaS3Mem);
+    TEST_ASSERT_TRUE(fallbackEval256.valid);
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(PresentationStrategy::CANVAS_BURST_SINGLE),
+        static_cast<int>(fallbackEval256.descriptor.strategy)
+    );
+    TEST_ASSERT_FALSE(fallbackEval256.descriptor.dmaDoubleBuffered);
+
+    setMockProfile(HwProfile::ESP32_STD);
+
+    // 3. `ShowcaseCardRenderer` geometry-proportional scroll speed & 1-px/frame 60 Hz lock on `256x64`
+    using engines::showcase::ShowcaseCardRenderer;
+    const uint32_t baseNormal = ShowcaseCardRenderer::synopsisPxPerSec("4");
+    TEST_ASSERT_EQUAL_UINT32(30U, baseNormal);
+    TEST_ASSERT_EQUAL_UINT32(30U, ShowcaseCardRenderer::effectiveScrollPxPerSec(baseNormal, 128U));
+    TEST_ASSERT_EQUAL_UINT32(60U, ShowcaseCardRenderer::effectiveScrollPxPerSec(baseNormal, 256U));
+
+    // Across 60 consecutive 16 ms (`16,000 us`) ticks on `256x64` (`effPxPerSec = 60`), every single
+    // frame must advance by strictly `+1 px` (`0` beat-frequency stalls and `0` `+2 px` jumps).
+    uint32_t stepPx = 0U;
+    uint32_t rem = 0U;
+    for (uint32_t f = 1U; f <= 60U; ++f) {
+        const uint32_t dtUs = (f & 1U) ? 16000U : 17200U;
+        ShowcaseCardRenderer::advanceCardScrollSubpixels(stepPx, rem, dtUs, 60U);
+        TEST_ASSERT_EQUAL_UINT32(f, stepPx);
+    }
+
+    // On `128x32` (`effPxPerSec = 30`), 1,000 ms (`60 x 16,667 us` = `1,000,020 us`) advances 30 px smoothly
+    uint32_t step128 = 0U;
+    uint32_t rem128 = 0U;
+    for (int i = 0; i < 60; ++i) {
+        ShowcaseCardRenderer::advanceCardScrollSubpixels(step128, rem128, 16667U, 30U);
+    }
+    TEST_ASSERT_EQUAL_UINT32(30U, step128);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3396,6 +3538,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects);
     RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
     RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
+    RUN_TEST(test_waveshare_s3_256x64_double_buffer_health_parser_and_smooth_card_scroll);
 
     return UNITY_END();
 }

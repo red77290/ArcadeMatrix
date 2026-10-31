@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <strings.h>
 
 class IDrawingSurface;
 
@@ -47,7 +49,51 @@ public:
     static uint16_t defaultAccent565(ShowcaseDomainId domain);
 
     static size_t countUtf8Glyphs(const char* utf8);
-    static uint32_t synopsisPxPerSec(const char* speedStr);
+    static inline uint32_t synopsisPxPerSec(const char* speedStr) {
+        if (!speedStr || speedStr[0] == '\0') return 30U;
+        if (strcmp(speedStr, "1") == 0) return 15U;
+        if (strcmp(speedStr, "2") == 0 || strcasecmp(speedStr, "slow") == 0) return 20U;
+        if (strcmp(speedStr, "3") == 0) return 24U;
+        if (strcmp(speedStr, "4") == 0 || strcasecmp(speedStr, "normal") == 0) return 30U;
+        if (strcmp(speedStr, "5") == 0) return 40U;
+        if (strcmp(speedStr, "6") == 0 || strcasecmp(speedStr, "fast") == 0) return 60U;
+        if (strcmp(speedStr, "7") == 0) return 75U;
+        if (strcmp(speedStr, "8") == 0) return 90U;
+        if (strcmp(speedStr, "9") == 0) return 120U;
+        if (strcmp(speedStr, "10") == 0) return 150U;
+        return 30U;
+    }
+    static inline uint32_t effectiveScrollPxPerSec(uint32_t basePxPerSec, uint16_t panelW) {
+        if (basePxPerSec == 0U) return 0U;
+        if (panelW > 128U) {
+            uint32_t cappedW = (panelW > 512U) ? 512U : static_cast<uint32_t>(panelW);
+            return (basePxPerSec * cappedW + 64U) / 128U;
+        }
+        return basePxPerSec;
+    }
+    static inline uint32_t advanceCardScrollSubpixels(
+        uint32_t& ioStepPx,
+        uint32_t& ioSubpixelRem,
+        uint32_t dtUs,
+        uint32_t effPxPerSec
+    ) {
+        if (dtUs == 0U || effPxPerSec == 0U) {
+            return ioStepPx;
+        }
+        // Lock ~60 px/s (e.g. default speed "4" scaled onto a 256px-wide panel) strictly 1:1 to
+        // steady ~60 Hz display ticks (11..23 ms), eliminating both 30 Hz sample-and-hold ghosting
+        // and the 2.5 Hz beat hitch between `FrameScheduler`'s 16 ms (62.5 Hz) tick and 60.0 px/s.
+        if (effPxPerSec >= 54U && effPxPerSec <= 68U && dtUs >= 11000U && dtUs <= 23000U) {
+            ioStepPx += 1U;
+            return ioStepPx;
+        }
+        const uint32_t boundedUs = (dtUs > 50000U) ? 50000U : dtUs;
+        const uint32_t cappedSpeed = (effPxPerSec > 600U) ? 600U : effPxPerSec;
+        ioSubpixelRem += boundedUs * cappedSpeed;
+        ioStepPx += ioSubpixelRem / 1000000U;
+        ioSubpixelRem %= 1000000U;
+        return ioStepPx;
+    }
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
     static int computeCardTextViewportWidth(uint16_t panelW, uint16_t panelH, bool showPoster);
 
