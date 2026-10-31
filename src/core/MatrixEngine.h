@@ -70,11 +70,15 @@ public:
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();
+#if defined(SPIRAM_DMA_BUFFER)
+    void flushBackbufferRow(uint8_t row);
+#else
+    inline void flushBackbufferRow(uint8_t) {}
+#endif
     uint16_t* getBackbufferRowPlane(uint8_t row, uint8_t plane);
     const uint8_t* getLutR() const { return m_lut_r; }
     const uint8_t* getLutG() const { return m_lut_g; }
     const uint8_t* getLutB() const { return m_lut_b; }
-    uint32_t getScanPeriodUs() const;
 
 private:
     bool m_double = false;
@@ -209,8 +213,6 @@ public:
      */
     void present();
     uint32_t flipCount() const { return m_flipCount; }
-    uint32_t lastFlipMicros() const { return m_lastFlipUs; }
-    uint32_t minFlipGuardUs() const;
     bool isDoubleBuffered() const { return m_doubleBuffered; }
 
     /**
@@ -240,7 +242,6 @@ private:
     uint8_t m_activeColorDepth = 0;
     int8_t m_oePin = -1;
     uint32_t m_flipCount = 0;
-    uint32_t m_lastFlipUs = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;
     bool m_blanked = false;

@@ -8,15 +8,15 @@
 
 | Engine | Category | ESP32 Classic (128x32, No PSRAM) | ESP32 Classic (64x32, No PSRAM) | ESP32 Classic (128x64, No PSRAM) | ESP32-S3 Waveshare (128x32, 8MB PSRAM) | ESP32-S3 Waveshare (256x64, 8MB PSRAM) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Clock Engine** (`clock`) | `info` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Clock Engine** (`clock`) | `info` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
 | **Live Weather** (`weather`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
-| **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
+| **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
 | **Audio Sound Level Meter** (`decibelMeter`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **Stock Ticker & Indices** (`stock`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **Date Display** (`date`) | `info` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
-| **GIF Player** (`gifs`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **GIF Player** (`gifs`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
 | **Environment Sensor** (`temp`) | `sensor` | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Google Nest Cast Audio** (`google_cast`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Spotify Player** (`spotify`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
@@ -24,12 +24,12 @@
 | **Universal Music Player** (`music_player`) | `media` | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires I2S audio speaker/DAC output_ | 🚫 **Incompatible**<br>_Requires I2S audio speaker/DAC output_ |
 | **Dashboard Engine** (`dashboard`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **GNews Live Feed** (`gnews`) | `news` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
-| **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
 | **MQTT Data** (`mqttdata`) | `info` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
-| **Retro Games Showcase** (`retro_games`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Movie Showcase** (`movie_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Series Showcase** (`series_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Anime Showcase** (`anime_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Retro Games Showcase** (`retro_games`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
+| **Movie Showcase** (`movie_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
+| **Series Showcase** (`series_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
+| **Anime Showcase** (`anime_showcase`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) |
 
 ## 2. Hardware Resource & Peripheral Requirements
 
@@ -70,4 +70,4 @@ To prevent system crashes and heap starvation during heavy network or audio acti
 Any engine requiring TLS or Wi-Fi will be safely marked **Incompatible** if the free internal heap cannot cover its persistent requirements *plus* these admission reserves and panel canvas requirements.
 
 ---
-*Generated by ArcadeMatrix V4 Architecture Tools on 2026-10-29 23:06:13 UTC*
+*Generated by ArcadeMatrix V4 Architecture Tools on 2026-10-31 21:34:15 UTC*

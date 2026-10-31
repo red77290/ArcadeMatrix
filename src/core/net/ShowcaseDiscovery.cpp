@@ -85,7 +85,9 @@ struct CandidateRing {
 static constexpr uint32_t kPositiveCacheTtlMs = 120000U;
 #if defined(ESP32) && !defined(UNIT_TEST)
 static constexpr uint32_t kNegativeScanBackoffMs = 5000U;
+static constexpr uint32_t kNegativeMdnsBackoffMs = 8000U;
 static constexpr size_t kMinDiscoveryHeapFloorBytes = 6144U;
+std::atomic<uint32_t> s_lastMdnsFailMs{0};
 #endif
 
 CachedDiscoveryState s_cache;
@@ -124,6 +126,9 @@ void writeCache(const char* ip, uint16_t port, const char* version) {
     s_cache.seq.fetch_add(1, std::memory_order_release);
     if (ip != nullptr && ip[0] != '\0') {
         ShowcaseDiscovery::recordCandidateIpStr(ip);
+#if defined(ESP32) && !defined(UNIT_TEST)
+        s_lastMdnsFailMs.store(0U, std::memory_order_release);
+#endif
     }
 }
 
@@ -321,6 +326,10 @@ bool verifyShowcaseHealthHttp(
 
 bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
     if (WiFi.status() != WL_CONNECTED) return false;
+    uint32_t lastFail = s_lastMdnsFailMs.load(std::memory_order_acquire);
+    if (lastFail != 0U && (millis() - lastFail) < kNegativeMdnsBackoffMs) {
+        return false;
+    }
     bool expectedBusy = false;
     if (!s_mdnsBusy.compare_exchange_strong(expectedBusy, true, std::memory_order_acq_rel)) {
         return false;
@@ -379,6 +388,8 @@ bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap
         }
         mdns_query_results_free(results);
     }
+    uint32_t nowMs = millis();
+    s_lastMdnsFailMs.store(nowMs == 0U ? 1U : nowMs, std::memory_order_release);
     return false;
 }
 
@@ -913,6 +924,7 @@ bool ShowcaseDiscovery::resolveUrl(
     }
     if (forceRefresh) {
         s_lastSubnetScanMs.store(0, std::memory_order_release);
+        s_lastMdnsFailMs.store(0, std::memory_order_release);
     }
 
     // Probe `s_candidates` FIRST (WebUI browser client IPs + MQTT broker + last healthy Showcase IP)
@@ -1148,6 +1160,7 @@ void ShowcaseDiscovery::invalidateCache() {
 
 #if defined(ESP32) && !defined(UNIT_TEST)
     s_lastSubnetScanMs.store(0U, std::memory_order_release);
+    s_lastMdnsFailMs.store(0U, std::memory_order_release);
 #endif
 }
 

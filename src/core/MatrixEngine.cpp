@@ -85,31 +85,21 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
 
-    MemoryBudgetConstraints liveMem;
-#if defined(ESP32)
-    liveMem.freeInternalHeap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    liveMem.largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    liveMem.freeDmaHeap = heap_caps_get_free_size(MALLOC_CAP_DMA);
-    if (hasPsram) {
-        liveMem.freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        liveMem.largestPsramBlock = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-    }
-#endif
-
-    uint8_t depth = effectiveColorDepth;
-    if (depth == 0) {
-        auto pipeRes = PipelineSelectionPolicy::evaluate(
-            totalWidth, config.height, config.colorDepth, config.render_pipeline, hasPsram, liveMem
-        );
-        depth = pipeRes.effectiveColorDepth;
-    }
+    auto pipeRes = PipelineSelectionPolicy::evaluate(
+        totalWidth,
+        config.height,
+        effectiveColorDepth > 0 ? effectiveColorDepth : config.colorDepth,
+        config.render_pipeline,
+        hasPsram
+    );
+    uint8_t depth = effectiveColorDepth > 0 ? effectiveColorDepth : pipeRes.effectiveColorDepth;
 
     LOGI("MatrixEngine", "Effective color depth: %u bits (configured=%d, geometry=%ux%u, psram=%d)",
          depth, config.colorDepth, totalWidth, config.height, hasPsram);
     
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
-    mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 4;
+    mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 8;
     mxconfig.clkphase = config.clkPhase;
 
     String chip = config.driverChip;
@@ -128,10 +118,6 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
-    // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
-    auto pipeRes = PipelineSelectionPolicy::evaluate(
-        totalWidth, config.height, depth, config.render_pipeline, hasPsram, liveMem
-    );
     mxconfig.double_buff = pipeRes.descriptor.dmaDoubleBuffered;
 
     if (hasPsram) {
@@ -169,7 +155,6 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     m_activeColorDepth = depth;
     m_oePin = _pins.oe;
     m_flipCount = 0;
-    m_lastFlipUs = 0;
     m_panel->initLuts(depth);
 
     // Initialize Presentation Backend FIRST, purely constructive with zero frame presentation
@@ -350,18 +335,8 @@ void MatrixEngine::present() {
     if (m_panel) m_panel->flushDirtyRows();
     display->flipDMABuffer();
     if (m_panel) m_panel->noteFlip();
-    m_lastFlipUs = micros();
     m_flipCount++;
     g_renderStats.presents++;
-}
-
-uint32_t MatrixEngine::minFlipGuardUs() const {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    if (m_doubleBuffered && m_panel) {
-        return m_panel->getScanPeriodUs();
-    }
-#endif
-    return 0U;
 }
 
 void MatrixEngine::clear() {
@@ -413,16 +388,18 @@ size_t FastMatrixPanel::getDmaAllocatedBytes() const {
     return Hub75DmaLayout::calculateBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
 }
 
-uint32_t FastMatrixPanel::getScanPeriodUs() const {
-    if (calculated_refresh_rate > 0) {
-        uint32_t periodUs = (1000000U / static_cast<uint32_t>(calculated_refresh_rate)) + 450U;
-        if (periodUs < 2500U) periodUs = 2500U;
-        if (periodUs > 12000U) periodUs = 12000U;
-        return periodUs;
+#if defined(SPIRAM_DMA_BUFFER)
+void FastMatrixPanel::flushBackbufferRow(uint8_t row) {
+    if (!initialized) return;
+    auto& targetFb = frame_buffer[m_back];
+    if (row < targetFb.rowBits.size() && targetFb.rowBits[row]) {
+        uint16_t* ptr = targetFb.rowBits[row]->getDataPtr(0);
+        if (ptr) {
+            Cache_WriteBack_Addr((uint32_t)ptr, (uint32_t)targetFb.rowBits[row]->getColorDepthSize(false));
+        }
     }
-    return 9500U;
 }
-
+#endif
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
     if (color != 0) {
@@ -441,11 +418,13 @@ void FastMatrixPanel::fillScreen(uint16_t color) {
             for (size_t x = 0; x < w; ++x) {
                 ptr[x] &= BITMASK_RGB12_CLEAR;
             }
-#if defined(SPIRAM_DMA_BUFFER)
-            Cache_WriteBack_Addr((uint32_t)ptr, w * sizeof(uint16_t));
-#endif
         }
     }
+#if defined(SPIRAM_DMA_BUFFER)
+    for (size_t y = 0; y < targetFb.rowBits.size(); ++y) {
+        flushBackbufferRow(static_cast<uint8_t>(y));
+    }
+#endif
     m_dirtyRows[m_back] = 0;
 }
 
@@ -456,10 +435,7 @@ void FastMatrixPanel::flushDirtyRows() {
         auto& targetFb = frame_buffer[m_back];
         for (size_t y = 0; y < targetFb.rowBits.size(); ++y) {
             if (dirty & (1UL << y)) {
-                for (uint8_t p = 0; p < m_depth; ++p) {
-                    uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
-                    Cache_WriteBack_Addr((uint32_t)ptr, (uint32_t)targetFb.rowBits[y]->width * sizeof(uint16_t));
-                }
+                flushBackbufferRow(static_cast<uint8_t>(y));
             }
         }
         m_dirtyRows[m_back] = 0;
@@ -610,6 +586,15 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
     params.lutG = m_lut_g;
     params.lutB = m_lut_b;
     params.rotation = 0;
+#if defined(SPIRAM_DMA_BUFFER)
+    params.rowFlush = [](void* ctx, uint8_t row) {
+        auto* self = static_cast<FastMatrixPanel*>(ctx);
+        if (self) {
+            self->flushBackbufferRow(row);
+        }
+    };
+    params.flushCtx = this;
+#endif
 
     auto rowAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
         auto* fb = static_cast<decltype(&targetFb)>(ctx);
@@ -620,14 +605,5 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
     };
 
     Hub75BulkEncoder::encode(src, w, rowAccessor, &targetFb, params);
-
-#if defined(SPIRAM_DMA_BUFFER)
-    for (int y = 0; y < rpf; y++) {
-        for (uint8_t p = 0; p < m_depth; p++) {
-            uint16_t* dmaRow = targetFb.rowBits[y]->getDataPtr(p);
-            Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)w * sizeof(uint16_t));
-        }
-    }
-#endif
     m_dirtyRows[m_back] = 0;
 }

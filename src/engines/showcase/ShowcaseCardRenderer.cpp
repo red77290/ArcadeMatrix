@@ -502,26 +502,21 @@ void ShowcaseCardRenderer::drawClippedText5x7(
         if (cp == '\r' || cp == '\n' || cp == '\t') {
             cp = ' ';
         }
-        if (cp == 0x0153U) { // œ -> oe
-            getGlyph5x7Columns('o', cols);
-            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
-            curX += 6;
-            getGlyph5x7Columns('e', cols);
-            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
-            curX += 6;
+        if (cp == 0x0153U || cp == 0x0152U) { // œ / Œ -> oe / OE
+            if (curX + 11 > clipMinX) {
+                const bool upper = (cp == 0x0152U);
+                getGlyph5x7Columns(upper ? 'O' : 'o', cols);
+                drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+                getGlyph5x7Columns(upper ? 'E' : 'e', cols);
+                drawSingleGlyph5x7Clipped(s, cols, curX + 6, y, clipMinX, clipMaxX, color);
+            }
+            curX += 12;
             continue;
         }
-        if (cp == 0x0152U) { // Œ -> OE
-            getGlyph5x7Columns('O', cols);
+        if (cp != ' ' && curX + 5 > clipMinX) {
+            getGlyph5x7Columns(cp, cols);
             drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
-            curX += 6;
-            getGlyph5x7Columns('E', cols);
-            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
-            curX += 6;
-            continue;
         }
-        getGlyph5x7Columns(cp, cols);
-        drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
         curX += 6;
     }
 }
@@ -543,19 +538,21 @@ void ShowcaseCardRenderer::drawClippedText3x5(
         if (curX >= clipMaxX) break;
         uint32_t cp = nextUtf8Codepoint(p);
         if (cp == 0U) break;
-        char ch = foldCodepointToAscii3x5(cp);
-        uint16_t bmp = getGlyph3x5Bitmap(ch);
-        if (bmp != 0U && curX + 3 > clipMinX) {
-            for (int row = 0; row < 5; ++row) {
-                int py = y + row;
-                if (py < 0 || py >= mH) continue;
-                uint8_t rowBits = static_cast<uint8_t>((bmp >> ((4 - row) * 3)) & 0x07U);
-                if (rowBits == 0U) continue;
-                for (int col = 0; col < 3; ++col) {
-                    if ((rowBits >> (2 - col)) & 1U) {
-                        int px = curX + col;
-                        if (px >= clipMinX && px < clipMaxX) {
-                            s->drawPixel(px, py, color);
+        if (cp != ' ' && curX + 3 > clipMinX) {
+            char ch = foldCodepointToAscii3x5(cp);
+            uint16_t bmp = getGlyph3x5Bitmap(ch);
+            if (bmp != 0U) {
+                for (int row = 0; row < 5; ++row) {
+                    int py = y + row;
+                    if (py < 0 || py >= mH) continue;
+                    uint8_t rowBits = static_cast<uint8_t>((bmp >> ((4 - row) * 3)) & 0x07U);
+                    if (rowBits == 0U) continue;
+                    for (int col = 0; col < 3; ++col) {
+                        if ((rowBits >> (2 - col)) & 1U) {
+                            int px = curX + col;
+                            if (px >= clipMinX && px < clipMaxX) {
+                                s->drawPixel(px, py, color);
+                            }
                         }
                     }
                 }

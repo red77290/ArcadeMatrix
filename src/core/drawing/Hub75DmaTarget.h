@@ -9,6 +9,7 @@
 #include <Arduino.h>
 
 using DmaRowAccessor = uint16_t* (*)(void* userCtx, uint8_t row, uint8_t plane);
+using DmaRowFlush = void (*)(void* userCtx, uint8_t row);
 
 struct Hub75DmaTarget {
     uint8_t* buffer = nullptr;       ///< Pointer to physical DMA buffer plane data
@@ -21,7 +22,8 @@ struct Hub75DmaTarget {
     uint8_t activeBufferIndex = 0;   ///< Back-buffer index being drawn (0 or 1)
 
     DmaRowAccessor rowAccessor = nullptr; ///< Unified row accessor function
-    void* accessorCtx = nullptr;          ///< User context for row accessor
+    DmaRowFlush rowFlush = nullptr;       ///< Optional per-row cache writeback hook (invoked right as each row finishes encoding)
+    void* accessorCtx = nullptr;          ///< User context for row accessor / row flush
 
     const uint8_t* lutR = nullptr;        ///< CIE/gamma red LUT (32 entries)
     const uint8_t* lutG = nullptr;        ///< CIE/gamma green LUT (64 entries)
