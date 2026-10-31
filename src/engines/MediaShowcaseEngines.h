@@ -151,8 +151,10 @@ protected:
     static constexpr size_t MAX_SYNOPSIS_LEN = engines::showcase::ShowcaseCardData::MAX_SYNOPSIS_LEN;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 128;
-    static constexpr size_t IO_SCRATCH_BYTES = 3072;
-    static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 2048;
+    static constexpr size_t IO_SCRATCH_BYTES = 6144;
+    static constexpr size_t MID_IO_SCRATCH_BYTES = 4608;
+    static constexpr size_t FALLBACK_IO_SCRATCH_BYTES = 3072;
+    static constexpr size_t LOW_IO_SCRATCH_BYTES = 2048;
     static constexpr size_t MIN_IO_SCRATCH_BYTES = 1472;
     static constexpr size_t PSRAM_IO_SCRATCH_BYTES = 8192;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;

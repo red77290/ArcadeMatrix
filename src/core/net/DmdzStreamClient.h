@@ -168,10 +168,12 @@ inline constexpr bool canFlushWsCredits(
     bool forceAll,
     size_t ringCount,
     size_t ringFree,
-    size_t ringCap
+    size_t ringCap,
+    size_t minFreeOverride = 0U
 ) {
     return (pendingWsCredits > 0U) &&
-           (ringFree >= effectiveWsCreditMinFreeBytes(ringCap) || ringCount == 0U) &&
+           (ringFree >= ((minFreeOverride > 0U) ? minFreeOverride : effectiveWsCreditMinFreeBytes(ringCap)) ||
+            ringCount == 0U) &&
            (pendingWsCredits >= (forceAll ? 1U : ((ackBatch > 0U) ? static_cast<uint16_t>(ackBatch) : 1U)));
 }
 

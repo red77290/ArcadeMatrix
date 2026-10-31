@@ -994,19 +994,22 @@ bool FrontendSyncEngine::allocateStreamBuffers(uint16_t w, uint16_t h) {
         // so 8-bit HUB75 DMA stays pinned with zero internal DRAM fragmentation.
         size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        const size_t scratchCandidates[3] = {
+        const size_t scratchCandidates[4] = {
             STREAM_IO_SCRATCH_BYTES,
+            MID_STREAM_IO_SCRATCH_BYTES,
             FALLBACK_STREAM_IO_SCRATCH_BYTES,
             MIN_STREAM_IO_SCRATCH_BYTES
         };
+        const size_t headroomByCandidate[4] = {4608U, 3584U, 2560U, 2560U};
         if (frameBytes <= 16384U &&
             free8 >= (frameBytes + MIN_STREAM_IO_SCRATCH_BYTES + 2560U) &&
             largest8 >= frameBytes) {
             m_streamFrames[0] = static_cast<uint16_t*>(malloc(frameBytes));
             if (m_streamFrames[0]) {
-                for (size_t i = 0U; i < 3U && !m_streamIoScratch; ++i) {
+                const size_t postFrameFree8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                for (size_t i = 0U; i < 4U && !m_streamIoScratch; ++i) {
                     const size_t cand = scratchCandidates[i];
-                    if (free8 >= (frameBytes + cand + 2560U)) {
+                    if (postFrameFree8 >= (cand + headroomByCandidate[i])) {
                         m_streamIoScratch = static_cast<char*>(malloc(cand));
                         if (m_streamIoScratch) {
                             m_streamIoScratchCap = cand;
@@ -1161,7 +1164,9 @@ bool FrontendSyncEngine::streamReadyItemOnce(
     params.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
     params.logTag = "RetroFrontend";
     params.ownerId = net::OWNER_INGAME_SYNC;
-    params.wsCredits = hasPsram ? 8U : 2U;
+    params.wsCredits = hasPsram
+        ? 8U
+        : ((m_streamIoScratchCap >= 5632U) ? 4U : ((m_streamIoScratchCap >= 3072U) ? 3U : 2U));
     params.panelWidth = expectedW;
     params.panelHeight = expectedH;
     params.configuredStreamMs = configuredStreamMs;

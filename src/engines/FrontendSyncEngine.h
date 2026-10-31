@@ -287,8 +287,9 @@ private:
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
-    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 3584U;
-    static constexpr size_t FALLBACK_STREAM_IO_SCRATCH_BYTES = 2048U;
+    static constexpr size_t STREAM_IO_SCRATCH_BYTES = 5632U;
+    static constexpr size_t MID_STREAM_IO_SCRATCH_BYTES = 4608U;
+    static constexpr size_t FALLBACK_STREAM_IO_SCRATCH_BYTES = 3072U;
     static constexpr size_t MIN_STREAM_IO_SCRATCH_BYTES = 1472U;
     static constexpr size_t PSRAM_STREAM_IO_SCRATCH_BYTES = 8192U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;

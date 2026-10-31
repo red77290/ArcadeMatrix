@@ -313,41 +313,53 @@ bool MediaShowcaseBase::allocateBuffers() {
         m_frame565Back = nullptr;
         m_posterAliasesFrame = false;
         const size_t free8 = showcaseFree8BitHeap();
-        const size_t scratchCandidates[3] = {
-            IO_SCRATCH_BYTES,
-            FALLBACK_IO_SCRATCH_BYTES,
-            MIN_IO_SCRATCH_BYTES
-        };
 
-        // Prefer a single upfront unified `m_frame565` (`8 KB` on `128x32`) aliased by `m_poster565`
-        // BEFORE spawning `ShowcaseWkr` (`5.6 KB` stack):
-        // - Saves `+2,048 B` SRAM permanently (no separate `m_poster565` allocation).
-        // - Step A MQTT `ready` JSON (`~4.5-5.5 KB`) parses in-place inside `m_frame565` (`0` `malloc()`).
-        // - Eliminates Step B <-> Step C `free()`/`malloc()` TLSF heap fragmentation across items.
-        if (frameBytes >= posterBytes && frameBytes <= 16384U && showcaseLargest8BitBlock() >= frameBytes) {
-            const size_t unifiedHeadroom[3] = {10240U, 8192U, 6144U};
-            for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
-                const size_t cand = scratchCandidates[i];
-                if (free8 >= (frameBytes + cand + unifiedHeadroom[i])) {
-                    m_ioScratch = static_cast<char*>(malloc(cand));
-                    if (m_ioScratch) {
-                        m_ioScratchCap = cand;
+        // Allocate the largest contiguous buffer (`m_frame565` = `8 KB` on `128x32`) FIRST so
+        // `m_ioScratch` can never split a tight largest block (`~12.7 KB`), then size the circular
+        // `StreamByteRing` up to `6 KB` (`4 x 1,360 B` full-MSS sliding window) according to free SRAM.
+        if (frameBytes >= posterBytes &&
+            frameBytes <= 16384U &&
+            showcaseLargest8BitBlock() >= frameBytes &&
+            free8 >= (frameBytes + MIN_IO_SCRATCH_BYTES + 5632U)) {
+            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+            if (m_frame565) {
+                const size_t postFrameFree8 = showcaseFree8BitHeap();
+                const size_t scratchCandidates[5] = {
+                    IO_SCRATCH_BYTES,
+                    MID_IO_SCRATCH_BYTES,
+                    FALLBACK_IO_SCRATCH_BYTES,
+                    LOW_IO_SCRATCH_BYTES,
+                    MIN_IO_SCRATCH_BYTES
+                };
+                const size_t postFrameHeadroom[5] = {9216U, 8192U, 7168U, 6144U, 5632U};
+                for (size_t i = 0U; i < 5U && !m_ioScratch; ++i) {
+                    const size_t cand = scratchCandidates[i];
+                    if (postFrameFree8 >= (cand + postFrameHeadroom[i])) {
+                        m_ioScratch = static_cast<char*>(malloc(cand));
+                        if (m_ioScratch) {
+                            m_ioScratchCap = cand;
+                        }
                     }
                 }
-            }
-            if (m_ioScratch && showcaseLargest8BitBlock() >= frameBytes) {
-                m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-                if (m_frame565) {
+                if (m_ioScratch) {
                     m_poster565 = m_frame565;
                     m_posterAliasesFrame = true;
+                } else {
+                    free(m_frame565);
+                    m_frame565 = nullptr;
                 }
             }
         }
 
         if (!m_poster565) {
+            const size_t fallbackScratch[3] = {
+                FALLBACK_IO_SCRATCH_BYTES,
+                LOW_IO_SCRATCH_BYTES,
+                MIN_IO_SCRATCH_BYTES
+            };
             const size_t headroomCandidates[3] = {4096U, 3072U, 0U};
             for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
-                const size_t cand = scratchCandidates[i];
+                const size_t cand = fallbackScratch[i];
                 if (headroomCandidates[i] == 0U || free8 >= (posterBytes + cand + headroomCandidates[i])) {
                     m_ioScratch = static_cast<char*>(malloc(cand));
                     if (m_ioScratch) {
@@ -1846,7 +1858,9 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     params.clientId = m_sessionId;
     params.logTag = "Showcase";
     params.ownerId = net::OWNER_SHOWCASE;
-    params.wsCredits = m_hasPsram ? 8U : 2U;
+    params.wsCredits = m_hasPsram
+        ? 8U
+        : ((m_ioScratchCap >= 5632U) ? 4U : ((m_ioScratchCap >= 3072U) ? 3U : 2U));
     params.panelWidth = m_width;
     params.panelHeight = m_height;
     params.configuredStreamMs = effectiveMaxStreamMs(cfg);

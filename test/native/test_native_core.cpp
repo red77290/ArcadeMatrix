@@ -2391,8 +2391,17 @@ void test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds(void) {
     TEST_ASSERT_FALSE(rawHdr.isDmdz);
     TEST_ASSERT_EQUAL_UINT16(128, rawHdr.width);
 
+    const uint8_t v2HdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 2, 25, 128, 0, 32, 0, 120, 0, 40, 0, 0, 0
+    };
+    DmdzStreamHeader v2Hdr;
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(v2HdrRaw, v2Hdr));
+    TEST_ASSERT_TRUE(v2Hdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT8(2, v2Hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(25, v2Hdr.fps);
+
     const uint8_t badVerRaw[16] = {
-        'D', 'M', 'D', 'Z', 2, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
+        'D', 'M', 'D', 'Z', 3, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
     };
     TEST_ASSERT_FALSE(DmdzStreamDecoder::parseHeader(badVerRaw, hdr));
 
@@ -3055,6 +3064,112 @@ void test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure
     TEST_ASSERT_TRUE(wireInFlight.empty());
 }
 
+void test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path(void) {
+    using core::drawing::DmdzStreamDecoder;
+    using core::drawing::buildDmdzWebSocketPath;
+
+    // 1. WebSocket path negotiation: v=2 + credits=4 + chunk=1360 (`esp32dev` 6 KB sliding window)
+    char wsPath[288] = "";
+    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
+        "/api/v1/games/stream/pkg_games_abc123.rgb565.stream?purge=true",
+        "esp32_edc5d7_games_128x32",
+        wsPath,
+        sizeof(wsPath),
+        4U,
+        2U,
+        1360U
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/ws/pkg_games_abc123.dmdz?purge=true&client_id=esp32_edc5d7_games_128x32&credits=4&v=2&chunk=1360",
+        wsPath
+    );
+
+    // 2. Credit backpressure with `minFreeOverride = 1424U` (`1360 B` full-MSS chunk + `64 B` headroom)
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4720U, 1424U, 6144U, 1424U));
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4721U, 1423U, 6144U, 1424U));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 6144U, 1424U));
+
+    // 3. `DmdzStreamDecoder` v2 1-byte chunked round-trip across `kFrameRaw`, `kFrameScroll2D` (+/-),
+    //    `OP_LUMA` (negative odd `dg = -7`), `OP_TLUMA`, `OP_LZ` (overlapping copy), and `OP_TDIFF`
+    uint16_t fb[8 * 4];
+    memset(fb, 0, sizeof(fb));
+    DmdzStreamDecoder dec;
+    dec.init(8U, 4U, 2U);
+    TEST_ASSERT_EQUAL_UINT8(2U, dec.streamVersion());
+
+    auto feedOneByteAtATime = [&](const uint8_t* payload, size_t n) -> bool {
+        if (!dec.beginFrame(static_cast<uint16_t>(n))) {
+            return false;
+        }
+        for (size_t i = 0U; i < n; ++i) {
+            if (!dec.feed(payload + i, 1U, fb)) {
+                return false;
+            }
+        }
+        return dec.finishFrame();
+    };
+
+    // Frame 0: `kFrameRaw` (`1 + 32 * 2 = 65` bytes) -> `fb[k] = 0x1000 + k`
+    uint8_t rawFrame[1 + 32 * 2];
+    rawFrame[0] = DmdzStreamDecoder::kFrameRaw;
+    for (uint16_t k = 0U; k < 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x1000U + k);
+        rawFrame[1U + k * 2U] = static_cast<uint8_t>(px & 0xFFU);
+        rawFrame[2U + k * 2U] = static_cast<uint8_t>(px >> 8);
+    }
+    TEST_ASSERT_TRUE(feedOneByteAtATime(rawFrame, sizeof(rawFrame)));
+    TEST_ASSERT_EQUAL_HEX16(0x1000U, fb[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x101FU, fb[31]);
+
+    // Frame 1: `kFrameScroll2D(dx=+2, dy=+1)` + `SKIP(24)` + `OP_TDIFF(+1,+1,+1)` + `OP_TLUMA(dg=+4,dr=+3,db=+1)` + `SKIP(6)`
+    const uint8_t scroll2dPos[] = {
+        DmdzStreamDecoder::kFrameScroll2D,
+        2, 1,                            // dx = +2, dy = +1
+        static_cast<uint8_t>(0x00 | 23), // SKIP 24 (pixels 0..23)
+        0xFC,                            // OP_TDIFF idx 4 (+1,+1,+1) on ref fb[24] (old fb[26]=0x101A -> 0x183B)
+        0xF4, 0x2B,                      // OP_TLUMA (uDg=12=>dg=+4, dr_dg=+1=>dr=+3, db_dg=-1=>db=+1) on 0x101B -> 0x289C
+        static_cast<uint8_t>(0x00 | 5)   // SKIP 6 (pixels 26..31)
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(scroll2dPos, sizeof(scroll2dPos)));
+    TEST_ASSERT_EQUAL_HEX16(0x100AU, fb[0]);  // old row 1 col 2
+    TEST_ASSERT_EQUAL_HEX16(0x101FU, fb[21]); // old row 3 col 7
+    TEST_ASSERT_EQUAL_HEX16(0x183BU, fb[24]);
+    TEST_ASSERT_EQUAL_HEX16(0x289CU, fb[25]);
+
+    // Frame 2: `kFrameScroll2D(dx=-1, dy=-1)` -> `fb[1*8 + 1]` receives Frame 1's `fb[0] == 0x100A`
+    const uint8_t scroll2dNeg[] = {
+        DmdzStreamDecoder::kFrameScroll2D,
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        static_cast<uint8_t>(0x00 | 31) // SKIP 32
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(scroll2dNeg, sizeof(scroll2dNeg)));
+    TEST_ASSERT_EQUAL_HEX16(0x100AU, fb[9]);
+
+    // Frame 3: `kFrameKey` with `LIT(1)=0x8410`, `OP_LUMA(dg=-7, dr=-2, db=-3) -> 0x732D`,
+    // overlapping `OP_LZ(dist=2, count=6)` repeating `[0x8410, 0x732D]` x3, then `RUN(24)`
+    const uint8_t keyLzLuma[] = {
+        DmdzStreamDecoder::kFrameKey,
+        0xE0, 0x10, 0x84,               // LIT 1: 0x8410
+        0xDC, 0x75,                     // OP_LUMA: uDg=1 (dg=-7, dgRb=-4), dr=-2, db=-3 -> 0x732D
+        0xF6, 0x01, 0x18,               // OP_LZ: packed17 = (3 << 11) | 1 -> count=6, dist=2
+        static_cast<uint8_t>(0x40 | 23) // RUN 24 of m_last (0x732D)
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(keyLzLuma, sizeof(keyLzLuma)));
+    for (int k = 0; k < 8; k += 2) {
+        TEST_ASSERT_EQUAL_HEX16(0x8410U, fb[k]);
+        TEST_ASSERT_EQUAL_HEX16(0x732DU, fb[k + 1]);
+    }
+    TEST_ASSERT_EQUAL_HEX16(0x732DU, fb[31]);
+
+    // 4. `v1` decoder strictly rejects `v2`-only frame types & opcodes
+    DmdzStreamDecoder decV1;
+    decV1.init(8U, 4U, 1U);
+    TEST_ASSERT_TRUE(decV1.beginFrame(sizeof(scroll2dPos)));
+    TEST_ASSERT_FALSE(decV1.feed(scroll2dPos, sizeof(scroll2dPos), fb));
+    TEST_ASSERT_TRUE(decV1.hasError());
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3149,6 +3264,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits);
     RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack);
     RUN_TEST(test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure);
+    RUN_TEST(test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path);
 
     return UNITY_END();
 }

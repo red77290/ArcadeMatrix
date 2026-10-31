@@ -17,22 +17,26 @@ struct DmdzStreamHeader {
 };
 
 /**
- * @brief Lossless, zero-allocation, chunk-resumable RGB565 stream decoder (`DMDZ` v1).
+ * @brief Lossless, zero-allocation, chunk-resumable RGB565 stream decoder (`DMDZ` v1 & v2).
  *
- * Decodes compressed Showcase `dmdz1` frames directly in-place inside the caller's `uint16_t*`
- * RGB565 frame buffer (`width * height` pixels) using ~152 bytes of stack/member POD state and
- * zero heap allocations. Supports arbitrary network chunk boundaries down to 1 byte.
+ * Decodes compressed Showcase `dmdz1` and `dmdz2` frames directly in-place inside the caller's
+ * `uint16_t*` RGB565 frame buffer (`width * height` pixels) using ~156 bytes of stack/member POD
+ * state and zero heap allocations. Supports arbitrary network chunk boundaries down to 1 byte.
  */
 class DmdzStreamDecoder {
 public:
     static constexpr uint8_t kSupportedVersion = 1;
+    static constexpr uint8_t kMinSupportedVersion = 1;
+    static constexpr uint8_t kMaxSupportedVersion = 2;
     static constexpr uint8_t kFrameDelta = 0;
     static constexpr uint8_t kFrameScroll = 1;
     static constexpr uint8_t kFrameKey = 2;
+    static constexpr uint8_t kFrameScroll2D = 3;
+    static constexpr uint8_t kFrameRaw = 4;
 
     /**
      * @brief Parses a 16-byte `DMDZ` or `DMDS` container header.
-     * @return true if `raw16` is a valid `DMDZ` (v1) or `DMDS` header with non-zero geometry.
+     * @return true if `raw16` is a valid `DMDZ` (v1/v2) or `DMDS` header with non-zero geometry.
      */
     static bool parseHeader(const uint8_t raw16[16], DmdzStreamHeader& out);
 
@@ -42,24 +46,35 @@ public:
         );
     }
 
-    void resetStream(uint16_t width, uint16_t height);
-    inline void init(uint16_t width, uint16_t height) { resetStream(width, height); }
+    void resetStream(uint16_t width, uint16_t height, uint8_t version = 1U);
+    inline void init(uint16_t width, uint16_t height, uint8_t version = 1U) {
+        resetStream(width, height, version);
+    }
     bool beginFrame(uint16_t payloadLen);
     bool feed(const uint8_t* src, size_t len, uint16_t* frame565);
     bool finishFrame() const;
 
     bool hasError() const { return m_error; }
     uint32_t pixelsDecoded() const { return m_pos; }
+    uint8_t streamVersion() const { return m_version; }
 
 private:
     enum class State : uint8_t {
         FrameType = 0,
         ScrollDy,
+        Scroll2DDx,
+        Scroll2DDy,
+        RawLo,
+        RawHi,
         Op,
         LitLo,
         LitHi,
         LongSkipLo,
         LongSkipHi,
+        LumaLo,
+        TLumaLo,
+        LzLo,
+        LzHi,
     };
 
     uint16_t m_cache[64] = {0};
@@ -69,8 +84,11 @@ private:
     uint16_t m_height = 0;
     uint16_t m_bytesRemaining = 0;
     uint16_t m_last = 0;
+    uint8_t m_version = 1;
     uint8_t m_litRemaining = 0;
     uint8_t m_loByte = 0;
+    uint8_t m_opHeader = 0;
+    int8_t m_scrollDx = 0;
     State m_state = State::FrameType;
     bool m_error = false;
 };
@@ -85,7 +103,9 @@ bool buildDmdzWebSocketPath(
     const char* clientId,
     char* outWsPath,
     size_t outCap,
-    uint8_t credits = 2U
+    uint8_t credits = 2U,
+    uint8_t codecVersion = 1U,
+    uint16_t chunkBytes = 1024U
 );
 
 /**
