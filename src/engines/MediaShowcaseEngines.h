@@ -60,7 +60,8 @@ public:
     bool allowsOverlay() const override {
         const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
         return curPhase != static_cast<uint8_t>(Phase::StreamBlank) &&
-               curPhase != static_cast<uint8_t>(Phase::LiveStream);
+               curPhase != static_cast<uint8_t>(Phase::LiveStream) &&
+               curPhase != static_cast<uint8_t>(Phase::StreamEndHold);
     }
 
     uint32_t nextFrameDueInMs() const override {
@@ -68,10 +69,16 @@ public:
         if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
             return (m_lastRenderedPhase != static_cast<uint8_t>(Phase::StreamBlank)) ? 1U : 0xFFFFFFFFU;
         }
+        if (curPhase == static_cast<uint8_t>(Phase::StreamEndHold)) {
+            return 0xFFFFFFFFU;
+        }
         if (curPhase == static_cast<uint8_t>(Phase::LiveStream) &&
             m_renderCard.hasVideoFrame) {
             if (m_streamPlayer.isCore1Streaming()) {
                 return m_streamPlayer.computeCore1NextFrameDueInMs(millis());
+            }
+            if (m_publishedFramePtr.load(std::memory_order_acquire) == nullptr) {
+                return 0xFFFFFFFFU;
             }
             const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
             if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq) {
@@ -155,7 +162,8 @@ protected:
     enum class Phase : uint8_t {
         Card = 0,
         StreamBlank = 1,
-        LiveStream = 2
+        LiveStream = 2,
+        StreamEndHold = 3
     };
 
     struct ConfigSlot {

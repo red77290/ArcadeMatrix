@@ -3045,21 +3045,26 @@ void test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload(vo
         fullRawWire[4U + k * 2U] = static_cast<uint8_t>(px >> 8);
     }
 
-    // Push only 4,000 B (< 8,195 B, while ringCap is 8,448 B >= 8,195 B): Core 1 MUST wait for the full frame
-    // instead of tearing `SRAM1` Canvas with a half-frame!
-    TEST_ASSERT_EQUAL_UINT32(4000U, static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data(), 4000U)));
+    // Push 7,940 B into the 8,448 B ring (`producerFreeBytes() == 508 < 512` batch threshold):
+    // Before Core 1 checks, batch refill is false; as soon as Core 1 sees `7,940 < 8,195`, it signals
+    // `m_spscConsumerNeedsTopUp` so `shouldRefillSpscRing(512)` wakes Core 0 with zero deadlock!
+    TEST_ASSERT_EQUAL_UINT32(7940U, static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data(), 7940U)));
+    TEST_ASSERT_EQUAL_UINT32(508U, static_cast<uint32_t>(atomicPlayer.spscRing().producerFreeBytes()));
     atomicPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 25U);
+    TEST_ASSERT_FALSE(atomicPlayer.shouldRefillSpscRing(512U));
     TEST_ASSERT_FALSE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_TRUE(atomicPlayer.shouldRefillSpscRing(512U));
     TEST_ASSERT_FALSE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
     TEST_ASSERT_EQUAL_UINT32(0U, atomicPlayer.presentedFrames());
     TEST_ASSERT_EQUAL_HEX16(0x0000U, surf128.pixels[0]);
 
-    // Push remaining 4,195 B -> atomic single-tick decode!
+    // Top up remaining 255 B (`7,940 + 255 = 8,195 B`) -> atomic single-tick decode!
     TEST_ASSERT_EQUAL_UINT32(
-        fullRawWire.size() - 4000U,
-        static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data() + 4000U, fullRawWire.size() - 4000U))
+        fullRawWire.size() - 7940U,
+        static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data() + 7940U, fullRawWire.size() - 7940U))
     );
     TEST_ASSERT_TRUE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(atomicPlayer.shouldRefillSpscRing(512U));
     TEST_ASSERT_TRUE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
     TEST_ASSERT_EQUAL_UINT32(1U, atomicPlayer.presentedFrames());
     TEST_ASSERT_EQUAL_UINT32(1U, surf128.extDraws);
@@ -3068,6 +3073,30 @@ void test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload(vo
     TEST_ASSERT_EQUAL_HEX16(0x2000U, surf128.pixels[0]);
     TEST_ASSERT_EQUAL_HEX16(0x2FFFU, surf128.pixels[128 * 32 - 1]);
     atomicPlayer.releaseAll();
+
+    // 1b. Low-heap `6,144 B` ring incremental decode of an `8,195 B` `128x32` `kFrameRaw` (`totalWire > ringCap`)
+    surf128.clear(0U);
+    surf128.extDraws = 0U;
+    ShowcaseStreamPlayer lowRingPlayer;
+    TEST_ASSERT_TRUE(lowRingPlayer.probeZeroCopyOnCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_TRUE(lowRingPlayer.ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(lowRingPlayer.allocateSpscRing(ShowcaseStreamPlayer::SRAM_SPSC_LOW_RING_BYTES, false));
+    lowRingPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 25U);
+    TEST_ASSERT_EQUAL_UINT32(5800U, static_cast<uint32_t>(lowRingPlayer.spscRing().push(fullRawWire.data(), 5800U)));
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(lowRingPlayer.renderFrameCore1(&surf128, 128U, 32U)); // Partial chunk 1 consumed
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldRefillSpscRing(512U));
+    TEST_ASSERT_EQUAL_UINT32(
+        fullRawWire.size() - 5800U,
+        static_cast<uint32_t>(lowRingPlayer.spscRing().push(fullRawWire.data() + 5800U, fullRawWire.size() - 5800U))
+    );
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_TRUE(lowRingPlayer.renderFrameCore1(&surf128, 128U, 32U)); // Completed!
+    TEST_ASSERT_EQUAL_UINT32(1U, lowRingPlayer.presentedFrames());
+    TEST_ASSERT_TRUE(lowRingPlayer.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x2000U, surf128.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x2FFFU, surf128.pixels[128 * 32 - 1]);
+    lowRingPlayer.releaseAll();
 
     // 2. Tiny `64 B` SPSC ring incremental fallback (`2 + payLen > ringCap`) + lossless `kFrameScroll2D`
     class NativeCanvasSurface8x4 : public IDrawingSurface {

@@ -147,6 +147,7 @@ public:
     static uint32_t computeSelfPacedWakeupMs(uint32_t dueMs, uint32_t nowMs);
     uint32_t computeCore1NextFrameDueInMs(uint32_t nowMs) const;
     bool shouldMarkCore1Dirty(uint32_t nowMs) const;
+    bool shouldRefillSpscRing(size_t batchMinFreeBytes) const;
     bool renderFrameCore1(IDrawingSurface* surface, uint16_t defaultW, uint16_t defaultH);
 
     // --- Deterministic Unit-Test Helpers (Zero Socket Dependencies) ---
@@ -188,6 +189,7 @@ private:
     std::atomic<size_t> m_preloadBytesDownloaded{0U};
     std::atomic<bool> m_preloadComplete{false};
     std::atomic<bool> m_core1StreamFinished{false};
+    mutable std::atomic<bool> m_spscConsumerNeedsTopUp{false};
     std::atomic<bool> m_zeroCopyEligible{false};
     std::atomic<uint8_t> m_execMode{static_cast<uint8_t>(ShowcaseStreamExecMode::LegacyFramePtr)};
     std::atomic<uint32_t> m_presentedFrames{0U};

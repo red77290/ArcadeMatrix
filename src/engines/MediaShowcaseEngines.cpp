@@ -1828,6 +1828,11 @@ void MediaShowcaseBase::runWorkerLoop() {
             if (prevSkips < 10U) {
                 m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
             }
+            if (soloSlot &&
+                prevSkips >= 2U &&
+                m_phase.load(std::memory_order_acquire) == static_cast<uint8_t>(Phase::StreamEndHold)) {
+                clearLiveCardState();
+            }
             if (!soloSlot) {
                 // Hold the warming pixel-art banner briefly (`2.5 s`) on item 0 so multi-Showcase
                 // rotations do not thrash across slots every `720 ms` while the server warms up.
@@ -2709,8 +2714,10 @@ void MediaShowcaseBase::executeAcquiredItem(
     CardSnapshot& card,
     const AcquiredItemInfo& info
 ) {
-    // Disarm any previous item's stream before touching poster/card buffers
+    // Disarm any previous item's stream before touching poster/card buffers while holding the
+    // last presented frame on screen (`Phase::StreamEndHold`) until the next Card + poster are ready.
     if (m_streamPlayer.isCore1Streaming() || m_liveCard.hasVideoFrame) {
+        m_phase.store(static_cast<uint8_t>(Phase::StreamEndHold), std::memory_order_release);
         m_streamPlayer.resetCore1StreamState();
         m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
         m_publishedFramePtr.store(nullptr, std::memory_order_release);
@@ -2837,6 +2844,10 @@ void MediaShowcaseBase::executeAcquiredItem(
     };
     runOpts.onExitLiveStream = [](void* raw) {
         auto* c = static_cast<ShowcaseStreamCtx*>(raw);
+        c->self->m_phase.store(static_cast<uint8_t>(Phase::StreamEndHold), std::memory_order_release);
+        c->self->m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        c->self->m_liveCard.hasVideoFrame = false;
+        c->self->m_seq.fetch_add(1U, std::memory_order_release);
         c->self->waitRenderBlitQuiescent();
     };
     (void)m_streamPlayer.runStreamSession(runOpts);
@@ -2940,16 +2951,20 @@ void MediaShowcaseBase::update(EngineContext* context) {
 
     if (curPhase == static_cast<uint8_t>(Phase::LiveStream)) {
         if (!m_streamPlayer.isCore1Streaming()) {
-            const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
-            if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
-                m_dirty = true;
-            } else if (!m_renderCard.hasVideoFrame && (now - m_lastScrollStepMs) >= 90U) {
-                m_lastScrollStepMs = now;
-                m_dirty = true;
+            if (m_publishedFramePtr.load(std::memory_order_acquire) != nullptr) {
+                const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+                if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
+                    m_dirty = true;
+                }
+            } else {
+                m_dirty = false;
             }
         } else if (m_streamPlayer.shouldMarkCore1Dirty(now)) {
             m_dirty = true;
         }
+    } else if (curPhase == static_cast<uint8_t>(Phase::StreamEndHold)) {
+        // Hold final presented video frame cleanly with zero redraws during stream teardown / rotation handoff.
+        m_dirty = false;
     } else if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
         // Hold clean black cut with zero redraw spin while Core 0 hands off to the stream.
     } else if (!m_renderCard.hasData) {
@@ -3015,6 +3030,12 @@ void MediaShowcaseBase::render(EngineContext* context) {
     const uint32_t elapsedMs = millis() - m_activatedAtMs;
     const Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
+    if (curPhase == Phase::StreamEndHold) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
+    }
+
     if (curPhase == Phase::StreamBlank) {
         BlitSeqGuard blitGuard{m_renderBlitSeq};
         s->clear(0);
@@ -3060,6 +3081,9 @@ void MediaShowcaseBase::render(EngineContext* context) {
             m_renderedNewFrame = true;
             return;
         }
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
     }
 
     if (m_posterAliasesFrame && m_renderCard.hasPoster &&
@@ -3070,23 +3094,14 @@ void MediaShowcaseBase::render(EngineContext* context) {
     }
 
     BlitSeqGuard blitGuard{m_renderBlitSeq};
-    if (curPhase == Phase::LiveStream) {
-        s->clear(0);
-        if (m_renderCard.hasData) {
-            drawCardPhase(s, m_renderCard, elapsedMs);
-        } else {
-            drawWaitingPixelArt(s, s->width(), s->height(), elapsedMs);
-        }
-    } else {
-        if (m_posterAliasesFrame && m_renderCard.hasPoster &&
-            (m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
-            m_dirty = false;
-            m_renderedNewFrame = false;
-            return;
-        }
-        s->clear(0);
-        drawCardPhase(s, m_renderCard, elapsedMs);
+    if (m_posterAliasesFrame && m_renderCard.hasPoster &&
+        (m_frameSeq.load(std::memory_order_acquire) & 1U) != 0U) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
     }
+    s->clear(0);
+    drawCardPhase(s, m_renderCard, elapsedMs);
 
     m_dirty = false;
     m_renderedNewFrame = true;

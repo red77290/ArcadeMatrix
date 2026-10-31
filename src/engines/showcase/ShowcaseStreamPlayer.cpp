@@ -59,23 +59,25 @@ struct ScratchSessionGuard {
 /**
  * @struct ScopedSdCacheFile
  * @brief Core 0 RAII SD cache file wrapper acquiring `SdLockGuard` strictly per bounded chunk
- *        so `sdMutex` is never held across network waits or FreeRTOS sleeps.
+ *        so `sdMutex` is never held across network waits or FreeRTOS sleeps, and unlinking
+ *        the temporary `.dmdz` staging file deterministically on session completion or abort.
  */
 struct ScopedSdCacheFile {
     FsFile file{};
+    const char* path = nullptr;
     size_t curPos = 0U;
     bool isOpen = false;
 
     ScopedSdCacheFile() = default;
     ~ScopedSdCacheFile() {
-        closeFile();
+        closeAndRemove();
     }
 
     ScopedSdCacheFile(const ScopedSdCacheFile&) = delete;
     ScopedSdCacheFile& operator=(const ScopedSdCacheFile&) = delete;
 
     bool openReadWrite(const char* cachePath) {
-        closeFile();
+        closeAndRemove();
         if (!cachePath || cachePath[0] == '\0') {
             return false;
         }
@@ -87,7 +89,10 @@ struct ScopedSdCacheFile {
             sd.mkdir("/cache");
         }
 #if USE_SD_MMC
-        if (!sd.exists(cachePath)) {
+        if (sd.exists(cachePath)) {
+            sd.remove(cachePath);
+        }
+        {
             FsFile createFile = sd.open(cachePath, FILE_OPEN_WRITE);
             if (createFile) {
                 createFile.close();
@@ -95,12 +100,13 @@ struct ScopedSdCacheFile {
         }
         file = sd.open(cachePath, "r+");
 #else
-        file = sd.open(cachePath, O_RDWR | O_CREAT);
+        file = sd.open(cachePath, O_RDWR | O_CREAT | O_TRUNC);
 #endif
         if (!file) {
             return false;
         }
         file.seek(0);
+        path = cachePath;
         curPos = 0U;
         isOpen = true;
         return true;
@@ -156,13 +162,20 @@ struct ScopedSdCacheFile {
         return true;
     }
 
-    void closeFile() {
-        if (isOpen) {
-            SdLockGuard guard(pdMS_TO_TICKS(600));
-            if (guard) {
+    void closeAndRemove() {
+        if (!isOpen && (!path || path[0] == '\0')) {
+            return;
+        }
+        SdLockGuard guard(pdMS_TO_TICKS(800));
+        if (guard) {
+            if (isOpen) {
                 file.close();
+                isOpen = false;
             }
-            isOpen = false;
+            if (path && path[0] != '\0' && sd.exists(path)) {
+                sd.remove(path);
+            }
+            path = nullptr;
         }
     }
 };
@@ -400,6 +413,7 @@ void ShowcaseStreamPlayer::resetCore1StreamState() {
     m_preloadBytesDownloaded.store(0U, std::memory_order_release);
     m_preloadComplete.store(false, std::memory_order_release);
     m_core1StreamFinished.store(false, std::memory_order_release);
+    m_spscConsumerNeedsTopUp.store(false, std::memory_order_release);
     m_nextFrameDueMs.store(0U, std::memory_order_relaxed);
     m_core1PreloadOffset = 16U;
     m_core1PreloadFrameIdx = 0U;
@@ -458,7 +472,12 @@ bool ShowcaseStreamPlayer::shouldMarkCore1Dirty(uint32_t nowMs) const {
     }
     if (mode == ShowcaseStreamExecMode::SpscRing) {
         if (m_core1DecPartialRem > 0U) {
-            return m_spscRing.consumerSize() > 0U;
+            if (m_spscRing.consumerSize() > 0U) {
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
+                return true;
+            }
+            m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
+            return false;
         }
         return hasBufferedFrameInSpscRing();
     }
@@ -471,32 +490,58 @@ bool ShowcaseStreamPlayer::shouldMarkCore1Dirty(uint32_t nowMs) const {
     return false;
 }
 
+bool ShowcaseStreamPlayer::shouldRefillSpscRing(size_t batchMinFreeBytes) const {
+    const size_t freeBytes = m_spscRing.producerFreeBytes();
+    if (freeBytes == 0U) {
+        return false;
+    }
+    if (freeBytes >= batchMinFreeBytes) {
+        return true;
+    }
+    return m_spscConsumerNeedsTopUp.load(std::memory_order_acquire);
+}
+
 bool ShowcaseStreamPlayer::hasBufferedFrameInSpscRing() const {
     const size_t cap = m_spscRing.capacity();
     if (cap == 0U) {
         return false;
     }
+    const size_t avail = m_spscRing.consumerSize();
     if (m_streamHeaderIsDmdz) {
         uint16_t payLen = 0U;
         if (!m_spscRing.peekFrameLength(payLen)) {
+            if (avail > 0U) {
+                m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
+            }
             return false;
         }
         const size_t totalWire = 2U + static_cast<size_t>(payLen);
         if (totalWire <= cap) {
-            return m_spscRing.consumerSize() >= totalWire;
+            if (avail >= totalWire) {
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
+                return true;
+            }
+            m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
+            return false;
         }
         const size_t oversizedTrigger = std::max<size_t>(2U, std::min<size_t>(cap / 2U, 2048U));
-        return m_spscRing.consumerSize() >= oversizedTrigger;
-    }
-    const size_t rawBytes = static_cast<size_t>(m_streamHeaderW) * static_cast<size_t>(m_streamHeaderH) * sizeof(uint16_t);
-    if (rawBytes == 0U) {
+        if (avail >= oversizedTrigger) {
+            m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
+            return true;
+        }
+        m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
         return false;
     }
-    if (rawBytes <= cap) {
-        return m_spscRing.consumerSize() >= rawBytes;
+    const size_t rawBytes = static_cast<size_t>(m_streamHeaderW) * static_cast<size_t>(m_streamHeaderH) * sizeof(uint16_t);
+    if (rawBytes == 0U || rawBytes > cap) {
+        return false;
     }
-    const size_t oversizedTrigger = std::max<size_t>(2U, std::min<size_t>(cap / 2U, 2048U));
-    return m_spscRing.consumerSize() >= oversizedTrigger;
+    if (avail >= rawBytes) {
+        m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
+        return true;
+    }
+    m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
+    return false;
 }
 
 void ShowcaseStreamPlayer::armSpscStreamForTest(
@@ -521,6 +566,7 @@ void ShowcaseStreamPlayer::armSpscStreamForTest(
     m_core1DecoderInitialized = false;
     m_core1StreamArmed = false;
     m_core1StreamFinished.store(false, std::memory_order_release);
+    m_spscConsumerNeedsTopUp.store(false, std::memory_order_release);
     m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::SpscRing), std::memory_order_release);
 }
 
@@ -779,7 +825,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
 
         if (checkStop() != net::StreamStopReason::Continue || sdWritePos <= 16U) {
             httpGuard.ptr->close();
-            sdCache.closeFile();
+            sdCache.closeAndRemove();
             if (sdWritePos <= 16U) {
                 maybePurgeHttp();
             }
@@ -795,7 +841,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
 
         if (m_spscRingStorage == nullptr && !allocateSpscRing(SRAM_SPSC_HI_RING_BYTES, false)) {
             httpGuard.ptr->close();
-            sdCache.closeFile();
+            sdCache.closeAndRemove();
             maybePurgeHttp();
             return false;
         }
@@ -803,7 +849,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         bool tempFallback = false;
         if (!ensureFallbackBufferForHeader(m_streamHeaderW, m_streamHeaderH, tempFallback)) {
             httpGuard.ptr->close();
-            sdCache.closeFile();
+            sdCache.closeAndRemove();
             freeSpscRing();
             maybePurgeHttp();
             return false;
@@ -850,7 +896,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             }
             if (checkStop() != net::StreamStopReason::Continue || m_spscRing.empty()) {
                 httpGuard.ptr->close();
-                sdCache.closeFile();
+                sdCache.closeAndRemove();
                 if (tempFallback) {
                     freeFallbackFrameBuffer();
                 }
@@ -869,6 +915,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
         m_core1DecoderInitialized = false;
         m_core1StreamArmed = false;
         m_core1StreamFinished.store(false, std::memory_order_release);
+        m_spscConsumerNeedsTopUp.store(false, std::memory_order_release);
         m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::SpscRing), std::memory_order_release);
 
         if (opts.onEnterLiveStream) {
@@ -877,7 +924,10 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
 
         const uint32_t streamT0 = millis();
         uint32_t eofStallSinceMs = 0U;
-        size_t lastRingSize = m_spscRing.consumerSize();
+        uint32_t lastProgressMs = streamT0;
+        size_t lastSdWritePos = sdWritePos;
+        size_t lastSdReadPos = sdReadPos;
+        size_t lastRingSize = m_spscRing.producerSize();
         uint32_t lastPresented = 0U;
 
         while (checkStop() == net::StreamStopReason::Continue &&
@@ -886,29 +936,41 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             if (!tcpClosedCleanly) {
                 (void)pumpTcpToSd(4096U, 6U);
             }
-            if (sdReadPos < sdWritePos && m_spscRing.producerFreeBytes() >= 512U) {
+            if (sdReadPos < sdWritePos && shouldRefillSpscRing(512U)) {
                 if (!pumpSdToRing(tcpClosedCleanly ? 4096U : 2048U)) {
                     sdReadPos = sdWritePos;
                 }
             }
 
+            const uint32_t nowMs = millis();
+            const size_t curRingSize = m_spscRing.producerSize();
+            const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
+            if (sdWritePos != lastSdWritePos ||
+                sdReadPos != lastSdReadPos ||
+                curRingSize != lastRingSize ||
+                curPresented != lastPresented) {
+                lastSdWritePos = sdWritePos;
+                lastSdReadPos = sdReadPos;
+                lastRingSize = curRingSize;
+                lastPresented = curPresented;
+                lastProgressMs = nowMs;
+                eofStallSinceMs = 0U;
+            } else if ((nowMs - lastProgressMs) >= 5000U) {
+                LOGW(tag, "Stream progress stalled for 5000 ms (presented=%u, sd=%u/%u); ending stream early",
+                     static_cast<unsigned>(curPresented),
+                     static_cast<unsigned>(sdReadPos),
+                     static_cast<unsigned>(sdWritePos));
+                break;
+            }
+
             if (tcpClosedCleanly && sdReadPos >= sdWritePos) {
-                const size_t curRingSize = m_spscRing.consumerSize();
-                const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
-                if (curRingSize == 0U && m_core1DecPartialRem == 0U) {
-                    break;
-                }
-                if (curRingSize != lastRingSize || curPresented != lastPresented) {
-                    lastRingSize = curRingSize;
-                    lastPresented = curPresented;
-                    eofStallSinceMs = millis();
-                } else if (eofStallSinceMs == 0U) {
-                    eofStallSinceMs = millis();
-                } else if ((millis() - eofStallSinceMs) >= 400U) {
+                if (eofStallSinceMs == 0U) {
+                    eofStallSinceMs = nowMs;
+                } else if ((nowMs - eofStallSinceMs) >= (curRingSize == 0U ? 60U : 400U)) {
                     break;
                 }
                 vTaskDelay(pdMS_TO_TICKS(6));
-            } else if (m_spscRing.producerFreeBytes() < 512U) {
+            } else if (!shouldRefillSpscRing(512U) || (tcpClosedCleanly && sdReadPos >= sdWritePos)) {
                 vTaskDelay(pdMS_TO_TICKS(5));
             }
         }
@@ -924,7 +986,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             freeFallbackFrameBuffer();
         }
         freeSpscRing();
-        sdCache.closeFile();
+        sdCache.closeAndRemove();
         maybePurgeHttp();
         return framesShown > 0U;
     }
@@ -1097,6 +1159,9 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             }
 
             const uint32_t streamT0 = millis();
+            uint32_t lastProgressMs = streamT0;
+            size_t lastDl = m_preloadBytesDownloaded.load(std::memory_order_acquire);
+            uint32_t lastPresented = 0U;
             while (checkStop() == net::StreamStopReason::Continue &&
                    (millis() - streamT0) < maxStreamMs &&
                    !m_core1StreamFinished.load(std::memory_order_acquire)) {
@@ -1104,6 +1169,18 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
                     (void)pumpPsramPreload(16U);
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(18));
+                }
+                const uint32_t nowMs = millis();
+                const size_t curDl = m_preloadBytesDownloaded.load(std::memory_order_acquire);
+                const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
+                if (curDl != lastDl || curPresented != lastPresented) {
+                    lastDl = curDl;
+                    lastPresented = curPresented;
+                    lastProgressMs = nowMs;
+                } else if ((nowMs - lastProgressMs) >= 5000U) {
+                    LOGW(tag, "PSRAM preload stream stalled for 5000 ms (presented=%u); ending stream early",
+                         static_cast<unsigned>(curPresented));
+                    break;
                 }
             }
 
@@ -1206,6 +1283,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
     m_core1DecoderInitialized = false;
     m_core1StreamArmed = false;
     m_core1StreamFinished.store(false, std::memory_order_release);
+    m_spscConsumerNeedsTopUp.store(false, std::memory_order_release);
     m_execMode.store(static_cast<uint8_t>(ShowcaseStreamExecMode::SpscRing), std::memory_order_release);
 
     if (opts.onEnterLiveStream) {
@@ -1214,14 +1292,15 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
 
     const uint32_t streamT0 = millis();
     uint32_t eofStallSinceMs = 0U;
-    size_t lastRingSize = m_spscRing.consumerSize();
+    uint32_t lastProgressMs = streamT0;
+    size_t lastRingSize = m_spscRing.producerSize();
     uint32_t lastPresented = 0U;
 
     while (checkStop() == net::StreamStopReason::Continue &&
            (millis() - streamT0) < maxStreamMs &&
            !m_core1StreamFinished.load(std::memory_order_acquire)) {
         if (!httpGuard.ptr->streamEof) {
-            if (m_spscRing.producerFreeBytes() >= 4096U) {
+            if (shouldRefillSpscRing(4096U)) {
                 if (!httpGuard.ptr->pumpToRing(m_spscRing, 14U, opts.checkStop, opts.userCtx)) {
                     httpGuard.ptr->streamEof = true;
                     httpGuard.ptr->close();
@@ -1231,19 +1310,26 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
             } else {
                 vTaskDelay(pdMS_TO_TICKS(8));
             }
-        } else {
-            const size_t curRingSize = m_spscRing.consumerSize();
-            const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
-            if (curRingSize == 0U && m_core1DecPartialRem == 0U) {
-                break;
-            }
-            if (curRingSize != lastRingSize || curPresented != lastPresented) {
-                lastRingSize = curRingSize;
-                lastPresented = curPresented;
-                eofStallSinceMs = millis();
-            } else if (eofStallSinceMs == 0U) {
-                eofStallSinceMs = millis();
-            } else if ((millis() - eofStallSinceMs) >= 400U) {
+        }
+
+        const uint32_t nowMs = millis();
+        const size_t curRingSize = m_spscRing.producerSize();
+        const uint32_t curPresented = m_presentedFrames.load(std::memory_order_relaxed);
+        if (curRingSize != lastRingSize || curPresented != lastPresented) {
+            lastRingSize = curRingSize;
+            lastPresented = curPresented;
+            lastProgressMs = nowMs;
+            eofStallSinceMs = 0U;
+        } else if ((nowMs - lastProgressMs) >= 5000U) {
+            LOGW(tag, "PSRAM SPSC stream stalled for 5000 ms (presented=%u); ending stream early",
+                 static_cast<unsigned>(curPresented));
+            break;
+        }
+
+        if (httpGuard.ptr->streamEof) {
+            if (eofStallSinceMs == 0U) {
+                eofStallSinceMs = nowMs;
+            } else if ((nowMs - eofStallSinceMs) >= (curRingSize == 0U ? 60U : 400U)) {
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(8));
@@ -1321,19 +1407,25 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
         if (ringCap == 0U) {
             return false;
         }
+        const size_t avail = m_spscRing.consumerSize();
         const size_t safeFullFrameThreshold = ringCap;
         if (m_streamHeaderIsDmdz) {
             if (m_core1DecPartialRem > 0U) {
-                if (m_spscRing.consumerSize() == 0U) {
+                if (avail == 0U) {
+                    m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
                     return false;
                 }
             } else {
                 if (!m_spscRing.peekFrameLength(spscPayloadLen)) {
+                    if (avail > 0U) {
+                        m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
+                    }
                     return false;
                 }
                 const size_t totalWire = 2U + static_cast<size_t>(spscPayloadLen);
                 if (totalWire <= safeFullFrameThreshold) {
-                    if (m_spscRing.consumerSize() < totalWire) {
+                    if (avail < totalWire) {
+                        m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
                         return false;
                     }
                 } else {
@@ -1341,7 +1433,12 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
                 }
             }
         } else {
-            if (m_spscRing.consumerSize() < rawFrameBytes) {
+            if (rawFrameBytes > ringCap) {
+                m_core1StreamFinished.store(true, std::memory_order_release);
+                return false;
+            }
+            if (avail < rawFrameBytes) {
+                m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
                 return false;
             }
         }
@@ -1417,6 +1514,7 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
     if (mode == ShowcaseStreamExecMode::SpscRing) {
         if (!m_streamHeaderIsDmdz) {
             const size_t popped = m_spscRing.pop(reinterpret_cast<uint8_t*>(dstPixels), rawFrameBytes);
+            m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
             decodeOk = (popped == rawFrameBytes);
             frameComplete = decodeOk;
         } else if (m_core1DecPartialRem > 0U) {
@@ -1437,14 +1535,19 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
             m_core1DecPartialRem = static_cast<uint16_t>(m_core1DecPartialRem - take);
             if (!decodeOk) {
                 m_core1DecPartialRem = 0U;
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
                 m_core1StreamFinished.store(true, std::memory_order_release);
             } else if (m_core1DecPartialRem == 0U) {
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
                 decodeOk = m_decoder->finishFrame();
                 frameComplete = decodeOk;
+            } else {
+                m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
             }
         } else if (spscOversizedStart) {
             m_spscRing.consumeRead(2U);
             if (!m_decoder->beginFrame(spscPayloadLen)) {
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
                 m_core1StreamFinished.store(true, std::memory_order_release);
                 canvasGuard.release();
                 return false;
@@ -1469,10 +1572,14 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
             }
             if (!decodeOk) {
                 m_core1DecPartialRem = 0U;
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
                 m_core1StreamFinished.store(true, std::memory_order_release);
             } else if (m_core1DecPartialRem == 0U) {
+                m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
                 decodeOk = m_decoder->finishFrame();
                 frameComplete = decodeOk;
+            } else {
+                m_spscConsumerNeedsTopUp.store(true, std::memory_order_release);
             }
         } else {
             const uint8_t* p1 = nullptr;
@@ -1491,6 +1598,7 @@ bool ShowcaseStreamPlayer::renderFrameCore1(
                 decodeOk = m_decoder->finishFrame();
             }
             m_spscRing.consumeRead(2U + static_cast<size_t>(spscPayloadLen));
+            m_spscConsumerNeedsTopUp.store(false, std::memory_order_relaxed);
             frameComplete = decodeOk;
             if (!decodeOk) {
                 m_core1StreamFinished.store(true, std::memory_order_release);
