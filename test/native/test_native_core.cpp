@@ -3170,6 +3170,228 @@ void test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path(void) {
     TEST_ASSERT_TRUE(decV1.hasError());
 }
 
+void test_dmdz_v2_frame_pal8_1_to_128_colors_scroll2d_and_profile_paths(void) {
+    using core::drawing::DmdzStreamDecoder;
+
+    // 1. 3-tier adaptive profile selector & WS/HTTP path builders
+    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 32U));
+    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 64U));
+    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 32U));
+    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 64U)); // 8,192 px
+    TEST_ASSERT_EQUAL_STRING("psram_hd", net::selectDmdzStreamProfile(true, 256U, 64U)); // 16,384 px
+
+    char wsPath[320] = "";
+    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
+        "/api/v1/movies/stream/pkg_movies_blade_runner.rgb565.stream?purge=true&api_key=secret42",
+        "esp32_sram_movies",
+        wsPath,
+        sizeof(wsPath),
+        4U,
+        2U,
+        1360U,
+        "sram"
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/movies/ws/pkg_movies_blade_runner.dmdz?purge=true&client_id=esp32_sram_movies&credits=4&v=2&chunk=1360&api_key=secret42&profile=sram",
+        wsPath
+    );
+
+    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
+        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream",
+        "esp32s3_hd_anime",
+        wsPath,
+        sizeof(wsPath),
+        16U,
+        2U,
+        1400U,
+        "psram_hd"
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/anime/ws/pkg_anime_akira.dmdz?purge=true&client_id=esp32s3_hd_anime&credits=16&v=2&chunk=1400&profile=psram_hd",
+        wsPath
+    );
+
+    char httpPath[320] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?api_key=tok99&purge=true",
+        "esp32s3_psram_series",
+        false,
+        false,
+        "psram",
+        httpPath,
+        sizeof(httpPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?purge=false&paced=0&codec=dmdz2&client_id=esp32s3_psram_series&api_key=tok99&profile=psram",
+        httpPath
+    );
+
+    // 2. `FRAME_PAL8` (`0x05`) 1-color palette (`palHdr = 0x00`, `m_last = m_pal[0]` right after table)
+    uint16_t fb[8 * 4];
+    memset(fb, 0, sizeof(fb));
+    DmdzStreamDecoder dec;
+    dec.init(8U, 4U, 2U);
+
+    auto feedOneByteAtATime = [&](const uint8_t* payload, size_t n) -> bool {
+        if (!dec.beginFrame(static_cast<uint16_t>(n))) {
+            return false;
+        }
+        for (size_t i = 0U; i < n; ++i) {
+            if (!dec.feed(payload + i, 1U, fb)) {
+                return false;
+            }
+        }
+        return dec.finishFrame();
+    };
+
+    const uint8_t pal1Frame[] = {
+        DmdzStreamDecoder::kFramePal8,
+        0x00U,              // hasScroll2D = false, palCount = 1
+        0xE0U, 0x07U,       // m_pal[0] = 0x07E0 (m_last seeded to 0x07E0 immediately!)
+        static_cast<uint8_t>(0xC0U | 30U) // PAL_RUN of count = (30 + 2) = 32 pixels of m_last
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(pal1Frame, sizeof(pal1Frame)));
+    for (size_t i = 0U; i < 32U; ++i) {
+        TEST_ASSERT_EQUAL_HEX16(0x07E0U, fb[i]);
+    }
+
+    // 3. `FRAME_PAL8` (`0x05`) with 128-color palette (`palHdr = 0x7F`), `PAL_INDEX`, `PAL_RUN`, `PAL_SKIP`, `PAL_LONG_SKIP`
+    uint16_t bigFb[300];
+    for (size_t i = 0U; i < 300U; ++i) {
+        bigFb[i] = 0x1234U;
+    }
+    DmdzStreamDecoder bigDec;
+    bigDec.init(300U, 1U, 2U);
+    std::vector<uint8_t> pal128;
+    pal128.push_back(DmdzStreamDecoder::kFramePal8);
+    pal128.push_back(0x7FU); // 128 colors, no scroll
+    for (uint16_t c = 0U; c < 128U; ++c) {
+        const uint16_t rgb = static_cast<uint16_t>(0x2000U + c);
+        pal128.push_back(static_cast<uint8_t>(rgb & 0xFFU));
+        pal128.push_back(static_cast<uint8_t>(rgb >> 8));
+    }
+    pal128.push_back(0x7FU); // PAL_INDEX 127 -> bigFb[0] = 0x207F
+    pal128.push_back(static_cast<uint8_t>(0xC0U | 2U)); // PAL_RUN 4 -> bigFb[1..4] = 0x207F (pos = 5)
+    pal128.push_back(static_cast<uint8_t>(0x80U | 9U)); // PAL_SKIP 10 -> bigFb[5..14] preserved 0x1234 (pos = 15)
+    pal128.push_back(0xFFU); // PAL_LONG_SKIP 280 -> bigFb[15..294] preserved 0x1234 (pos = 295)
+    pal128.push_back(static_cast<uint8_t>(280U & 0xFFU));
+    pal128.push_back(static_cast<uint8_t>((280U >> 8) & 0xFFU));
+    pal128.push_back(0x05U); // PAL_INDEX 5 -> bigFb[295] = 0x2005
+    pal128.push_back(static_cast<uint8_t>(0xC0U | 2U)); // PAL_RUN 4 -> bigFb[296..299] = 0x2005 (pos = 300)
+
+    TEST_ASSERT_TRUE(bigDec.beginFrame(static_cast<uint16_t>(pal128.size())));
+    for (size_t i = 0U; i < pal128.size(); ++i) {
+        TEST_ASSERT_TRUE(bigDec.feed(pal128.data() + i, 1U, bigFb));
+    }
+    TEST_ASSERT_TRUE(bigDec.finishFrame());
+    for (size_t i = 0U; i < 5U; ++i) {
+        TEST_ASSERT_EQUAL_HEX16(0x207FU, bigFb[i]);
+    }
+    for (size_t i = 5U; i < 295U; ++i) {
+        TEST_ASSERT_EQUAL_HEX16(0x1234U, bigFb[i]);
+    }
+    for (size_t i = 295U; i < 300U; ++i) {
+        TEST_ASSERT_EQUAL_HEX16(0x2005U, bigFb[i]);
+    }
+
+    // 4. `FRAME_PAL8` with `hasScroll2D` (`dx = +1, dy = +1` and `dx = -1, dy = -1`)
+    for (uint16_t k = 0U; k < 32U; ++k) {
+        fb[k] = static_cast<uint16_t>(0x4000U + k);
+    }
+    const uint8_t palScrollPos[] = {
+        DmdzStreamDecoder::kFramePal8,
+        static_cast<uint8_t>(0x80U | 1U), // hasScroll2D = true, palCount = 2
+        1U, 1U,                           // dx = +1, dy = +1 (fb[0] shifts from old fb[1*8 + 1] = 0x4009)
+        0x11U, 0xAAU,                     // m_pal[0] = 0xAA11
+        0x22U, 0xBBU,                     // m_pal[1] = 0xBB22
+        static_cast<uint8_t>(0x80U | 29U), // PAL_SKIP 30 (keep shifted pixels 0..29)
+        0x00U,                            // fb[30] = 0xAA11
+        0x01U                             // fb[31] = 0xBB22
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(palScrollPos, sizeof(palScrollPos)));
+    TEST_ASSERT_EQUAL_HEX16(0x4009U, fb[0]);
+    TEST_ASSERT_EQUAL_HEX16(0xAA11U, fb[30]);
+    TEST_ASSERT_EQUAL_HEX16(0xBB22U, fb[31]);
+
+    // 5. Out-of-range palette index & `v1` rejection
+    const uint8_t badPalIdx[] = {
+        DmdzStreamDecoder::kFramePal8,
+        0x01U,        // palCount = 2
+        0x00U, 0x00U,
+        0xFFU, 0xFFU,
+        0x02U         // PAL_INDEX 2 >= palCount (2) -> error!
+    };
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(badPalIdx)));
+    TEST_ASSERT_FALSE(dec.feed(badPalIdx, sizeof(badPalIdx), fb));
+    TEST_ASSERT_TRUE(dec.hasError());
+
+    DmdzStreamDecoder decV1;
+    decV1.init(8U, 4U, 1U);
+    TEST_ASSERT_TRUE(decV1.beginFrame(sizeof(pal1Frame)));
+    TEST_ASSERT_FALSE(decV1.feed(pal1Frame, sizeof(pal1Frame), fb));
+    TEST_ASSERT_TRUE(decV1.hasError());
+}
+
+void test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure(void) {
+    // 1. Non-power-of-two capacity (`cap = 100`) full 100% fill and `[0, 2 * cap)` Lamport wraparound
+    uint8_t storage100[100] = {0};
+    net::DmdzSpscByteRing ring;
+    ring.init(storage100, sizeof(storage100));
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(ring.capacity()));
+    TEST_ASSERT_TRUE(ring.empty());
+
+    uint8_t pat[100];
+    for (size_t i = 0U; i < sizeof(pat); ++i) {
+        pat[i] = static_cast<uint8_t>((i * 41U + 9U) & 0xFFU);
+    }
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(ring.push(pat, 100U)));
+    TEST_ASSERT_TRUE(ring.full());
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(ring.freeBytes()));
+
+    uint8_t out[100] = {0};
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.pop(out, 37U)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(pat, out, 37U);
+    TEST_ASSERT_EQUAL_UINT32(63U, static_cast<uint32_t>(ring.size()));
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.freeBytes()));
+
+    // Cycle 60 rounds of odd-sized 37-byte frames across `cap = 100` (`2 * cap = 200` wraps > 11 times!)
+    ring.reset();
+    for (int round = 0; round < 60; ++round) {
+        uint8_t frame[37];
+        const uint16_t payLen = 35U;
+        frame[0] = static_cast<uint8_t>(payLen & 0xFFU);
+        frame[1] = static_cast<uint8_t>(payLen >> 8);
+        for (size_t i = 0U; i < payLen; ++i) {
+            frame[2U + i] = static_cast<uint8_t>((round * 13 + static_cast<int>(i)) & 0xFFU);
+        }
+        TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.push(frame, sizeof(frame))));
+        uint16_t peekedLen = 0U;
+        TEST_ASSERT_TRUE(ring.hasCompleteFrame(peekedLen));
+        TEST_ASSERT_EQUAL_UINT16(payLen, peekedLen);
+
+        const uint8_t* p1 = nullptr;
+        const uint8_t* p2 = nullptr;
+        size_t n1 = 0U;
+        size_t n2 = 0U;
+        ring.getConsumerSlices(2U, payLen, p1, n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT32(payLen, static_cast<uint32_t>(n1 + n2));
+        uint8_t reassembled[35] = {0};
+        if (n1 > 0U) memcpy(reassembled, p1, n1);
+        if (n2 > 0U) memcpy(reassembled + n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(frame + 2U, reassembled, payLen);
+        ring.consumeRead(37U);
+        TEST_ASSERT_TRUE(ring.empty());
+    }
+
+    // 2. Non-power-of-two `6,144 B` ring + `kSpscWsCreditMinRingFreeBytes` (`1,536 B`) backpressure
+    std::vector<uint8_t> storage6k(6144U, 0U);
+    net::DmdzSpscByteRing ring6k;
+    ring6k.init(storage6k.data(), storage6k.size());
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4608U, 1536U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
+    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4609U, 1535U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
+    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3265,6 +3487,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack);
     RUN_TEST(test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure);
     RUN_TEST(test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path);
+    RUN_TEST(test_dmdz_v2_frame_pal8_1_to_128_colors_scroll2d_and_profile_paths);
+    RUN_TEST(test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure);
 
     return UNITY_END();
 }

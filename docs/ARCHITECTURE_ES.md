@@ -34,6 +34,7 @@ Este documento es la referencia **exhaustiva y profunda** de la arquitectura de 
 22. [Arquitectura de Validación y Framework de Pruebas](#22-arquitectura-de-validaci%C3%B3n-y-framework-de-pruebas)
 23. [Superficie de Dibujo, Seguimiento de Estado Dirty e Invariantes de Memoria](#23-superficie-de-dibujo-seguimiento-de-estado-dirty-e-invariantes-de-memoria)
 24. [Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria](#24-pipeline-de-presentaci%C3%B3n-din%C3%A1mico-y-arquitectura-de-optimizaci%C3%B3n-de-memoria)
+25. [Arquitectura de Streaming y Recuperación DMD Media Showcase V3.1](#25-arquitectura-de-streaming-y-recuperaci%C3%B3n-dmd-media-showcase-v31)
 
 ---
 
@@ -584,5 +585,30 @@ Para plataformas con limitaciones severas de memoria (como el ESP32 clásico con
 11. **Jerarquía de Caché de Iconos en 3 Niveles:** Mapas de bits RGB565 en RAM (L1), almacenamiento persistente en SD (L2) y proxy HTTP ligero `images.weserv.nl` + `JPEGDEC` (L3) consumiendo únicamente ~2,5 KB de RAM (ahorro de más del 92% respecto al decodificador PNG).
 
 El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).
+
+---
+
+## 25. Arquitectura de Streaming y Recuperación DMD Media Showcase V3.1
+
+Los cuatro motores DMD Media Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`, basados en `MediaShowcaseBase`) combinan paridad de rotación 1:1 con Raspberry Pi y un pipeline de streaming Zero-Copy de doble núcleo adaptado tanto a SRAM interna (`esp32dev`) como a PSRAM octal (`esp32s3_waveshare`):
+
+1. **Compuerta `turn_evaluated` 1:1 con Raspberry Pi y Cesión Instantánea de Rotación:**
+   - `m_rotationSlotCount` se inicializa de inmediato mediante `ConfigSnapshotGuard` en `initialize()` y al inicio de `activate()` antes del primer ciclo de Core 1.
+   - Core 0 acota el sondeo inicial TCP/MQTT (`<= 800 ms` de conexión al broker + `250 ms` de margen para el mensaje retenido `arcadematrix/showcase/{domain}/ready`) y publica los atómicos `m_turnEvaluated`, `m_readyStateReceived` y `m_hasReadyItem`.
+   - Cuando un dominio informa `ready: false` u `Offline` en una rotación con múltiples motores (`m_rotationSlotCount > 1`), Core 1 cede el turno en `0 ms` (`m_finished = true`) sin mostrar pantallas fugaces `"Connecting"`/`"Offline"` (otorgando un margen acotado de `350 ms` solo cuando `m_consecutiveWarmSkips > 0 && m_itemsPlayedInTurn == 0`). Los turnos multi-ítem (`itemsPlayedInTurn < rotationBudget`) también ceden en `0 ms` si el ítem `N + 1` no está ya pregenerado.
+2. **Descubrimiento Resiliente ante NAT Docker / Rancher y Respaldo `MQTT -> HTTP` en el Mismo Turno:**
+   - `ShowcaseDiscovery` emplea un TTL positivo de `120 s` (`5 s` de espera negativa), conserva la última IP válida en la lista de candidatos tras expirar el TTL, sondea dichos candidatos **primero** antes de recurrir a mDNS o al escaneo `/24`, y reduce el umbral mínimo de `scanLocalSubnet24()` a `6.144 B` para que los motores activos de 8 bits en `128x32` se recuperen ante cambios de IP sin bloquearse.
+   - Si Mosquitto (`:1883`) falla al conectar o se corta durante el turno (p. ej. Docker/Rancher Desktop reenviando `:8095` con `:1883` cerrado), `runWorkerLoop()` conmuta de forma transparente **en el mismo turno** de `acquireItemViaMqtt()` a `acquireItemViaHttp()` (`GET /api/v1/{domain}/ready` + `POST /api/v1/{domain}/next`).
+3. **Análisis JSON Filtrado en Flujo Continuo (Cero Descartes `> 8 KB`) y Póster Binario:**
+   - `RawMqttJsonReader` y `RawHttpJsonReader` combinan `DeserializationOption::Filter` de `ArduinoJson` con `ScratchSingleBlockAllocator` para analizar los sobres directamente desde el socket TCP omitiendo `poster_rgb565_b64` y drenando cualquier resto no leído, eliminando descartes silenciosos por encima de `8 KB`.
+   - Los pósteres RGB565 sin comprimir se descargan por HTTP (`GET /api/v1/{domain}/poster/{item_id}.rgb565`), se mantienen vivos durante toda `Phase::Card` (`900 ms` iniciales + desplazamiento completo de sinopsis + `700 ms` finales) y se liberan en Core 0 estrictamente después de presentar un fotograma negro limpio en `Phase::StreamBlank` (`m_blankPresentedSeq`).
+4. **Decodificación Core 1 Zero-Copy con `ScopedCanvasGuard` y Opcode `DMDZ` v2 `FRAME_PAL8` (`0x05`):**
+   - `MediaShowcaseBase::allowsOverlay()` devuelve `false` durante `Phase::StreamBlank` y `Phase::LiveStream` (manteniéndose `true` en `Phase::Card`), garantizando la invariancia entre cuadros del búfer lineal RGB565 `SRAM1` de `CanvasBufferedSurface`.
+   - Core 1 comprueba el vencimiento temporal y la disponibilidad de datos SPSC/preload antes de construir `ScopedCanvasGuard` (preservando el Invariante 17 `_dirty` en ciclos inactivos) y decodifica en el sitio los opcodes `DMDZ` v2 (`0x00..0x04` más `FRAME_PAL8` `0x05`, RLE indexado de 1..128 colores con scroll 2D opcional) con `0 B` de asignación `m_frame565` en paneles sin rotación (usando `m_frame565` asignado en Core 0 solo en geometrías rotadas). Si se acumula un retraso `> 2` cuadros, `m_nextFrameDueMs` se realinea suavemente sin ráfagas de cámara rápida.
+5. **Arquitectura de Streaming Adaptativo de 3 Niveles (`selectDmdzStreamProfile`):**
+   - **Nivel 1 (`profile="sram"`, `!m_hasPsram`):** Asigna un anillo SPSC sin bloqueos `DmdzSpscByteRing` (`10.240 B` cuando `free8 >= 20.480 B` post-asignación, si no `8.192 B`, escalando a `6.144 B` / `4.096 B`), preconecta el WebSocket (`v=2&credits=4&chunk=1360&profile=sram`) ~`300 ms` antes de finalizar `Phase::Card` mediante placement-new `ScratchSessionGuard` en `m_ioScratch`, y retiene créditos `'A'` cuando `spscRing.freeBytes() < 1.536 B && spscRing.size() > 0`.
+   - **Nivel 2 (`profile="psram"`, `m_hasPsram && W * H <= 8.192`):** Precarga el flujo `DMDZ` v2 completo (hasta `1,5 MB` / `1.572.864 B`) en `ps_malloc` durante `Phase::Card` vía HTTP bulk `GET /api/v1/{domain}/stream/{session_id}?purge=false&paced=0&codec=dmdz2&profile=psram`, reproduciendo 100% desde PSRAM con **cero tráfico Wi-Fi** durante `Phase::LiveStream` seguido de `notifyHttpStreamPurge` (`?purge=true`) (o respaldo a anillo WebSocket SPSC en PSRAM de `256 KB` si supera `1,5 MB`).
+   - **Nivel 3 (`profile="psram_hd"`, `m_hasPsram && W * H > 8.192`):** Descarga progresivamente bloques HTTP bulk (lecturas de socket de `16 KB`) en `ps_malloc` hasta `3,5 MB` (`3.670.016 B`, preservando `>= 2,5 MB` de PSRAM libre) desde `Phase::Card` mediante contadores atómicos `m_preloadBytesDownloaded` / `m_preloadComplete`, iniciando `Phase::LiveStream` justo tras la tarjeta (`>= 128 KB` o `>= 15` cuadros en búfer) mientras Core 0 completa la descarga en paralelo (o respaldo a anillo WebSocket SPSC en PSRAM de `768 KB` si supera `maxProgressiveBytes`).
+
 
 

@@ -991,6 +991,172 @@ void test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection() {
     TEST_ASSERT_EQUAL_MEMORY(expectedBody.data(), decoded.data(), expectedBody.size());
 }
 
+void test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate() {
+    // 1. Compact instance footprint invariant (`<= 1,600 B`)
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(1600U, static_cast<uint32_t>(sizeof(MediaShowcaseBase)));
+
+    class ZeroCopySurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        ZeroCopySurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 128 * 32; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 128U, 32U, 128U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    class ZeroCopyContext : public EngineContext {
+    public:
+        IDrawingSurface* surf = nullptr;
+        explicit ZeroCopyContext(IDrawingSurface* s) : surf(s) {}
+        IDrawingSurface* getSurface() override { return surf; }
+        FrontendSyncEngine* getEventBus() override { return nullptr; }
+        void getSystemTime(struct tm* t) override {
+            if (t) memset(t, 0, sizeof(*t));
+        }
+        DisplayGeometry getGeometry() const override {
+            DisplayGeometry g;
+            g.width = 128;
+            g.height = 32;
+            g.nativeWidth = 128;
+            g.nativeHeight = 32;
+            return g;
+        }
+    };
+
+    class ZeroCopyShowcaseProbe : public RetroGamesEngine {
+    public:
+        bool isZeroCopyEligible() const { return m_zeroCopyCanvasEligible.load(std::memory_order_acquire); }
+        bool hasEngineFrameBuffer() const { return m_frame565 != nullptr; }
+        void forceDropEngineFrameBuffer() {
+            if (m_frame565) {
+                free(m_frame565);
+                m_frame565 = nullptr;
+            }
+        }
+        void setPhaseForTest(uint8_t p) { m_phase.store(p, std::memory_order_release); }
+        void armZeroCopySpscPal8Frame(uint16_t fill565) {
+            TEST_ASSERT_TRUE(allocateSpscRingBuffer(4096U));
+            m_streamHeaderW = 128U;
+            m_streamHeaderH = 32U;
+            m_streamHeaderVersion = 2U;
+            m_streamHeaderIsDmdz = true;
+            m_streamTotalFrames = 1U;
+            m_streamFrameIntervalUs = 50000U;
+            m_core1StreamArmed = false;
+            m_core1DecPartialRem = 0U;
+            m_core1StreamFinished.store(false, std::memory_order_release);
+
+            // Encode 4,096 pixels (`64 * 64`) using `FRAME_PAL8` (`0x05`) 1-color + 64x `PAL_RUN(64)`
+            std::vector<uint8_t> wire;
+            const uint16_t payLen = 4U + 64U;
+            wire.push_back(static_cast<uint8_t>(payLen & 0xFFU));
+            wire.push_back(static_cast<uint8_t>(payLen >> 8));
+            wire.push_back(core::drawing::DmdzStreamDecoder::kFramePal8);
+            wire.push_back(0x00U); // 1 color, no 2D scroll
+            wire.push_back(static_cast<uint8_t>(fill565 & 0xFFU));
+            wire.push_back(static_cast<uint8_t>(fill565 >> 8));
+            for (int r = 0; r < 64; ++r) {
+                wire.push_back(0xFEU); // PAL_RUN 64
+            }
+            TEST_ASSERT_EQUAL_UINT32(wire.size(), static_cast<uint32_t>(m_spscRing.push(wire.data(), wire.size())));
+
+            m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::SpscRing), std::memory_order_release);
+            m_seq.fetch_add(1U, std::memory_order_acq_rel);
+            m_liveCard.hasVideoFrame = true;
+            m_seq.fetch_add(1U, std::memory_order_release);
+            m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+        }
+        void simulateWarmNotReadyOnMultiSlot() {
+            m_rotationSlotCount.store(3U, std::memory_order_relaxed);
+            m_turnEvaluated.store(false, std::memory_order_release);
+            m_hasReadyItem.store(false, std::memory_order_release);
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_skipTurnImmediately.store(false, std::memory_order_release);
+        }
+        void forceMultiSlotAfterUpdate() {
+            m_rotationSlotCount.store(3U, std::memory_order_relaxed);
+            if (m_readyStateReceived.load(std::memory_order_acquire) &&
+                !m_hasReadyItem.load(std::memory_order_acquire)) {
+                m_turnEvaluated.store(true, std::memory_order_release);
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+        }
+    };
+
+    ZeroCopySurface128x32 zSurf;
+    ZeroCopyContext zCtx(&zSurf);
+    ZeroCopyShowcaseProbe probe;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(probe.initialize(&zCtx, nullptr)));
+    probe.activate();
+    TEST_ASSERT_TRUE(probe.isZeroCopyEligible());
+
+    // 2. Dynamic `allowsOverlay()` contract: `true` in `Card` (0), `false` in `StreamBlank` (1) & `LiveStream` (2)
+    probe.setPhaseForTest(0U);
+    TEST_ASSERT_TRUE(probe.allowsOverlay());
+    probe.setPhaseForTest(1U);
+    TEST_ASSERT_FALSE(probe.allowsOverlay());
+    probe.setPhaseForTest(2U);
+    TEST_ASSERT_FALSE(probe.allowsOverlay());
+    probe.setPhaseForTest(0U);
+
+    // 3. Zero-Copy `ScopedCanvasGuard` in-place `FRAME_PAL8` decode (`m_frame565 == nullptr`!)
+    probe.forceDropEngineFrameBuffer();
+    TEST_ASSERT_FALSE(probe.hasEngineFrameBuffer());
+    probe.armZeroCopySpscPal8Frame(0xF81FU);
+    probe.update(&zCtx);
+    probe.render(&zCtx);
+    TEST_ASSERT_TRUE(probe.hasNewFrame());
+    TEST_ASSERT_EQUAL_UINT32(1U, zSurf.extDraws);
+    TEST_ASSERT_EQUAL_HEX16(0xF81FU, zSurf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0xF81FU, zSurf.pixels[128 * 32 - 1]);
+
+    // 4. RPi `turn_evaluated` readiness gate skips immediately (`isFinished() == true`) when warming on multi-slot
+    probe.simulateWarmNotReadyOnMultiSlot();
+    TEST_ASSERT_FALSE(probe.isFinished());
+    probe.forceMultiSlotAfterUpdate();
+    TEST_ASSERT_TRUE(probe.isFinished());
+
+    probe.deactivate();
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1010,6 +1176,7 @@ void setup() {
     RUN_TEST(test_normalize_mdns_endpoint_url_and_showcase_discovery_parsing);
     RUN_TEST(test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity);
     RUN_TEST(test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection);
+    RUN_TEST(test_media_showcase_compact_footprint_zero_copy_pal8_and_rpi_turn_gate);
     UNITY_END();
 }
 

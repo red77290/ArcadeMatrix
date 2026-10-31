@@ -55,6 +55,27 @@ bool applyVerticalScrollInPlace(uint16_t* frame565, uint16_t width, uint16_t hei
     return true;
 }
 
+bool applyScroll2DInPlace(uint16_t* frame565, uint16_t width, uint16_t height, int dx, int dy) {
+    const uint16_t absDx = static_cast<uint16_t>(dx >= 0 ? dx : -dx);
+    if (absDx >= width || !applyVerticalScrollInPlace(frame565, width, height, dy)) {
+        return false;
+    }
+    if (dx > 0) {
+        const size_t copyBytes = static_cast<size_t>(width - absDx) * sizeof(uint16_t);
+        for (uint16_t row = 0U; row < height; ++row) {
+            uint16_t* rowPtr = frame565 + static_cast<size_t>(row) * width;
+            memmove(rowPtr, rowPtr + absDx, copyBytes);
+        }
+    } else if (dx < 0) {
+        const size_t copyBytes = static_cast<size_t>(width - absDx) * sizeof(uint16_t);
+        for (uint16_t row = 0U; row < height; ++row) {
+            uint16_t* rowPtr = frame565 + static_cast<size_t>(row) * width;
+            memmove(rowPtr + absDx, rowPtr, copyBytes);
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool DmdzStreamDecoder::parseHeader(const uint8_t raw16[16], DmdzStreamHeader& out) {
@@ -92,10 +113,12 @@ void DmdzStreamDecoder::resetStream(uint16_t width, uint16_t height, uint8_t ver
     m_litRemaining = 0;
     m_loByte = 0;
     m_opHeader = 0;
+    m_palCount = 0;
+    m_palIdx = 0;
     m_scrollDx = 0;
     m_state = State::FrameType;
     m_error = (m_numPixels == 0U || version < kMinSupportedVersion || version > kMaxSupportedVersion);
-    memset(m_cache, 0, sizeof(m_cache));
+    memset(m_pal, 0, sizeof(m_pal));
 }
 
 bool DmdzStreamDecoder::beginFrame(uint16_t payloadLen) {
@@ -110,6 +133,8 @@ bool DmdzStreamDecoder::beginFrame(uint16_t payloadLen) {
     m_litRemaining = 0;
     m_loByte = 0;
     m_opHeader = 0;
+    m_palCount = 0;
+    m_palIdx = 0;
     m_scrollDx = 0;
     m_state = State::FrameType;
     m_error = false;
@@ -140,6 +165,8 @@ bool DmdzStreamDecoder::feed(const uint8_t* src, size_t len, uint16_t* frame565)
                         return false;
                     }
                     m_state = State::RawLo;
+                } else if (m_version >= 2U && b == kFramePal8) {
+                    m_state = State::PalHdr;
                 } else {
                     m_error = true;
                     return false;
@@ -163,23 +190,9 @@ bool DmdzStreamDecoder::feed(const uint8_t* src, size_t len, uint16_t* frame565)
             case State::Scroll2DDy: {
                 const int dx = static_cast<int>(m_scrollDx);
                 const int dy = static_cast<int>(static_cast<int8_t>(b));
-                const uint16_t absDx = static_cast<uint16_t>(dx >= 0 ? dx : -dx);
-                if (absDx >= m_width || !applyVerticalScrollInPlace(frame565, m_width, m_height, dy)) {
+                if (!applyScroll2DInPlace(frame565, m_width, m_height, dx, dy)) {
                     m_error = true;
                     return false;
-                }
-                if (dx > 0) {
-                    const size_t copyBytes = static_cast<size_t>(m_width - absDx) * sizeof(uint16_t);
-                    for (uint16_t row = 0U; row < m_height; ++row) {
-                        uint16_t* rowPtr = frame565 + static_cast<size_t>(row) * m_width;
-                        memmove(rowPtr, rowPtr + absDx, copyBytes);
-                    }
-                } else if (dx < 0) {
-                    const size_t copyBytes = static_cast<size_t>(m_width - absDx) * sizeof(uint16_t);
-                    for (uint16_t row = 0U; row < m_height; ++row) {
-                        uint16_t* rowPtr = frame565 + static_cast<size_t>(row) * m_width;
-                        memmove(rowPtr + absDx, rowPtr, copyBytes);
-                    }
                 }
                 m_state = State::Op;
                 break;
@@ -364,13 +377,100 @@ bool DmdzStreamDecoder::feed(const uint8_t* src, size_t len, uint16_t* frame565)
                 m_state = State::Op;
                 break;
             }
+            case State::PalHdr: {
+                const bool hasScroll2D = (b & 0x80U) != 0U;
+                m_palCount = static_cast<uint8_t>((b & 0x7FU) + 1U);
+                m_palIdx = 0U;
+                m_state = hasScroll2D ? State::PalScrollDx : State::PalTableLo;
+                break;
+            }
+            case State::PalScrollDx: {
+                m_scrollDx = static_cast<int8_t>(b);
+                m_state = State::PalScrollDy;
+                break;
+            }
+            case State::PalScrollDy: {
+                const int dx = static_cast<int>(m_scrollDx);
+                const int dy = static_cast<int>(static_cast<int8_t>(b));
+                if (!applyScroll2DInPlace(frame565, m_width, m_height, dx, dy)) {
+                    m_error = true;
+                    return false;
+                }
+                m_state = State::PalTableLo;
+                break;
+            }
+            case State::PalTableLo: {
+                m_loByte = b;
+                m_state = State::PalTableHi;
+                break;
+            }
+            case State::PalTableHi: {
+                m_pal[m_palIdx++] = static_cast<uint16_t>(m_loByte) | (static_cast<uint16_t>(b) << 8);
+                if (m_palIdx < m_palCount) {
+                    m_state = State::PalTableLo;
+                } else {
+                    m_last = m_pal[0];
+                    m_state = State::PalOp;
+                }
+                break;
+            }
+            case State::PalOp: {
+                if (b < 0x80U) {
+                    if (b >= m_palCount || m_pos >= m_numPixels) {
+                        m_error = true;
+                        return false;
+                    }
+                    const uint16_t p = m_pal[b];
+                    frame565[m_pos++] = p;
+                    m_last = p;
+                } else if (b <= 0xBFU) {
+                    const uint32_t count = static_cast<uint32_t>(b & 0x3FU) + 1U;
+                    if (m_pos + count > m_numPixels) {
+                        m_error = true;
+                        return false;
+                    }
+                    m_pos += count;
+                    m_last = frame565[m_pos - 1U];
+                } else if (b <= 0xFEU) {
+                    const uint32_t count = static_cast<uint32_t>(b - 0xC0U) + 2U;
+                    if (m_pos + count > m_numPixels) {
+                        m_error = true;
+                        return false;
+                    }
+                    for (uint32_t k = 0U; k < count; ++k) {
+                        frame565[m_pos++] = m_last;
+                    }
+                } else {
+                    m_state = State::PalLongSkipLo;
+                }
+                break;
+            }
+            case State::PalLongSkipLo: {
+                m_loByte = b;
+                m_state = State::PalLongSkipHi;
+                break;
+            }
+            case State::PalLongSkipHi: {
+                const uint32_t count = static_cast<uint32_t>(m_loByte) | (static_cast<uint32_t>(b) << 8);
+                if (count == 0U || m_pos + count > m_numPixels) {
+                    m_error = true;
+                    return false;
+                }
+                m_pos += count;
+                m_last = frame565[m_pos - 1U];
+                m_state = State::PalOp;
+                break;
+            }
         }
     }
     return true;
 }
 
 bool DmdzStreamDecoder::finishFrame() const {
-    return !m_error && (m_bytesRemaining == 0U) && (m_state == State::Op) && (m_pos == m_numPixels);
+    return !m_error &&
+           (m_bytesRemaining == 0U) &&
+           (m_state == State::Op || m_state == State::PalOp) &&
+           (m_pos == m_numPixels);
 }
 
 const uint8_t DmdzWsDemuxer::kMaskKey[4] = {0x37U, 0xFAU, 0x21U, 0x3DU};
@@ -402,7 +502,8 @@ bool buildDmdzWebSocketPath(
     size_t outCap,
     uint8_t credits,
     uint8_t codecVersion,
-    uint16_t chunkBytes
+    uint16_t chunkBytes,
+    const char* profile
 ) {
     if (!outWsPath || outCap == 0U) {
         return false;
@@ -480,11 +581,19 @@ bool buildDmdzWebSocketPath(
         snprintf(verChunkParam, sizeof(verChunkParam), "&chunk=%u", static_cast<unsigned>(clampedChunk));
     }
 
+    char profileParam[32] = "";
+    if (profile && profile[0] != '\0') {
+        const int pn = snprintf(profileParam, sizeof(profileParam), "&profile=%s", profile);
+        if (pn <= 0 || static_cast<size_t>(pn) >= sizeof(profileParam)) {
+            profileParam[0] = '\0';
+        }
+    }
+
     const int n = (clientId && clientId[0] != '\0')
         ? snprintf(
               outWsPath,
               outCap,
-              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s&client_id=%s%s%s%s",
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s&client_id=%s%s%s%s%s",
               static_cast<int>(domainLen),
               domainStart,
               static_cast<int>(itemLen),
@@ -493,12 +602,13 @@ bool buildDmdzWebSocketPath(
               clientId,
               creditsParam,
               verChunkParam,
-              apiKeyParam
+              apiKeyParam,
+              profileParam
           )
         : snprintf(
               outWsPath,
               outCap,
-              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s%s%s%s",
+              "/api/v1/%.*s/ws/%.*s.dmdz?purge=%s%s%s%s%s",
               static_cast<int>(domainLen),
               domainStart,
               static_cast<int>(itemLen),
@@ -506,7 +616,8 @@ bool buildDmdzWebSocketPath(
               purge ? "true" : "false",
               creditsParam,
               verChunkParam,
-              apiKeyParam
+              apiKeyParam,
+              profileParam
           );
     if (n <= 0 || static_cast<size_t>(n) >= outCap) {
         outWsPath[0] = '\0';

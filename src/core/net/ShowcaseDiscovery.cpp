@@ -77,6 +77,10 @@ struct CandidateRing {
     uint8_t count = 0;
 };
 
+static constexpr uint32_t kPositiveCacheTtlMs = 120000U;
+static constexpr uint32_t kNegativeScanBackoffMs = 5000U;
+static constexpr size_t kMinDiscoveryHeapFloorBytes = 6144U;
+
 CachedDiscoveryState s_cache;
 CandidateRing s_candidates;
 
@@ -111,6 +115,9 @@ void writeCache(const char* ip, uint16_t port, const char* version) {
     s_cache.resolvedAtMs = millis();
     s_cache.valid = (ip != nullptr && ip[0] != '\0');
     s_cache.seq.fetch_add(1, std::memory_order_release);
+    if (ip != nullptr && ip[0] != '\0') {
+        ShowcaseDiscovery::recordCandidateIpStr(ip);
+    }
 }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
@@ -372,11 +379,11 @@ bool tryCandidatePeers(uint16_t port, char* outIp, size_t ipCap, char* outVer, s
 
 bool scanLocalSubnet24(uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
     if (WiFi.status() != WL_CONNECTED) return false;
-    if (ESP.getFreeHeap() < 18432U) return false;
+    if (ESP.getFreeHeap() < kMinDiscoveryHeapFloorBytes) return false;
 
-    // Rate-limit negative full /24 sweeps to at most once every 12 seconds
+    // Rate-limit negative full /24 sweeps to at most once every 5 seconds (1:1 RPi parity)
     uint32_t lastScan = s_lastSubnetScanMs.load(std::memory_order_acquire);
-    if (lastScan != 0 && (millis() - lastScan) < 12000U) {
+    if (lastScan != 0 && (millis() - lastScan) < kNegativeScanBackoffMs) {
         return false;
     }
 
@@ -418,7 +425,7 @@ bool scanLocalSubnet24(uint16_t port, char* outIp, size_t ipCap, char* outVer, s
     bool found = false;
 
     for (size_t base = 0; base < orderLen && !found; base += BATCH_SOCKETS) {
-        if (WiFi.status() != WL_CONNECTED || ESP.getFreeHeap() < 16384U) break;
+        if (WiFi.status() != WL_CONNECTED || ESP.getFreeHeap() < kMinDiscoveryHeapFloorBytes) break;
 
         int fds[BATCH_SOCKETS] = {-1, -1, -1};
         uint8_t octets[BATCH_SOCKETS] = {0, 0, 0};
@@ -718,27 +725,23 @@ bool ShowcaseDiscovery::resolveHostInPlace(
     char cachedIp[24] = "";
     char ver[24] = "";
     uint16_t probePort = showcaseHttpPort > 0 ? showcaseHttpPort : 8890;
-    if (readCache(probePort, 180000U, cachedIp, sizeof(cachedIp), ver, sizeof(ver))) {
+    if (readCache(probePort, kPositiveCacheTtlMs, cachedIp, sizeof(cachedIp), ver, sizeof(ver))) {
         copySafe(hostBuf, hostCap, cachedIp);
         return true;
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
-    // Re-verify last-known-good cached IP first when 180s TTL expires (or retain it under low heap)
+    // Retain last-known-good IP if emergency heap floor is reached; otherwise ensure it is in `s_candidates`
+    // and probe `s_candidates` FIRST (WebUI browser Docker/Rancher host + MQTT broker + last healthy IP).
     char prevIp[24] = "";
     if (readCache(probePort, 86400000U, prevIp, sizeof(prevIp), ver, sizeof(ver))) {
-        if (ESP.getFreeHeap() < 8192U) {
+        if (ESP.getFreeHeap() < kMinDiscoveryHeapFloorBytes) {
             copySafe(hostBuf, hostCap, prevIp);
             return true;
         }
-        if (verifyShowcaseHealthHttp(prevIp, probePort, 280, ver, sizeof(ver))) {
-            writeCache(prevIp, probePort, ver);
-            copySafe(hostBuf, hostCap, prevIp);
-            return true;
-        }
+        recordCandidateIpStr(prevIp);
     }
 
-    // Probe recorded LAN peers (Docker/Rancher host on macOS/Windows) BEFORE 3.5s mDNS lookup
     if (tryCandidatePeers(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
         tryMdnsLookup(hostBuf, probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)) ||
         (allowSubnetScan && scanLocalSubnet24(probePort, cachedIp, sizeof(cachedIp), ver, sizeof(ver)))) {
@@ -784,7 +787,7 @@ bool ShowcaseDiscovery::resolveUrl(
 #if defined(ESP32) && !defined(UNIT_TEST)
         if (!forceRefresh) {
             char cachedIp[24] = "";
-            if (readCache(outPort, 180000U, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf)) &&
+            if (readCache(outPort, kPositiveCacheTtlMs, cachedIp, sizeof(cachedIp), verBuf, sizeof(verBuf)) &&
                 strcmp(cachedIp, outHost) == 0) {
                 outOnline = true;
                 if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
@@ -810,7 +813,7 @@ bool ShowcaseDiscovery::resolveUrl(
     }
 
     char discoveredIp[24] = "";
-    if (!forceRefresh && readCache(outPort, 180000U, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf))) {
+    if (!forceRefresh && readCache(outPort, kPositiveCacheTtlMs, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf))) {
         copySafe(outHost, hostCap, discoveredIp);
         if (outResolvedUrl && urlCap > 0) {
             snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
@@ -823,7 +826,7 @@ bool ShowcaseDiscovery::resolveUrl(
 #if defined(ESP32) && !defined(UNIT_TEST)
     char prevIp[24] = "";
     if (readCache(outPort, 86400000U, prevIp, sizeof(prevIp), verBuf, sizeof(verBuf))) {
-        if (!forceRefresh && ESP.getFreeHeap() < 8192U) {
+        if (!forceRefresh && ESP.getFreeHeap() < kMinDiscoveryHeapFloorBytes) {
             copySafe(outHost, hostCap, prevIp);
             if (outResolvedUrl && urlCap > 0) {
                 snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
@@ -832,22 +835,13 @@ bool ShowcaseDiscovery::resolveUrl(
             if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
             return true;
         }
-        if (verifyShowcaseHealthHttp(prevIp, outPort, 320, verBuf, sizeof(verBuf))) {
-            writeCache(prevIp, outPort, verBuf);
-            copySafe(outHost, hostCap, prevIp);
-            if (outResolvedUrl && urlCap > 0) {
-                snprintf(outResolvedUrl, urlCap, "%s://%s:%u", scheme, outHost, static_cast<unsigned>(outPort));
-            }
-            outOnline = true;
-            if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
-            return true;
-        }
+        recordCandidateIpStr(prevIp);
     }
     if (forceRefresh) {
         s_lastSubnetScanMs.store(0, std::memory_order_release);
     }
 
-    // Probe recorded LAN peers (Docker/Rancher host on macOS/Windows) BEFORE 3.5s mDNS lookup
+    // Probe `s_candidates` FIRST (WebUI browser client IPs + MQTT broker + last healthy Showcase IP)
     if (tryCandidatePeers(outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
         tryMdnsLookup(outHost, outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)) ||
         (allowSubnetScan && scanLocalSubnet24(outPort, discoveredIp, sizeof(discoveredIp), verBuf, sizeof(verBuf)))) {
@@ -946,7 +940,7 @@ bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRef
         if (!forceRefresh && act != NetworkBudget::DmdNetActivity::Idle) {
             return false;
         }
-        if (ESP.getFreeHeap() < 14336U || ESP.getMaxAllocHeap() < 4608U) {
+        if (ESP.getFreeHeap() < 10240U || ESP.getMaxAllocHeap() < 4608U) {
             return false;
         }
     } else if (ESP.getFreeHeap() < 16384U) {

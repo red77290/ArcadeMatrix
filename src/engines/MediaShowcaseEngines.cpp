@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <new>
 #if defined(ESP32)
 #include <esp_heap_caps.h>
 #if !defined(UNIT_TEST)
@@ -176,6 +177,227 @@ bool readExactFromStream(Stream& st, uint8_t* dst, size_t len, const std::atomic
     return true;
 }
 
+#if !defined(ESP32) || defined(UNIT_TEST) || defined(BOARD_HAS_PSRAM)
+#define SHOWCASE_SUPPORT_PSRAM_PRELOAD 1
+#else
+#define SHOWCASE_SUPPORT_PSRAM_PRELOAD 0
+#endif
+
+/**
+ * @brief Zero-heap `ArduinoJson` allocator backed by caller-owned `m_ioScratch`.
+ */
+struct ScratchSingleBlockAllocator {
+    void* buf = nullptr;
+    size_t cap = 0U;
+    bool used = false;
+
+    ScratchSingleBlockAllocator() = default;
+    ScratchSingleBlockAllocator(void* buffer, size_t capacity, bool initiallyUsed = false)
+        : buf(buffer), cap(capacity), used(initiallyUsed) {}
+
+    void* allocate(size_t size) {
+        if (!used && buf && size <= cap) {
+            used = true;
+            return buf;
+        }
+        return nullptr;
+    }
+
+    void deallocate(void* ptr) {
+        if (ptr == buf) {
+            used = false;
+        }
+    }
+
+    void* reallocate(void* ptr, size_t newSize) {
+        return (ptr == buf && newSize <= cap) ? buf : nullptr;
+    }
+};
+
+void extractShowcaseItemFromJson(
+    JsonObjectConst rootObj,
+    JsonObjectConst itemObj,
+    const char* domain,
+    const char* sessionId,
+    uint16_t panelW,
+    uint16_t panelH,
+    size_t posterCapBytes,
+    uint16_t fallbackAccent565,
+    engines::showcase::ShowcaseCardData& outCard,
+    char* outItemId,
+    size_t itemIdCap,
+    char* outPosterPath,
+    size_t posterPathCap,
+    char* outStreamPath,
+    size_t streamPathCap,
+    bool& outHasStream,
+    uint32_t& outStreamMaxMs
+) {
+    copySafeStr(outCard.title, sizeof(outCard.title), itemObj["title"] | "UNKNOWN");
+    copySafeStr(outCard.year, sizeof(outCard.year), itemObj["year"] | "");
+    copySafeStr(outCard.badge, sizeof(outCard.badge), itemObj["badge"] | domain);
+    copySafeStr(outCard.rating, sizeof(outCard.rating), itemObj["rating"] | "");
+    copySafeStr(outCard.synopsis, sizeof(outCard.synopsis), itemObj["synopsis"] | "");
+    outCard.badgeColor565 = parseHexColor565(itemObj["badge_color"] | nullptr, fallbackAccent565);
+    engines::showcase::ShowcaseCardRenderer::computeCardPosterDims(panelW, panelH, outCard.posterW, outCard.posterH);
+    const uint16_t srvPw = itemObj["poster_width"] | 0;
+    const uint16_t srvPh = itemObj["poster_height"] | 0;
+    if (srvPw > 0U && srvPh > 0U &&
+        (static_cast<size_t>(srvPw) * static_cast<size_t>(srvPh) * 2U) <= posterCapBytes) {
+        outCard.posterW = srvPw;
+        outCard.posterH = srvPh;
+    }
+    outCard.hasData = true;
+    outCard.hasPoster = false;
+    outCard.hasVideoFrame = false;
+
+    const char* rawItemId = rootObj["item_id"] | (itemObj["item_id"] | (itemObj["id"] | ""));
+    if (outItemId && itemIdCap > 0U) {
+        copySafeStr(outItemId, itemIdCap, rawItemId);
+    }
+
+    JsonObjectConst assetsObj = itemObj["assets"].as<JsonObjectConst>();
+    if (outPosterPath && posterPathCap > 0U) {
+        outPosterPath[0] = '\0';
+        const char* explicitPoster = assetsObj["poster_rgb565"] | (itemObj["poster_rgb565_url"] | "");
+        if (explicitPoster[0] != '\0') {
+            copySafeStr(outPosterPath, posterPathCap, explicitPoster);
+        } else if (rawItemId[0] != '\0' && sessionId && sessionId[0] != '\0') {
+            snprintf(
+                outPosterPath,
+                posterPathCap,
+                "/api/v1/%s/poster/%s.rgb565?client_id=%s",
+                domain,
+                rawItemId,
+                sessionId
+            );
+        }
+    }
+
+    const char* explicitStream = assetsObj["unified_stream_rgb565"] |
+                                 (rootObj["stream_url"] | (itemObj["stream_url"] | ""));
+    outHasStream = (explicitStream[0] != '\0') ||
+                   (itemObj["has_panoramas"] | false) ||
+                   (itemObj["has_video"] | false);
+    if (outStreamPath && streamPathCap > 0U) {
+        outStreamPath[0] = '\0';
+        if (explicitStream[0] != '\0') {
+            copySafeStr(outStreamPath, streamPathCap, explicitStream);
+        } else if (outHasStream && rawItemId[0] != '\0') {
+            snprintf(
+                outStreamPath,
+                streamPathCap,
+                "/api/v1/%s/stream/%s.rgb565.stream",
+                domain,
+                rawItemId
+            );
+        }
+    }
+
+    float totDur = itemObj["stream_duration_s"] |
+                   (itemObj["total_stream_duration_s"] | (itemObj["duration_s"] | 8.0f));
+    if (totDur < 2.0f) {
+        totDur = 2.0f;
+    }
+    outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+}
+
+void appendShowcaseCommonConfigJson(
+    char* dst,
+    size_t cap,
+    size_t& pos,
+    const char* sysCsv,
+    const char* genCsv,
+    const char* decCsv,
+    const char* videoType,
+    bool showPoster,
+    bool showSynopsis,
+    bool httpFieldNames,
+    const char* textScrollSpeed,
+    bool jacketPanorama,
+    bool marqueePanorama,
+    uint8_t snapshotPanoramaCount,
+    bool showVideo,
+    uint8_t videoMaxDurationS,
+    uint8_t effFps,
+    const char* videoMode,
+    const char* colorBoost
+) {
+    appendRawToBuf(dst, cap, pos, "\"systems\":");
+    appendCsvAsJsonArrayToBuf(dst, cap, pos, sysCsv);
+    appendRawToBuf(dst, cap, pos, ",\"genres\":");
+    appendCsvAsJsonArrayToBuf(dst, cap, pos, genCsv);
+    appendRawToBuf(dst, cap, pos, ",\"decades\":");
+    appendCsvAsJsonArrayToBuf(dst, cap, pos, decCsv);
+    appendRawToBuf(dst, cap, pos, ",\"video_type\":\"");
+    appendJsonEscapedToBuf(dst, cap, pos, videoType);
+    if (httpFieldNames) {
+        appendRawToBuf(dst, cap, pos, "\",\"include_poster\":false,\"include_synopsis\":");
+    } else {
+        appendRawToBuf(dst, cap, pos, "\",\"show_poster\":");
+        appendRawToBuf(dst, cap, pos, showPoster ? "true" : "false");
+        appendRawToBuf(dst, cap, pos, ",\"show_synopsis\":");
+    }
+    appendRawToBuf(dst, cap, pos, showSynopsis ? "true" : "false");
+    appendRawToBuf(dst, cap, pos, ",\"text_scroll_speed\":\"");
+    appendJsonEscapedToBuf(dst, cap, pos, textScrollSpeed);
+    appendRawToBuf(dst, cap, pos, "\",\"jacket_panorama\":");
+    appendRawToBuf(dst, cap, pos, jacketPanorama ? "true" : "false");
+    appendRawToBuf(dst, cap, pos, ",\"marquee_panorama\":");
+    appendRawToBuf(dst, cap, pos, marqueePanorama ? "true" : "false");
+    appendRawToBuf(dst, cap, pos, ",\"snapshot_panorama_count\":");
+    appendUintToBuf(dst, cap, pos, snapshotPanoramaCount);
+    appendRawToBuf(dst, cap, pos, ",\"show_video\":");
+    appendRawToBuf(dst, cap, pos, showVideo ? "true" : "false");
+    appendRawToBuf(dst, cap, pos, ",\"video_max_duration_s\":");
+    appendUintToBuf(dst, cap, pos, videoMaxDurationS);
+    appendRawToBuf(dst, cap, pos, ",\"video_fps\":");
+    appendUintToBuf(dst, cap, pos, effFps);
+    appendRawToBuf(dst, cap, pos, ",\"video_mode\":\"");
+    appendJsonEscapedToBuf(dst, cap, pos, videoMode);
+    appendRawToBuf(dst, cap, pos, "\",\"color_boost\":\"");
+    appendJsonEscapedToBuf(dst, cap, pos, colorBoost);
+    appendCharToBuf(dst, cap, pos, '"');
+}
+
+void populateShowcaseItemSubFilter(JsonObject obj) {
+    obj["id"] = true;
+    obj["item_id"] = true;
+    obj["title"] = true;
+    obj["year"] = true;
+    obj["badge"] = true;
+    obj["badge_color"] = true;
+    obj["rating"] = true;
+    obj["synopsis"] = true;
+    obj["poster_width"] = true;
+    obj["poster_height"] = true;
+    obj["poster_rgb565_url"] = true;
+    obj["has_panoramas"] = true;
+    obj["has_video"] = true;
+    obj["stream_duration_s"] = true;
+    obj["total_stream_duration_s"] = true;
+    obj["duration_s"] = true;
+    obj["stream_url"] = true;
+    JsonObject assets = obj.createNestedObject("assets");
+    assets["poster_rgb565"] = true;
+    assets["unified_stream_rgb565"] = true;
+}
+
+void buildShowcaseMqttReadyFilter(JsonDocument& filter) {
+    filter.clear();
+    filter["ready"] = true;
+    filter["item_id"] = true;
+    filter["stream_url"] = true;
+    populateShowcaseItemSubFilter(filter.createNestedObject("card"));
+}
+
+void buildShowcaseHttpNextFilter(JsonDocument& filter) {
+    filter.clear();
+    filter["status"] = true;
+    filter["item_id"] = true;
+    populateShowcaseItemSubFilter(filter.createNestedObject("item"));
+}
+
 #if defined(ESP32)
 inline size_t showcaseFree8BitHeap() {
     return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -189,12 +411,42 @@ inline bool shouldYieldShowcaseToWebUi(bool hasPsram) {
     return !hasPsram && WebUiSyncEngine::isRequested();
 }
 #else
+inline size_t showcaseFree8BitHeap() {
+    return 131072U;
+}
+
+inline size_t showcaseLargest8BitBlock() {
+    return 65536U;
+}
+
 inline bool shouldYieldShowcaseToWebUi(bool) {
     return false;
 }
 #endif
 
-void initShowcaseCommonDescriptor(EngineDescriptor& desc, const char* id, const char* name, const char* category) {
+static constexpr FieldTableEntry kCommonShowcaseFields[] = {
+    ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width cover/poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the marquee or backdrop banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional stills/snapshots to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
+    ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
+    ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "20", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
+    ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
+    ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault)
+};
+
+void initShowcaseCommonDescriptor(
+    EngineDescriptor& desc,
+    const char* id,
+    const char* name,
+    const char* category,
+    const FieldTableEntry* extraFields,
+    size_t extraCount
+) {
     desc.metadata = {id, name, category, FIRMWARE_VERSION};
     desc.capabilities.realtime = true;
     desc.capabilities.supports_128x32 = true;
@@ -213,6 +465,22 @@ void initShowcaseCommonDescriptor(EngineDescriptor& desc, const char* id, const 
     desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
     desc.requirements.scalesRgb565FrameWithGeometry = true;
+
+    constexpr size_t kCommonCount = sizeof(kCommonShowcaseFields) / sizeof(kCommonShowcaseFields[0]);
+    desc.schema.fields.reserve(kCommonCount + extraCount);
+    desc.schema.fields.assign(kCommonShowcaseFields, kCommonShowcaseFields + kCommonCount);
+    if (extraFields && extraCount > 0U) {
+        desc.schema.fields.insert(desc.schema.fields.end(), extraFields, extraFields + extraCount);
+    }
+}
+
+void copyCfgFieldCStr(const EngineConfig* cfg, const char* key, const char* defVal, char* dst, size_t cap, bool csvTokens = false) {
+    String val = cfg->getString(key, defVal);
+    if (csvTokens) {
+        MediaShowcaseBase::copySafeCsvTokens(dst, cap, val.c_str());
+    } else {
+        copySafeStr(dst, cap, val.c_str());
+    }
 }
 
 } // namespace
@@ -220,6 +488,8 @@ void initShowcaseCommonDescriptor(EngineDescriptor& desc, const char* id, const 
 MediaShowcaseBase::MediaShowcaseBase(ShowcaseDomainId domain) : m_domain(domain) {
     const char* slug = domainSlug();
     net::ShowcaseDiscovery::formatClientId(slug, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
+    m_cfgStreamBaseMs.store(configuredMaxStreamMs(m_cfg), std::memory_order_relaxed);
+    m_cfgSynopsisSpeedPx.store(static_cast<uint16_t>(synopsisPxPerSec(m_cfg.textScrollSpeed)), std::memory_order_relaxed);
     m_liveCard.badgeColor565 = defaultAccent565();
     m_liveCard.hasData = false;
     m_renderCard = m_liveCard;
@@ -227,9 +497,42 @@ MediaShowcaseBase::MediaShowcaseBase(ShowcaseDomainId domain) : m_domain(domain)
 
 MediaShowcaseBase::~MediaShowcaseBase() {
     shutdownForDestruction();
+    if (m_cfgExtras) {
+        free(m_cfgExtras);
+        m_cfgExtras = nullptr;
+    }
 }
 
-bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort) {
+void MediaShowcaseBase::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    uint16_t newW = geometry.width > 0 ? geometry.width : 128;
+    uint16_t newH = geometry.height > 0 ? geometry.height : 32;
+    if (newW != m_width || newH != m_height) {
+        m_width = newW;
+        m_height = newH;
+        m_lastPublishedCfgGen = 0;
+        m_turnEvaluated.store(false, std::memory_order_release);
+        m_readyStateReceived.store(false, std::memory_order_release);
+        m_hasReadyItem.store(false, std::memory_order_release);
+        m_mqttConnectedAtMs.store(0U, std::memory_order_release);
+        m_skipTurnImmediately.store(false, std::memory_order_release);
+        m_turnDone.store(false, std::memory_order_release);
+        m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+        clearLiveCardState();
+        m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (geometry.rotation != 0U) {
+        m_zeroCopyCanvasEligible.store(false, std::memory_order_release);
+    }
+    m_dirty = true;
+}
+
+bool MediaShowcaseBase::resolveMqttBroker(
+    const ConfigSlot& cfg,
+    const ConfigExtras* extras,
+    char* outHost,
+    size_t hostCap,
+    uint16_t& outPort
+) {
     uint16_t showcasePort = 8890;
     char showcaseHost[64] = "";
     bool hasServerUrl = net::parseEndpointHostAndPort(cfg.serverUrl, 8890, showcaseHost, sizeof(showcaseHost), showcasePort);
@@ -245,16 +548,18 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
         outPort = 1883;
         return true;
     }
-    if (strcasecmp(cfg.mqttBrokerSource, "custom") == 0 && cfg.mqttCustomUrl[0] != '\0') {
-        if (net::parseEndpointHostAndPort(cfg.mqttCustomUrl, 1883, outHost, hostCap, outPort)) {
+    const char* customUrl = extras ? extras->mqttCustomUrl : "";
+    if (strcasecmp(cfg.mqttBrokerSource, "custom") == 0 && customUrl[0] != '\0') {
+        if (net::parseEndpointHostAndPort(customUrl, 1883, outHost, hostCap, outPort)) {
             if (net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
                 return true;
             }
             return false;
         }
     }
-    if (cfg.globalMqttHost[0] != '\0') {
-        copySafeStr(outHost, hostCap, cfg.globalMqttHost);
+    const char* globalHost = extras ? extras->globalMqttHost : "";
+    if (globalHost[0] != '\0') {
+        copySafeStr(outHost, hostCap, globalHost);
         if (!net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true)) {
             return false;
         }
@@ -272,6 +577,24 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
     return false;
 }
 
+void MediaShowcaseBase::probeZeroCopyCanvasEligibility() {
+    bool eligible = false;
+    if (m_surface &&
+        m_surface->hasCanvas() &&
+        m_surface->getRotation() == 0 &&
+        m_surface->physicalWidth() == static_cast<int16_t>(m_width) &&
+        m_surface->physicalHeight() == static_cast<int16_t>(m_height)) {
+        ScopedCanvasGuard probe(m_surface);
+        if (probe.isValid() &&
+            probe.width() == m_width &&
+            probe.height() == m_height &&
+            (probe.stridePixels() == 0U || probe.stridePixels() == m_width)) {
+            eligible = true;
+        }
+    }
+    m_zeroCopyCanvasEligible.store(eligible, std::memory_order_release);
+}
+
 bool MediaShowcaseBase::allocateBuffers() {
     freeBuffers();
     uint16_t posterW = 32;
@@ -281,123 +604,86 @@ bool MediaShowcaseBase::allocateBuffers() {
     if (posterBytes == 0U) posterBytes = 32U * 32U * sizeof(uint16_t);
 
     m_framePixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
-    size_t frameBytes = m_framePixels * sizeof(uint16_t);
+    m_posterAliasesFrame = false;
 
 #if defined(ESP32)
     m_hasPsram = hardwareHAL.capabilities().hasPsram;
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
     if (m_hasPsram) {
         m_poster565 = static_cast<uint16_t*>(heap_caps_malloc(posterBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_frame565Back = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        m_psramMqttRx = static_cast<char*>(heap_caps_malloc(PSRAM_MQTT_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_ioScratch = static_cast<char*>(heap_caps_malloc(PSRAM_IO_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         if (m_ioScratch) {
             m_ioScratchCap = PSRAM_IO_SCRATCH_BYTES;
         } else {
             m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
-            if (m_ioScratch) {
-                m_ioScratchCap = IO_SCRATCH_BYTES;
-            } else {
-                m_ioScratch = static_cast<char*>(malloc(MIN_IO_SCRATCH_BYTES));
-                m_ioScratchCap = m_ioScratch ? MIN_IO_SCRATCH_BYTES : 0U;
-            }
+            m_ioScratchCap = m_ioScratch ? IO_SCRATCH_BYTES : 0U;
+        }
+        void* decMem = heap_caps_malloc(sizeof(core::drawing::DmdzStreamDecoder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!decMem) {
+            decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
+        }
+        if (decMem) {
+            m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
         }
         if (!m_poster565) {
             m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
         }
-        if (!m_frame565) {
-            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-        }
-    } else {
-        m_frame565 = nullptr;
-        m_frame565Back = nullptr;
-        m_posterAliasesFrame = false;
-        const size_t free8 = showcaseFree8BitHeap();
-
-        // Allocate the largest contiguous buffer (`m_frame565` = `8 KB` on `128x32`) FIRST so
-        // `m_ioScratch` can never split a tight largest block (`~12.7 KB`), then size the circular
-        // `StreamByteRing` up to `6 KB` (`4 x 1,360 B` full-MSS sliding window) according to free SRAM.
-        if (frameBytes >= posterBytes &&
-            frameBytes <= 16384U &&
-            showcaseLargest8BitBlock() >= frameBytes &&
-            free8 >= (frameBytes + MIN_IO_SCRATCH_BYTES + 5632U)) {
-            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+        if (!m_zeroCopyCanvasEligible.load(std::memory_order_acquire)) {
+            const size_t frameBytes = m_framePixels * sizeof(uint16_t);
+            m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (m_frame565) {
-                const size_t postFrameFree8 = showcaseFree8BitHeap();
-                const size_t scratchCandidates[5] = {
-                    IO_SCRATCH_BYTES,
-                    MID_IO_SCRATCH_BYTES,
-                    FALLBACK_IO_SCRATCH_BYTES,
-                    LOW_IO_SCRATCH_BYTES,
-                    MIN_IO_SCRATCH_BYTES
-                };
-                const size_t postFrameHeadroom[5] = {9216U, 8192U, 7168U, 6144U, 5632U};
-                for (size_t i = 0U; i < 5U && !m_ioScratch; ++i) {
-                    const size_t cand = scratchCandidates[i];
-                    if (postFrameFree8 >= (cand + postFrameHeadroom[i])) {
-                        m_ioScratch = static_cast<char*>(malloc(cand));
-                        if (m_ioScratch) {
-                            m_ioScratchCap = cand;
-                        }
-                    }
-                }
+                memset(m_frame565, 0, frameBytes);
+            }
+        }
+    } else
+#endif
+    {
+        const size_t free8 = showcaseFree8BitHeap();
+        const size_t scratchCandidates[3] = {
+            IO_SCRATCH_BYTES,
+            FALLBACK_IO_SCRATCH_BYTES,
+            MIN_IO_SCRATCH_BYTES
+        };
+        const size_t headroom[3] = {16384U, 8192U, 0U};
+        for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
+            const size_t cand = scratchCandidates[i];
+            if (headroom[i] == 0U || free8 >= (posterBytes + cand + headroom[i])) {
+                m_ioScratch = static_cast<char*>(malloc(cand));
                 if (m_ioScratch) {
-                    m_poster565 = m_frame565;
-                    m_posterAliasesFrame = true;
-                } else {
-                    free(m_frame565);
-                    m_frame565 = nullptr;
+                    m_ioScratchCap = cand;
                 }
             }
         }
-
-        if (!m_poster565) {
-            const size_t fallbackScratch[3] = {
-                FALLBACK_IO_SCRATCH_BYTES,
-                LOW_IO_SCRATCH_BYTES,
-                MIN_IO_SCRATCH_BYTES
-            };
-            const size_t headroomCandidates[3] = {4096U, 3072U, 0U};
-            for (size_t i = 0U; i < 3U && !m_ioScratch; ++i) {
-                const size_t cand = fallbackScratch[i];
-                if (headroomCandidates[i] == 0U || free8 >= (posterBytes + cand + headroomCandidates[i])) {
-                    m_ioScratch = static_cast<char*>(malloc(cand));
-                    if (m_ioScratch) {
-                        m_ioScratchCap = cand;
-                    }
-                }
-            }
-            m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+        void* decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
+        if (decMem) {
+            m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
         }
+        m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     }
 #else
     m_hasPsram = true;
+    const size_t frameBytes = m_framePixels * sizeof(uint16_t);
     m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
-    m_frame565Back = static_cast<uint16_t*>(malloc(frameBytes));
-    m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
-    m_posterAliasesFrame = false;
-    m_ioScratch = static_cast<char*>(malloc(PSRAM_IO_SCRATCH_BYTES));
-    m_ioScratchCap = m_ioScratch ? PSRAM_IO_SCRATCH_BYTES : 0U;
-    m_psramMqttRx = static_cast<char*>(malloc(PSRAM_MQTT_RX_BYTES));
-#endif
-
     if (m_frame565) {
         memset(m_frame565, 0, frameBytes);
     }
-    if (m_frame565Back) {
-        memset(m_frame565Back, 0, frameBytes);
+    m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+    m_ioScratch = static_cast<char*>(malloc(PSRAM_IO_SCRATCH_BYTES));
+    m_ioScratchCap = m_ioScratch ? PSRAM_IO_SCRATCH_BYTES : 0U;
+    void* decMem = malloc(sizeof(core::drawing::DmdzStreamDecoder));
+    if (decMem) {
+        m_core1Decoder = new (decMem) core::drawing::DmdzStreamDecoder();
     }
+#endif
+
     m_posterCapBytes = posterBytes;
-    if (m_poster565 && !m_posterAliasesFrame) {
+    if (m_poster565) {
         memset(m_poster565, 0, posterBytes);
     }
     if (m_ioScratch) {
         m_ioScratch[0] = '\0';
     }
-    if (m_psramMqttRx) {
-        m_psramMqttRx[0] = '\0';
-    }
-    return (m_poster565 != nullptr);
+    return (m_poster565 != nullptr && m_ioScratch != nullptr);
 }
 
 void MediaShowcaseBase::waitRenderBlitQuiescent() const {
@@ -422,13 +708,28 @@ void MediaShowcaseBase::blankCardBeforeStream() {
     while (m_wantActive.load(std::memory_order_acquire) &&
            !shouldYieldShowcaseToWebUi(m_hasPsram) &&
            m_blankPresentedSeq.load(std::memory_order_acquire) == prevBlank &&
-           (millis() - t0) < 35U) {
+           (millis() - t0) < 40U) {
         vTaskDelay(1);
     }
 #else
     (void)prevBlank;
 #endif
     waitRenderBlitQuiescent();
+}
+
+void MediaShowcaseBase::freePosterAfterBlank() {
+    blankCardBeforeStream();
+    if (m_liveCard.hasPoster) {
+        m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        m_liveCard.hasPoster = false;
+        m_seq.fetch_add(1U, std::memory_order_release);
+    }
+    if (m_poster565 && !m_posterAliasesFrame) {
+        uint16_t* oldPoster = m_poster565;
+        m_poster565 = nullptr;
+        waitRenderBlitQuiescent();
+        free(oldPoster);
+    }
 }
 
 bool MediaShowcaseBase::acquireStepCFrameBuffer() {
@@ -441,27 +742,22 @@ bool MediaShowcaseBase::acquireStepCFrameBuffer() {
     }
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!m_hasPsram && m_poster565 != nullptr && !m_posterAliasesFrame) {
-        // Clear the entire Card display to black BEFORE reclaiming `m_poster565` so the jacket
-        // never visibly disappears inside a still-rendered Info Card.
-        blankCardBeforeStream();
-        if (m_liveCard.hasPoster) {
-            m_seq.fetch_add(1U, std::memory_order_acq_rel);
-            m_liveCard.hasPoster = false;
-            m_seq.fetch_add(1U, std::memory_order_release);
-        }
-        uint16_t* oldPoster = m_poster565;
-        m_poster565 = nullptr;
-        waitRenderBlitQuiescent();
-        free(oldPoster);
+        freePosterAfterBlank();
     }
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    if (m_hasPsram) {
+        uint16_t* pBuf = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (pBuf) {
+            memset(pBuf, 0, frameBytes);
+            m_frame565 = pBuf;
+            return true;
+        }
+    }
+#endif
     if (!m_hasPsram &&
         (frameBytes > 16384U ||
          showcaseFree8BitHeap() < (frameBytes + 2560U) ||
          showcaseLargest8BitBlock() < frameBytes)) {
-        LOGW("Showcase", "Step C frame buffer skipped (%u B): free8=%u largest8=%u",
-             static_cast<unsigned>(frameBytes),
-             static_cast<unsigned>(showcaseFree8BitHeap()),
-             static_cast<unsigned>(showcaseLargest8BitBlock()));
         return false;
     }
 #endif
@@ -496,22 +792,86 @@ void MediaShowcaseBase::releaseStepCFrameBuffer() {
     if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
         m_frameSeq.fetch_add(1, std::memory_order_release);
     }
-    if (m_wantActive.load(std::memory_order_acquire) &&
-        !m_poster565 &&
-        !m_posterAliasesFrame &&
-        m_posterCapBytes > 0U) {
-        m_poster565 = static_cast<uint16_t*>(malloc(m_posterCapBytes));
-        if (m_poster565) {
-            memset(m_poster565, 0, m_posterCapBytes);
+}
+
+bool MediaShowcaseBase::allocateSpscRingBuffer(size_t preferredBytes) {
+    freeSpscRingBuffer();
+#if defined(ESP32)
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    if (m_hasPsram) {
+        uint8_t* psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!psBuf && preferredBytes > 65536U) {
+            preferredBytes = 65536U;
+            psBuf = static_cast<uint8_t*>(heap_caps_malloc(preferredBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         }
+        if (!psBuf) {
+            return false;
+        }
+        m_spscRingStorage = psBuf;
+        m_spscRing.init(psBuf, preferredBytes);
+        return true;
+    }
+#endif
+
+    // Tier 1 (`profile="sram"`): try `10,240 B` keeping `>= 20 KB` free 8-bit heap for `esp_wifi`/lwIP,
+    // else `8,192 B`, else `6,144 B` / `4,096 B` step-down.
+    const size_t candidates[4] = {
+        SRAM_SPSC_HI_RING_BYTES,
+        SRAM_SPSC_DEFAULT_RING_BYTES,
+        SRAM_SPSC_LOW_RING_BYTES,
+        SRAM_SPSC_MIN_RING_BYTES
+    };
+    const size_t postAllocMinFree8[4] = {
+        20480U,
+        14336U,
+        10240U,
+        6144U
+    };
+    for (size_t i = 0U; i < 4U; ++i) {
+        const size_t cand = candidates[i];
+        if (cand > preferredBytes && i == 0U && preferredBytes > 0U) {
+            continue;
+        }
+        if (showcaseLargest8BitBlock() < cand) {
+            continue;
+        }
+        uint8_t* mem = static_cast<uint8_t*>(malloc(cand));
+        if (!mem) {
+            continue;
+        }
+        if (showcaseFree8BitHeap() >= postAllocMinFree8[i]) {
+            m_spscRingStorage = mem;
+            m_spscRing.init(mem, cand);
+            return true;
+        }
+        free(mem);
+    }
+    return false;
+#else
+    uint8_t* mem = static_cast<uint8_t*>(malloc(preferredBytes));
+    if (!mem) {
+        return false;
+    }
+    m_spscRingStorage = mem;
+    m_spscRing.init(mem, preferredBytes);
+    return true;
+#endif
+}
+
+void MediaShowcaseBase::freeSpscRingBuffer() {
+    m_spscRing.init(nullptr, 0U);
+    if (m_spscRingStorage) {
+        free(m_spscRingStorage);
+        m_spscRingStorage = nullptr;
     }
 }
 
 void MediaShowcaseBase::freeBuffers() {
+    resetCore1StreamState();
     m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
     waitRenderBlitQuiescent();
-    // Free transient upper-heap buffers before `m_ioScratch` to preserve LIFO TLSF coalescing.
+    freeSpscRingBuffer();
     if (m_frame565Back) {
         free(m_frame565Back);
         m_frame565Back = nullptr;
@@ -527,9 +887,10 @@ void MediaShowcaseBase::freeBuffers() {
         m_poster565 = nullptr;
     }
     m_posterAliasesFrame = false;
-    if (m_psramMqttRx) {
-        free(m_psramMqttRx);
-        m_psramMqttRx = nullptr;
+    if (m_core1Decoder) {
+        m_core1Decoder->~DmdzStreamDecoder();
+        free(m_core1Decoder);
+        m_core1Decoder = nullptr;
     }
     if (m_ioScratch) {
         free(m_ioScratch);
@@ -540,10 +901,25 @@ void MediaShowcaseBase::freeBuffers() {
     m_framePixels = 0U;
 }
 
+void MediaShowcaseBase::resetCore1StreamState() {
+    m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
+    m_preloadReadPtr = nullptr;
+    m_preloadBytesDownloaded.store(0U, std::memory_order_release);
+    m_preloadComplete.store(false, std::memory_order_release);
+    m_core1StreamFinished.store(false, std::memory_order_release);
+    m_core1PreloadOffset = 16U;
+    m_core1PreloadFrameIdx = 0U;
+    m_core1NextFrameDueUs = 0U;
+    m_core1DecPartialRem = 0U;
+    m_core1StreamArmed = false;
+}
+
 void MediaShowcaseBase::clearLiveCardState() {
+    resetCore1StreamState();
     m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
     m_activeItemStreamMaxMs.store(0U, std::memory_order_relaxed);
     m_publishedFramePtr.store(nullptr, std::memory_order_release);
+    m_hasReadyItem.store(false, std::memory_order_release);
     if (m_phase.load(std::memory_order_relaxed) != static_cast<uint8_t>(Phase::Card)) {
         m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
     }
@@ -561,7 +937,7 @@ void MediaShowcaseBase::clearLiveCardState() {
     m_renderCard.hasVideoFrame = false;
 }
 
-EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineConfig* config) {
+EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineConfig* cfg) {
     if (!context || !context->getSurface()) {
         return EngineError::InitializationFailed;
     }
@@ -571,8 +947,13 @@ EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineCo
     m_height = geom.height > 0 ? geom.height : 32;
     net::ShowcaseDiscovery::formatClientId(domainSlug(), m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
-    if (config) {
-        onConfigChanged(config);
+    {
+        ConfigSnapshotGuard guard = ::config.acquireSnapshot();
+        m_rotationSlotCount.store(static_cast<uint8_t>(guard.get().rotation.size()), std::memory_order_relaxed);
+    }
+
+    if (cfg) {
+        onConfigChanged(cfg);
     }
     return EngineError::OK;
 }
@@ -609,97 +990,175 @@ void MediaShowcaseBase::copySafeCsvTokens(char* dst, size_t cap, const char* src
     }
 }
 
-void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
-    if (!config) return;
-    uint8_t cur = m_cfgIdx.load(std::memory_order_relaxed);
-    uint8_t next = (cur + 1U) & 1U;
-    ConfigSlot& slot = m_cfg[next];
+void MediaShowcaseBase::onConfigChanged(const EngineConfig* cfg) {
+    if (!cfg) return;
+
+    const bool wasActive = m_wantActive.load(std::memory_order_acquire);
+    if (wasActive) {
+        m_wantActive.store(false, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SHOWCASE);
+        stopWorkerTaskBounded(1500);
+    }
+
+    ConfigSlot nextSlot;
+    char nextCustomUrl[MAX_URL_LEN] = "";
+    char nextGlobalHost[64] = "";
+    char nextSystems[MAX_SYSTEMS_FILTER_LEN] = "";
+    char nextGenres[MAX_FILTER_LEN] = "";
+    char nextDecades[MAX_FILTER_LEN] = "";
 
     {
         ConfigSnapshotGuard guard = ::config.acquireSnapshot();
         const auto& snap = guard.get();
         const auto& sc = snap.showcase;
+        m_rotationSlotCount.store(static_cast<uint8_t>(snap.rotation.size()), std::memory_order_relaxed);
 
-        slot.enabled = sc.enabled;
-        String srv = sc.server_url;
+        nextSlot.enabled = sc.enabled;
+        String srv = sc.server_url.isEmpty()
+            ? cfg->getString("server_url", "http://dmdmediashowcase.local:8890")
+            : sc.server_url;
         srv.trim();
         if (srv.isEmpty()) {
-            srv = config->getString("server_url", "http://dmdmediashowcase.local:8890");
+            srv = "http://dmdmediashowcase.local:8890";
         }
         srv = normalizeMdnsEndpointUrl(srv, true);
-        copySafeStr(slot.serverUrl, sizeof(slot.serverUrl), srv.c_str());
+        copySafeStr(nextSlot.serverUrl, sizeof(nextSlot.serverUrl), srv.c_str());
 
-        String rawMode = sc.transport_mode.isEmpty() ? config->getString("transport_mode", "mqtt_tcp") : sc.transport_mode;
-        String tMode = normalizeShowcaseTransportMode(rawMode);
-        copySafeStr(slot.transportMode, sizeof(slot.transportMode), tMode.c_str());
+        {
+            const String tMode = normalizeShowcaseTransportMode(
+                sc.transport_mode.isEmpty() ? cfg->getString("transport_mode", "mqtt_tcp") : sc.transport_mode
+            );
+            copySafeStr(nextSlot.transportMode, sizeof(nextSlot.transportMode), tMode.c_str());
+        }
 
-        slot.useShowcaseBroker = sc.server_url.isEmpty() ? config->getBool("use_showcase_broker", true) : sc.use_showcase_broker;
+        nextSlot.useShowcaseBroker = sc.server_url.isEmpty() ? cfg->getBool("use_showcase_broker", true) : sc.use_showcase_broker;
 
-        String bSource = sc.mqtt_broker_source.isEmpty() ? config->getString("mqtt_broker_source", "global") : sc.mqtt_broker_source;
-        copySafeStr(slot.mqttBrokerSource, sizeof(slot.mqttBrokerSource), bSource.c_str());
+        if (!sc.mqtt_broker_source.isEmpty()) {
+            copySafeStr(nextSlot.mqttBrokerSource, sizeof(nextSlot.mqttBrokerSource), sc.mqtt_broker_source.c_str());
+        } else {
+            copyCfgFieldCStr(cfg, "mqtt_broker_source", "global", nextSlot.mqttBrokerSource, sizeof(nextSlot.mqttBrokerSource));
+        }
 
-        String cUrl = sc.mqtt_custom_url.isEmpty() ? config->getString("mqtt_custom_url", "") : sc.mqtt_custom_url;
-        cUrl = normalizeMdnsEndpointUrl(cUrl, false);
-        copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), cUrl.c_str());
+        {
+            const String cUrl = normalizeMdnsEndpointUrl(
+                sc.mqtt_custom_url.isEmpty() ? cfg->getString("mqtt_custom_url", "") : sc.mqtt_custom_url,
+                false
+            );
+            copySafeStr(nextCustomUrl, sizeof(nextCustomUrl), cUrl.c_str());
+        }
 
-        copySafeStr(slot.globalMqttHost, sizeof(slot.globalMqttHost), snap.mqtt.broker.c_str());
-        slot.globalMqttPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
+        copySafeStr(nextGlobalHost, sizeof(nextGlobalHost), snap.mqtt.broker.c_str());
+        nextSlot.globalMqttPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
             ? static_cast<uint16_t>(snap.mqtt.port)
             : 1883;
     }
 
-    copySafeStr(slot.lang, sizeof(slot.lang), config->getString("lang", "system").c_str());
-    copySafeStr(slot.textScrollSpeed, sizeof(slot.textScrollSpeed), config->getString("text_scroll_speed", "4").c_str());
+    copyCfgFieldCStr(cfg, "lang", "system", nextSlot.lang, sizeof(nextSlot.lang));
+    copyCfgFieldCStr(cfg, "text_scroll_speed", "4", nextSlot.textScrollSpeed, sizeof(nextSlot.textScrollSpeed));
     {
-        String rawVm = config->getString("video_mode", "auto_action");
-        rawVm.trim();
-        rawVm.toLowerCase();
+        char vmBuf[24] = "";
+        copyCfgFieldCStr(cfg, "video_mode", "auto_action", vmBuf, sizeof(vmBuf));
+        const char* p = vmBuf;
+        while (*p == ' ') ++p;
         const char* normVm = "auto_action";
-        if (rawVm == "panorama") {
+        if (strncasecmp(p, "panorama", 8) == 0) {
             normVm = "panorama";
-        } else if (rawVm == "center_crop") {
+        } else if (strncasecmp(p, "center_crop", 11) == 0) {
             normVm = "center_crop";
         }
-        copySafeStr(slot.videoMode, sizeof(slot.videoMode), normVm);
+        copySafeStr(nextSlot.videoMode, sizeof(nextSlot.videoMode), normVm);
     }
-    copySafeCsvTokens(slot.systems, sizeof(slot.systems), config->getString("systems", "").c_str());
-    copySafeCsvTokens(slot.genres, sizeof(slot.genres), config->getString("genres", "").c_str());
-    copySafeCsvTokens(slot.decades, sizeof(slot.decades), config->getString("decades", "").c_str());
-    copySafeStr(slot.videoType, sizeof(slot.videoType), config->getString("video_type", "any").c_str());
+    copyCfgFieldCStr(cfg, "systems", "", nextSystems, sizeof(nextSystems), true);
+    copyCfgFieldCStr(cfg, "genres", "", nextGenres, sizeof(nextGenres), true);
+    copyCfgFieldCStr(cfg, "decades", "", nextDecades, sizeof(nextDecades), true);
+    copyCfgFieldCStr(cfg, "video_type", "any", nextSlot.videoType, sizeof(nextSlot.videoType));
 
-    slot.snapshotPanoramaCount = static_cast<uint8_t>(std::max(0, std::min(5, config->getInt("snapshot_panorama_count", 0))));
-    slot.videoMaxDurationS = static_cast<uint8_t>(std::max(2, std::min(120, config->getInt("video_max_duration_s", 8))));
-    slot.videoFps = static_cast<uint8_t>(std::max(8, std::min(60, config->getInt("video_fps", 20))));
+    nextSlot.snapshotPanoramaCount = static_cast<uint8_t>(std::max(0, std::min(5, cfg->getInt("snapshot_panorama_count", 0))));
+    nextSlot.videoMaxDurationS = static_cast<uint8_t>(std::max(2, std::min(120, cfg->getInt("video_max_duration_s", 8))));
+    nextSlot.videoFps = static_cast<uint8_t>(std::max(8, std::min(60, cfg->getInt("video_fps", 20))));
 
-    slot.showPoster = config->getBool("show_poster", true);
-    slot.showSynopsis = config->getBool("show_synopsis", true);
-    slot.jacketPanorama = config->getBool("jacket_panorama", true);
-    slot.marqueePanorama = config->getBool("marquee_panorama", false);
-    slot.showVideo = config->getBool("show_video", true);
+    nextSlot.showPoster = cfg->getBool("show_poster", true);
+    nextSlot.showSynopsis = cfg->getBool("show_synopsis", true);
+    nextSlot.jacketPanorama = cfg->getBool("jacket_panorama", true);
+    nextSlot.marqueePanorama = cfg->getBool("marquee_panorama", false);
+    nextSlot.showVideo = cfg->getBool("show_video", true);
     {
-        String rawCb = config->getString("color_boost", "auto");
-        rawCb.trim();
-        rawCb.toLowerCase();
+        char cbBuf[24] = "";
+        copyCfgFieldCStr(cfg, "color_boost", "auto", cbBuf, sizeof(cbBuf));
+        const char* p = cbBuf;
+        while (*p == ' ') ++p;
         const char* normCb = "auto";
-        if (rawCb == "pixel_art") {
+        if (strncasecmp(p, "pixel_art", 9) == 0) {
             normCb = "pixel_art";
-        } else if (rawCb == "anime") {
+        } else if (strncasecmp(p, "anime", 5) == 0) {
             normCb = "anime";
-        } else if (rawCb == "cinema" || rawCb == "false" || rawCb == "0" || rawCb == "off") {
+        } else if (strncasecmp(p, "cinema", 6) == 0 ||
+                   strncasecmp(p, "false", 5) == 0 ||
+                   strncasecmp(p, "off", 3) == 0 ||
+                   *p == '0') {
             normCb = "cinema";
         }
-        copySafeStr(slot.colorBoost, sizeof(slot.colorBoost), normCb);
+        copySafeStr(nextSlot.colorBoost, sizeof(nextSlot.colorBoost), normCb);
     }
 
-    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    m_fallbackCycleMs = std::max<uint32_t>(30000U, static_cast<uint32_t>(slot.videoMaxDurationS + 25) * budget * 1000U);
+    const bool needExtras = (nextSystems[0] != '\0' ||
+                             nextGenres[0] != '\0' ||
+                             nextDecades[0] != '\0' ||
+                             nextCustomUrl[0] != '\0' ||
+                             nextGlobalHost[0] != '\0');
+    if (needExtras) {
+        if (!m_cfgExtras) {
+            void* mem = nullptr;
+#if defined(ESP32) && SHOWCASE_SUPPORT_PSRAM_PRELOAD
+            if (hardwareHAL.capabilities().hasPsram) {
+                mem = heap_caps_malloc(sizeof(ConfigExtras), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            }
+#endif
+            if (!mem) {
+                mem = malloc(sizeof(ConfigExtras));
+            }
+            if (mem) {
+                m_cfgExtras = new (mem) ConfigExtras();
+            }
+        }
+        if (m_cfgExtras) {
+            copySafeStr(m_cfgExtras->systems, sizeof(m_cfgExtras->systems), nextSystems);
+            copySafeStr(m_cfgExtras->genres, sizeof(m_cfgExtras->genres), nextGenres);
+            copySafeStr(m_cfgExtras->decades, sizeof(m_cfgExtras->decades), nextDecades);
+            copySafeStr(m_cfgExtras->mqttCustomUrl, sizeof(m_cfgExtras->mqttCustomUrl), nextCustomUrl);
+            copySafeStr(m_cfgExtras->globalMqttHost, sizeof(m_cfgExtras->globalMqttHost), nextGlobalHost);
+        }
+    } else if (m_cfgExtras) {
+        free(m_cfgExtras);
+        m_cfgExtras = nullptr;
+    }
 
-    m_cfgIdx.store(next, std::memory_order_release);
+    m_cfg = nextSlot;
+    m_cfgEnabled.store(m_cfg.enabled, std::memory_order_release);
+    m_cfgHasServerUrl.store(
+        strlen(m_cfg.serverUrl) >= 8U && strncmp(m_cfg.serverUrl, "http", 4) == 0,
+        std::memory_order_release
+    );
+    m_cfgShowPoster.store(m_cfg.showPoster, std::memory_order_release);
+    m_cfgShowSynopsis.store(m_cfg.showSynopsis, std::memory_order_release);
+    m_cfgSynopsisSpeedPx.store(static_cast<uint16_t>(synopsisPxPerSec(m_cfg.textScrollSpeed)), std::memory_order_release);
+    m_cfgStreamBaseMs.store(configuredMaxStreamMs(m_cfg), std::memory_order_release);
+
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    m_fallbackCycleMs = std::max<uint32_t>(30000U, static_cast<uint32_t>(m_cfg.videoMaxDurationS + 25) * budget * 1000U);
+
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
     m_lastPublishedCfgGen = 0;
     m_consecutiveNetFailures = 0;
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
-    if (m_wantActive.load(std::memory_order_acquire)) {
+
+    if (wasActive) {
+        m_activatedAtMs = millis();
+        m_phaseStartedAtMs = m_activatedAtMs;
+        m_turnEvaluated.store(false, std::memory_order_release);
+        m_readyStateReceived.store(false, std::memory_order_release);
+        m_hasReadyItem.store(false, std::memory_order_release);
+        m_mqttConnectedAtMs.store(0U, std::memory_order_release);
         m_skipTurnImmediately.store(false, std::memory_order_release);
         m_turnDone.store(false, std::memory_order_release);
         m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
@@ -708,17 +1167,34 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         m_lastRenderedFrameSeq = 0xFFFFFFFFU;
         m_lastRenderedPhase = 0xFFU;
         m_dirty = true;
+        m_buffersReady.store(true, std::memory_order_release);
         startWorkerTask();
     }
 }
 
 void MediaShowcaseBase::activate() {
+    {
+        ConfigSnapshotGuard guard = ::config.acquireSnapshot();
+        m_rotationSlotCount.store(static_cast<uint8_t>(guard.get().rotation.size()), std::memory_order_relaxed);
+    }
+
+#if defined(ESP32)
+    m_hasPsram = hardwareHAL.capabilities().hasPsram;
+#else
+    m_hasPsram = true;
+#endif
+    probeZeroCopyCanvasEligibility();
+
     m_pausedByPreemption = false;
     m_activatedAtMs = millis();
     m_phaseStartedAtMs = m_activatedAtMs;
     m_lastScrollStepMs = m_activatedAtMs;
     m_consecutiveNetFailures = 0;
     m_itemsPlayedInTurn.store(0, std::memory_order_release);
+    m_turnEvaluated.store(false, std::memory_order_release);
+    m_readyStateReceived.store(false, std::memory_order_release);
+    m_hasReadyItem.store(false, std::memory_order_release);
+    m_mqttConnectedAtMs.store(0U, std::memory_order_release);
     m_skipTurnImmediately.store(false, std::memory_order_release);
     m_warmingFallback.store(false, std::memory_order_release);
     m_turnDone.store(false, std::memory_order_release);
@@ -730,18 +1206,28 @@ void MediaShowcaseBase::activate() {
     m_dirty = true;
     m_renderedNewFrame = false;
 
-    size_t wantPixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
+    // Spawn `ShowcaseWkr` (`5,120 B` stack on `esp32dev`, `6,144 B` on PSRAM S3) FIRST before
+    // allocating transient engine buffers so largest contiguous 8-bit DRAM block is never split!
+    m_buffersReady.store(false, std::memory_order_release);
+    const bool workerOk = startWorkerTask();
+
+    const size_t wantPixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
     if (!m_poster565 || !m_ioScratch || m_framePixels != wantPixels) {
         allocateBuffers();
     }
-    if (!startWorkerTask()) {
+    m_buffersReady.store(true, std::memory_order_release);
+
+    if (!workerOk) {
 #if defined(ESP32) && !defined(UNIT_TEST)
         LOGE("Showcase", "Failed to spawn ShowcaseWkr (free8=%u largest8=%u); yielding rotation slot",
              static_cast<unsigned>(showcaseFree8BitHeap()),
              static_cast<unsigned>(showcaseLargest8BitBlock()));
         m_statusState.store(2, std::memory_order_release);
+        m_readyStateReceived.store(true, std::memory_order_release);
+        m_turnEvaluated.store(true, std::memory_order_release);
         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
             m_skipTurnImmediately.store(true, std::memory_order_release);
+            m_turnDone.store(true, std::memory_order_release);
         }
 #endif
     }
@@ -767,10 +1253,14 @@ void MediaShowcaseBase::deactivate() {
     m_wantActive.store(false, std::memory_order_release);
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SHOWCASE);
     stopWorkerTaskBounded(1500);
+    m_buffersReady.store(false, std::memory_order_release);
     clearLiveCardState();
     if (!m_taskAlive.load(std::memory_order_acquire)) {
         freeBuffers();
     }
+    m_turnEvaluated.store(false, std::memory_order_release);
+    m_readyStateReceived.store(false, std::memory_order_release);
+    m_mqttConnectedAtMs.store(0U, std::memory_order_release);
     m_dirty = false;
     m_renderedNewFrame = false;
 }
@@ -779,6 +1269,7 @@ bool MediaShowcaseBase::shutdownForDestruction() {
     m_wantActive.store(false, std::memory_order_release);
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SHOWCASE);
     stopWorkerTaskBounded(2000);
+    m_buffersReady.store(false, std::memory_order_release);
     clearLiveCardState();
     const bool stopped = !m_taskAlive.load(std::memory_order_acquire);
     if (stopped) {
@@ -800,16 +1291,15 @@ uint32_t MediaShowcaseBase::configuredMaxStreamMs(const ConfigSlot& cfg) {
     return totalSec * 1000U;
 }
 
-uint32_t MediaShowcaseBase::effectiveMaxStreamMs(const ConfigSlot& cfg) const {
-    const uint32_t cfgMs = configuredMaxStreamMs(cfg);
+uint32_t MediaShowcaseBase::effectiveMaxStreamMs() const {
+    const uint32_t cfgMs = m_cfgStreamBaseMs.load(std::memory_order_relaxed);
     const uint32_t itemMs = m_activeItemStreamMaxMs.load(std::memory_order_relaxed);
     return std::min<uint32_t>(300000U, std::max<uint32_t>(cfgMs, itemMs));
 }
 
 uint32_t MediaShowcaseBase::computeTurnSafetyTimeoutMs() const {
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
     uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    uint32_t perItemMs = effectiveMaxStreamMs(cfg) + 45000U;
+    uint32_t perItemMs = effectiveMaxStreamMs() + 45000U;
     return std::max<uint32_t>(45000U, perItemMs * budget);
 }
 
@@ -820,31 +1310,27 @@ bool MediaShowcaseBase::isFinished() const {
     if (m_turnDone.load(std::memory_order_acquire)) {
         return true;
     }
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-    if (!cfg.enabled && m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+    const uint8_t rotSlots = m_rotationSlotCount.load(std::memory_order_relaxed);
+    if (!m_cfgEnabled.load(std::memory_order_acquire) && rotSlots > 1U) {
         return true;
     }
-    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+    if (!m_turnEvaluated.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (rotSlots > 1U) {
         return (millis() - m_activatedAtMs) >= computeTurnSafetyTimeoutMs();
     }
     return false;
 }
 
-void MediaShowcaseBase::finishTurnItem() {
-    clearLiveCardState();
-    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1U;
-    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
-        m_turnDone.store(true, std::memory_order_release);
-    }
-}
-
 bool MediaShowcaseBase::startWorkerTask() {
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-    if (!cfg.enabled) {
+    if (!m_cfgEnabled.load(std::memory_order_acquire)) {
         m_statusState.store(3, std::memory_order_release);
+        m_readyStateReceived.store(true, std::memory_order_release);
+        m_turnEvaluated.store(true, std::memory_order_release);
         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
             m_skipTurnImmediately.store(true, std::memory_order_release);
+            m_turnDone.store(true, std::memory_order_release);
         }
         return true;
     }
@@ -852,7 +1338,7 @@ bool MediaShowcaseBase::startWorkerTask() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return true;
     m_taskAlive.store(true, std::memory_order_release);
-    uint32_t stackBytes = m_hasPsram ? 8192U : 5632U;
+    const uint32_t stackBytes = m_hasPsram ? 6144U : 5120U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
@@ -898,103 +1384,6 @@ void MediaShowcaseBase::workerTaskEntry(void* arg) {
 #endif
 }
 
-void MediaShowcaseBase::runWorkerLoop() {
-    while (m_wantActive.load(std::memory_order_acquire)) {
-#if defined(ESP32) && !defined(UNIT_TEST)
-        if (!m_hasPsram &&
-            (WebUiSyncEngine::isRequested() ||
-             WebUiSyncEngine::isReadyForServing() ||
-             NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::WebUiSync)) {
-            vTaskDelay(pdMS_TO_TICKS(25));
-            continue;
-        }
-#endif
-        uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
-        const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-        const char* domain = domainSlug();
-
-        if (!cfg.enabled || strlen(cfg.serverUrl) < 8U || strncmp(cfg.serverUrl, "http", 4) != 0) {
-            m_statusState.store(3, std::memory_order_release);
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
-            return;
-        }
-
-        char reqLangBuf[12] = "en";
-        if (cfg.lang[0] != '\0' && strcasecmp(cfg.lang, "system") != 0) {
-            copySafeStr(reqLangBuf, sizeof(reqLangBuf), cfg.lang);
-        } else {
-            ConfigSnapshotGuard guard = config.acquireSnapshot();
-            const String& sysLang = guard.get().system.lang;
-            if (sysLang.length() > 0) {
-                copySafeStr(reqLangBuf, sizeof(reqLangBuf), sysLang.c_str());
-            }
-        }
-
-        net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
-
-        bool useMqttMode = (strcasecmp(cfg.transportMode, "mqtt_udp") == 0 ||
-                            strcasecmp(cfg.transportMode, "mqtt_tcp") == 0);
-        if (useMqttMode) {
-            char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
-            bool handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
-            if (handled && httpFallbackItemId[0] != '\0') {
-                if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                    char fallbackPath[256];
-                    snprintf(
-                        fallbackPath,
-                        sizeof(fallbackPath),
-                        "/api/v1/%s/stream/%s.rgb565.stream?purge=true&paced=1&codec=dmdz1&client_id=%s",
-                        domain,
-                        httpFallbackItemId,
-                        m_sessionId
-                    );
-                    streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
-                }
-                finishTurnItem();
-            } else if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-                if (m_consecutiveNetFailures < 10U) {
-                    ++m_consecutiveNetFailures;
-                }
-                if (shouldReportNetworkOffline(m_consecutiveNetFailures)) {
-                    m_statusState.store(2, std::memory_order_release);
-                    m_lastPublishedCfgGen = 0;
-                    clearLiveCardState();
-                    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                        m_skipTurnImmediately.store(true, std::memory_order_release);
-                    }
-                } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
-                    m_statusState.store(1, std::memory_order_release);
-                }
-#if defined(ESP32)
-                for (int w = 0; w < 12 && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen; ++w) {
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                }
-#endif
-            }
-        } else if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-            runHttpPollTurn(cfg, domain, reqLangBuf);
-        }
-        if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
-            m_skipTurnImmediately.store(false, std::memory_order_release);
-            m_turnDone.store(false, std::memory_order_release);
-            clearLiveCardState();
-            continue;
-        }
-        if (!m_turnDone.load(std::memory_order_acquire) &&
-            !m_skipTurnImmediately.load(std::memory_order_acquire) &&
-            m_wantActive.load(std::memory_order_acquire)) {
-#if defined(ESP32)
-            vTaskDelay(pdMS_TO_TICKS(10));
-#endif
-            continue;
-        }
-        break;
-    }
-}
-
 bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
     char* jsonBuf,
     bool showPoster,
@@ -1030,34 +1419,26 @@ bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
             return false;
         }
 
-        copySafeStr(nextCard.title, sizeof(nextCard.title), cardObj["title"] | "UNKNOWN");
-        copySafeStr(nextCard.year, sizeof(nextCard.year), cardObj["year"] | "");
-        const char* badge = cardObj["badge"] | domain;
-        copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
-        copySafeStr(nextCard.rating, sizeof(nextCard.rating), cardObj["rating"] | "");
-        copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
-        nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
-        computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
-        uint16_t srvPw = cardObj["poster_width"] | 0;
-        uint16_t srvPh = cardObj["poster_height"] | 0;
-        if (srvPw > 0 && srvPh > 0 && (static_cast<size_t>(srvPw) * static_cast<size_t>(srvPh) * 2U) <= m_posterCapBytes) {
-            nextCard.posterW = srvPw;
-            nextCard.posterH = srvPh;
-        }
-        nextCard.hasData = true;
-        nextCard.hasPoster = false;
-        nextCard.hasVideoFrame = false;
-
-        const char* rawItemId = doc["item_id"] | (cardObj["item_id"] | (cardObj["id"] | ""));
-        if (outItemId && itemIdCap > 0U) {
-            copySafeStr(outItemId, itemIdCap, rawItemId);
-        }
-        outHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
-        float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
-        if (totDur < 2.0f) totDur = 2.0f;
-        outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+        extractShowcaseItemFromJson(
+            doc.as<JsonObjectConst>(),
+            cardObj,
+            domain,
+            m_sessionId,
+            m_width,
+            m_height,
+            m_posterCapBytes,
+            defaultAccent565(),
+            nextCard,
+            outItemId,
+            itemIdCap,
+            nullptr,
+            0U,
+            nullptr,
+            0U,
+            outHasStream,
+            outStreamMaxMs
+        );
         m_activeItemStreamMaxMs.store(outStreamMaxMs, std::memory_order_relaxed);
-
         posterB64 = cardObj["poster_rgb565_b64"] | "";
     }
 
@@ -1079,6 +1460,9 @@ bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
     m_liveCard = nextCard;
     m_seq.fetch_add(1, std::memory_order_release);
     m_statusState.store(0, std::memory_order_release);
+    m_hasReadyItem.store(true, std::memory_order_release);
+    m_readyStateReceived.store(true, std::memory_order_release);
+    m_turnEvaluated.store(true, std::memory_order_release);
     m_phaseStartedAtMs = millis();
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
     return true;
@@ -1106,43 +1490,582 @@ bool MediaShowcaseBase::parseReadyPayloadInPlace(
     return ok;
 }
 
-bool MediaShowcaseBase::runMqttUdpTurn(
+namespace {
+
+#if defined(ESP32) && !defined(UNIT_TEST)
+/**
+ * @brief Unified zero-heap `Stream` adapter over `net::RawMqttSocket` for both bounded MQTT
+ *        `PUBLISH` payloads and HTTP (`Content-Length` / `Transfer-Encoding: chunked`) bodies.
+ *        Inheriting `Stream` allows `ArduinoJson` to reuse its already-linked `Reader<Stream>`
+ *        deserializer without instantiating extra parser templates (~4.3 KB Flash saved).
+ */
+class RawSocketJsonStream final : public Stream {
+public:
+    net::RawMqttSocket& sock;
+    const std::atomic<bool>& wantActive;
+    net::HttpChunkedDecoder chunkDec{};
+    uint8_t decBuf[96] = {0};
+    size_t decOff = 0U;
+    size_t decEnd = 0U;
+    size_t contentRem = 0U;
+    int peeked = -1;
+    bool isChunked = false;
+    bool hasContentLength = false;
+    bool eof = false;
+    bool ioError = false;
+
+    RawSocketJsonStream(
+        net::RawMqttSocket& socketRef,
+        const std::atomic<bool>& activeFlag,
+        size_t boundedPayloadBytes
+    )
+        : sock(socketRef),
+          wantActive(activeFlag),
+          contentRem(boundedPayloadBytes),
+          hasContentLength(true) {
+        setTimeout(0);
+    }
+
+    RawSocketJsonStream(
+        net::RawMqttSocket& socketRef,
+        const std::atomic<bool>& activeFlag,
+        size_t contentLength,
+        bool hasCl,
+        bool chunked
+    )
+        : sock(socketRef),
+          wantActive(activeFlag),
+          contentRem(contentLength),
+          isChunked(chunked),
+          hasContentLength(hasCl) {
+        setTimeout(0);
+    }
+
+    size_t write(uint8_t) override { return 0U; }
+
+    int available() override {
+        return (eof || ioError) ? 0 : 1;
+    }
+
+    int peek() override {
+        if (peeked < 0) {
+            peeked = readNextByte();
+        }
+        return peeked;
+    }
+
+    int read() override {
+        if (peeked >= 0) {
+            const int c = peeked;
+            peeked = -1;
+            return c;
+        }
+        return readNextByte();
+    }
+
+    bool drainRemaining() {
+        peeked = -1;
+        if (!hasContentLength || contentRem == 0U) {
+            return !ioError;
+        }
+        if (ioError) {
+            return false;
+        }
+        const bool ok = sock.drain(contentRem, wantActive, 1500U);
+        contentRem = 0U;
+        eof = true;
+        return ok;
+    }
+
+private:
+    bool fillDecodedChunk() {
+        decOff = 0U;
+        decEnd = 0U;
+        while (!eof && !ioError && !chunkDec.isDone() && !chunkDec.hasError()) {
+            if (sock.rxOff >= sock.rxEnd) {
+                uint8_t b = 0U;
+                if (!sock.readExact(&b, 1U, wantActive, 2000U)) {
+                    ioError = true;
+                    return false;
+                }
+                size_t consumed = 0U;
+                const size_t n = chunkDec.decode(&b, 1U, consumed, decBuf, sizeof(decBuf));
+                if (chunkDec.hasError()) {
+                    ioError = true;
+                    return false;
+                }
+                if (n > 0U) {
+                    decEnd = n;
+                    return true;
+                }
+                if (chunkDec.isDone()) {
+                    eof = true;
+                    return false;
+                }
+                continue;
+            }
+            const size_t avail = sock.rxEnd - sock.rxOff;
+            size_t consumed = 0U;
+            const size_t n = chunkDec.decode(sock.rxBuf + sock.rxOff, avail, consumed, decBuf, sizeof(decBuf));
+            sock.rxOff += consumed;
+            if (chunkDec.hasError()) {
+                ioError = true;
+                return false;
+            }
+            if (n > 0U) {
+                decEnd = n;
+                return true;
+            }
+            if (chunkDec.isDone()) {
+                eof = true;
+                return false;
+            }
+        }
+        return false;
+    }
+
+    int readNextByte() {
+        if (eof || ioError) {
+            return -1;
+        }
+        if (isChunked) {
+            if (decOff >= decEnd && !fillDecodedChunk()) {
+                return -1;
+            }
+            return static_cast<int>(decBuf[decOff++]);
+        }
+        if (hasContentLength && contentRem == 0U) {
+            eof = true;
+            return -1;
+        }
+        if (sock.rxOff < sock.rxEnd) {
+            const uint8_t b = sock.rxBuf[sock.rxOff++];
+            if (hasContentLength) {
+                --contentRem;
+            }
+            return static_cast<int>(b);
+        }
+        uint8_t b = 0U;
+        if (!sock.readExact(&b, 1U, wantActive, 2000U)) {
+            if (hasContentLength) {
+                ioError = true;
+            } else {
+                eof = true;
+            }
+            return -1;
+        }
+        if (hasContentLength) {
+            --contentRem;
+        }
+        return static_cast<int>(b);
+    }
+};
+
+bool openRawHttpSession(
+    net::RawMqttSocket& sock,
+    const char* host,
+    uint16_t port,
+    const char* reqHdr,
+    size_t reqHdrLen,
+    const void* reqBody,
+    size_t reqBodyLen,
+    const std::atomic<bool>& wantActive,
+    uint32_t connTimeoutMs,
+    uint32_t hdrTimeoutMs,
+    int& outStatusCode,
+    size_t& outContentLength,
+    bool& outHasContentLength,
+    bool& outIsChunked
+) {
+    outStatusCode = 0;
+    outContentLength = 0U;
+    outHasContentLength = false;
+    outIsChunked = false;
+    if (!sock.connectHost(host, port, wantActive, connTimeoutMs)) {
+        return false;
+    }
+    if (!sock.writeAll(reinterpret_cast<const uint8_t*>(reqHdr), reqHdrLen, wantActive, 1000U)) {
+        sock.closeAbort();
+        return false;
+    }
+    if (reqBody && reqBodyLen > 0U &&
+        !sock.writeAll(reinterpret_cast<const uint8_t*>(reqBody), reqBodyLen, wantActive, 1200U)) {
+        sock.closeAbort();
+        return false;
+    }
+
+    char hdrBuf[384];
+    size_t len = 0U;
+    hdrBuf[0] = '\0';
+    const uint32_t t0 = millis();
+    bool foundEnd = false;
+    while ((millis() - t0) < hdrTimeoutMs && wantActive.load(std::memory_order_acquire)) {
+        uint8_t b = 0U;
+        if (!sock.readExact(&b, 1U, wantActive, hdrTimeoutMs)) {
+            sock.closeAbort();
+            return false;
+        }
+        if (len + 1U < sizeof(hdrBuf)) {
+            hdrBuf[len++] = static_cast<char>(b);
+            hdrBuf[len] = '\0';
+        } else {
+            memmove(hdrBuf, hdrBuf + 1, sizeof(hdrBuf) - 2U);
+            hdrBuf[sizeof(hdrBuf) - 2U] = static_cast<char>(b);
+            hdrBuf[sizeof(hdrBuf) - 1U] = '\0';
+        }
+        const size_t curLen = strlen(hdrBuf);
+        if (curLen >= 4U && memcmp(hdrBuf + curLen - 4U, "\r\n\r\n", 4U) == 0) {
+            foundEnd = true;
+            break;
+        }
+    }
+    if (!foundEnd) {
+        sock.closeAbort();
+        return false;
+    }
+
+    const char* sp = strchr(hdrBuf, ' ');
+    if (sp) {
+        outStatusCode = atoi(sp + 1);
+    }
+    outIsChunked = net::hasChunkedTransferEncoding(hdrBuf);
+    const char* p = hdrBuf;
+    while (*p != '\0') {
+        if (strncasecmp(p, "Content-Length:", 15) == 0) {
+            p += 15;
+            while (*p == ' ' || *p == '\t') {
+                ++p;
+            }
+            outContentLength = static_cast<size_t>(strtoul(p, nullptr, 10));
+            outHasContentLength = true;
+            break;
+        }
+        const char* nl = strchr(p, '\n');
+        if (!nl) {
+            break;
+        }
+        p = nl + 1;
+    }
+    if (outStatusCode < 200 || outStatusCode >= 300) {
+        sock.closeAbort();
+        return false;
+    }
+    return true;
+}
+#endif
+
+static_assert(
+    sizeof(net::DmdzSpscStreamSession) <= 1472U,
+    "DmdzSpscStreamSession must fit inside MIN_IO_SCRATCH_BYTES (1472 B) with zero heap alloc"
+);
+static_assert(
+    sizeof(net::DmdzPreloadSession) <= 1472U,
+    "DmdzPreloadSession must fit inside MIN_IO_SCRATCH_BYTES (1472 B) with zero heap alloc"
+);
+
+} // namespace
+
+void MediaShowcaseBase::runWorkerLoop() {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    while (m_wantActive.load(std::memory_order_acquire) &&
+           !m_buffersReady.load(std::memory_order_acquire)) {
+        vTaskDelay(1);
+    }
+#endif
+
+    bool isFollowUpItemInTurn = false;
+
+    while (m_wantActive.load(std::memory_order_acquire)) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+        if (!m_hasPsram &&
+            (WebUiSyncEngine::isRequested() ||
+             WebUiSyncEngine::isReadyForServing() ||
+             NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::WebUiSync)) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
+        }
+#endif
+        const uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
+        const ConfigSlot& cfg = m_cfg;
+        const ConfigExtras* extras = m_cfgExtras;
+        const char* domain = domainSlug();
+        const uint8_t rotSlots = m_rotationSlotCount.load(std::memory_order_relaxed);
+        const bool soloSlot = (rotSlots <= 1U);
+
+        if (!cfg.enabled || strlen(cfg.serverUrl) < 8U || strncmp(cfg.serverUrl, "http", 4) != 0) {
+            m_statusState.store(3, std::memory_order_release);
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_turnEvaluated.store(true, std::memory_order_release);
+            clearLiveCardState();
+            if (!soloSlot) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+                m_turnDone.store(true, std::memory_order_release);
+            }
+            return;
+        }
+
+        if (!m_ioScratch || m_ioScratchCap == 0U) {
+            m_statusState.store(2, std::memory_order_release);
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_turnEvaluated.store(true, std::memory_order_release);
+            if (!soloSlot) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+                m_turnDone.store(true, std::memory_order_release);
+                return;
+            }
+#if defined(ESP32) && !defined(UNIT_TEST)
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+#else
+            return;
+#endif
+        }
+
+        char reqLangBuf[12] = "en";
+        if (cfg.lang[0] != '\0' && strcasecmp(cfg.lang, "system") != 0) {
+            copySafeStr(reqLangBuf, sizeof(reqLangBuf), cfg.lang);
+        } else {
+            ConfigSnapshotGuard guard = ::config.acquireSnapshot();
+            const String& sysLang = guard.get().system.lang;
+            if (sysLang.length() > 0) {
+                copySafeStr(reqLangBuf, sizeof(reqLangBuf), sysLang.c_str());
+            }
+        }
+
+        net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
+
+        CardSnapshot acquiredCard;
+        AcquiredItemInfo acquiredInfo;
+        const bool useMqttMode = (strcasecmp(cfg.transportMode, "mqtt_udp") == 0 ||
+                                  strcasecmp(cfg.transportMode, "mqtt_tcp") == 0);
+
+        AcquireOutcome outcome = AcquireOutcome::ServerOffline;
+        if (useMqttMode) {
+            outcome = acquireItemViaMqtt(
+                cfg,
+                extras,
+                domain,
+                reqLangBuf,
+                startGen,
+                isFollowUpItemInTurn,
+                acquiredCard,
+                acquiredInfo
+            );
+            // Part A.4: Automatic same-turn MQTT -> HTTP fallback when MQTT broker (`:1883`)
+            // connect fails or disconnects before acquiring an item!
+            if (outcome == AcquireOutcome::BrokerUnreachable &&
+                m_wantActive.load(std::memory_order_acquire) &&
+                !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                m_cfgGen.load(std::memory_order_acquire) == startGen) {
+                LOGW("Showcase", "MQTT broker unreachable for '%s'; chaining same-turn HTTP fallback", domain);
+                outcome = acquireItemViaHttp(
+                    cfg,
+                    extras,
+                    domain,
+                    reqLangBuf,
+                    startGen,
+                    acquiredCard,
+                    acquiredInfo
+                );
+            }
+        } else {
+            outcome = acquireItemViaHttp(
+                cfg,
+                extras,
+                domain,
+                reqLangBuf,
+                startGen,
+                acquiredCard,
+                acquiredInfo
+            );
+        }
+
+        if (!m_wantActive.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (m_cfgGen.load(std::memory_order_acquire) != startGen) {
+            isFollowUpItemInTurn = false;
+            m_skipTurnImmediately.store(false, std::memory_order_release);
+            m_turnDone.store(false, std::memory_order_release);
+            clearLiveCardState();
+            continue;
+        }
+        if (outcome == AcquireOutcome::Aborted) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+            vTaskDelay(pdMS_TO_TICKS(15));
+            continue;
+#else
+            return;
+#endif
+        }
+
+        if (outcome == AcquireOutcome::ReadyItem) {
+            m_consecutiveNetFailures = 0;
+            m_consecutiveWarmSkips.store(0, std::memory_order_release);
+            m_warmingFallback.store(false, std::memory_order_release);
+
+            executeAcquiredItem(cfg, domain, startGen, acquiredCard, acquiredInfo);
+
+            if (!m_wantActive.load(std::memory_order_acquire)) {
+                return;
+            }
+            if (m_cfgGen.load(std::memory_order_acquire) != startGen) {
+                isFollowUpItemInTurn = false;
+                m_skipTurnImmediately.store(false, std::memory_order_release);
+                m_turnDone.store(false, std::memory_order_release);
+                clearLiveCardState();
+                continue;
+            }
+
+            const uint32_t played = m_itemsPlayedInTurn.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+            const uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+            if (!soloSlot) {
+                if (played >= budget) {
+                    m_turnDone.store(true, std::memory_order_release);
+                    return;
+                }
+                // Part A.2: Multi-item budget (`played < budget`): probe item N+1 without clearing
+                // `m_liveCard` so `"WAITING FOR..."` never flashes if N+1 is not ready yet!
+                isFollowUpItemInTurn = true;
+                continue;
+            }
+            isFollowUpItemInTurn = false;
+            continue;
+        }
+
+        // Outcome is `ServerWarming`, `ServerOffline`, or `BrokerUnreachable` (both transports failed)
+        if (isFollowUpItemInTurn && !soloSlot) {
+            // Item N+1 is not already ready -> yield rotation immediately (`0 ms`) without clearing
+            // the previously displayed frame or flashing `"WAITING FOR..."`!
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+            m_turnDone.store(true, std::memory_order_release);
+            return;
+        }
+
+        if (outcome == AcquireOutcome::ServerWarming) {
+            m_statusState.store(1, std::memory_order_release);
+            m_warmingFallback.store(true, std::memory_order_release);
+            const uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
+            if (prevSkips < 10U) {
+                m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
+            }
+            m_readyStateReceived.store(true, std::memory_order_release);
+            m_turnEvaluated.store(true, std::memory_order_release);
+            if (!soloSlot) {
+                // Part A.2: Zero `56 * 50 ms` wait loop — yield slot in `0 ms`!
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+                m_turnDone.store(true, std::memory_order_release);
+                return;
+            }
+#if defined(ESP32) && !defined(UNIT_TEST)
+            for (int w = 0;
+                 w < 8 &&
+                 m_wantActive.load(std::memory_order_acquire) &&
+                 !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+                 m_cfgGen.load(std::memory_order_acquire) == startGen;
+                 ++w) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            continue;
+#else
+            return;
+#endif
+        }
+
+        // ServerOffline / unreachable
+        if (m_consecutiveNetFailures < 10U) {
+            ++m_consecutiveNetFailures;
+        }
+        m_lastPublishedCfgGen = 0;
+        if (!soloSlot || shouldReportNetworkOffline(m_consecutiveNetFailures)) {
+            m_statusState.store(2, std::memory_order_release);
+            clearLiveCardState();
+        } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
+            m_statusState.store(1, std::memory_order_release);
+        }
+        m_readyStateReceived.store(true, std::memory_order_release);
+        m_turnEvaluated.store(true, std::memory_order_release);
+        if (!soloSlot) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+            m_turnDone.store(true, std::memory_order_release);
+            return;
+        }
+#if defined(ESP32) && !defined(UNIT_TEST)
+        for (int w = 0;
+             w < 10 &&
+             m_wantActive.load(std::memory_order_acquire) &&
+             !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+             m_cfgGen.load(std::memory_order_acquire) == startGen;
+             ++w) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+#else
+        return;
+#endif
+    }
+}
+
+MediaShowcaseBase::AcquireOutcome MediaShowcaseBase::acquireItemViaMqtt(
     const ConfigSlot& cfg,
+    const ConfigExtras* extras,
     const char* domain,
     const char* reqLang,
-    char* outHttpFallbackItemId,
-    size_t fallbackItemCap
+    uint32_t startGen,
+    bool isFollowUpItemInTurn,
+    CardSnapshot& outCard,
+    AcquiredItemInfo& outInfo
 ) {
-    if (outHttpFallbackItemId && fallbackItemCap > 0U) {
-        outHttpFallbackItemId[0] = '\0';
-    }
+    outCard = CardSnapshot{};
+    outInfo = AcquiredItemInfo{};
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (!m_ioScratch) {
-        return false;
+    if (!m_ioScratch || m_ioScratchCap < 512U) {
+        return AcquireOutcome::BrokerUnreachable;
     }
 
     char mqttHost[64] = "";
     uint16_t mqttPort = 1883;
-    if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
-        return false;
-    }
-    uint16_t showcaseHttpPort = 8890;
-    {
-        char dummyScheme[12] = "";
-        char dummyHost[64] = "";
-        (void)net::ShowcaseDiscovery::parseEndpoint(
-            cfg.serverUrl,
-            8890,
-            dummyScheme,
-            sizeof(dummyScheme),
-            dummyHost,
-            sizeof(dummyHost),
-            showcaseHttpPort
-        );
+    if (!resolveMqttBroker(cfg, extras, mqttHost, sizeof(mqttHost), mqttPort)) {
+        return AcquireOutcome::BrokerUnreachable;
     }
 
-    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
-    uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
+    uint16_t showcaseHttpPort = 8890;
+    bool serverIsHttps = false;
+    {
+        char serverHost[64] = "";
+        if (net::parseEndpointHostAndPort(cfg.serverUrl, 8890, serverHost, sizeof(serverHost), showcaseHttpPort, &serverIsHttps)) {
+            if (net::ShowcaseDiscovery::resolveHostInPlace(serverHost, sizeof(serverHost), showcaseHttpPort, false)) {
+                snprintf(
+                    outInfo.baseServerUrl,
+                    sizeof(outInfo.baseServerUrl),
+                    "%s://%s:%u",
+                    serverIsHttps ? "https" : "http",
+                    serverHost,
+                    static_cast<unsigned>(showcaseHttpPort)
+                );
+            }
+        }
+        if (outInfo.baseServerUrl[0] == '\0') {
+            if (cfg.useShowcaseBroker) {
+                snprintf(
+                    outInfo.baseServerUrl,
+                    sizeof(outInfo.baseServerUrl),
+                    "%s://%s:%u",
+                    serverIsHttps ? "https" : "http",
+                    mqttHost,
+                    static_cast<unsigned>(showcaseHttpPort)
+                );
+            } else {
+                copySafeStr(outInfo.baseServerUrl, sizeof(outInfo.baseServerUrl), cfg.serverUrl);
+            }
+        }
+    }
+
+    const uint8_t rotSlots = m_rotationSlotCount.load(std::memory_order_relaxed);
+    const bool soloSlot = (rotSlots <= 1U);
+    const uint32_t tcpTimeoutMs = soloSlot ? 1200U : 450U;
+    const uint32_t connAckTimeoutMs = soloSlot ? 800U : 250U;
+
+    const uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
     const char* statusTopic = "dmd_showcase/server/status";
     char readyTopic[96];
     char eventsTopic[96];
@@ -1153,412 +2076,366 @@ bool MediaShowcaseBase::runMqttUdpTurn(
     char localIpBuf[20];
     snprintf(localIpBuf, sizeof(localIpBuf), "%u.%u.%u.%u", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
 
-    uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
-    uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
-    bool soloSlot = (m_rotationSlotCount.load(std::memory_order_relaxed) <= 1U);
-    uint32_t warmSettleMs = soloSlot
-        ? 2200U
-        : ((prevSkips >= 1U && playedSoFar == 0U) ? 350U : 0U);
-    uint32_t maxWaitMs = soloSlot ? 2600U : 900U;
+    NetworkBudget::ScopedDmdNetActivity mqttAct(NetworkBudget::DmdNetActivity::Mqtt);
+    net::RawMqttSocket mqttCli;
+    if (!net::connectMqttBrokerSession(
+            mqttCli,
+            mqttHost,
+            mqttPort,
+            m_sessionId,
+            m_mqttConnSeq,
+            m_wantActive,
+            tcpTimeoutMs,
+            connAckTimeoutMs)) {
+        if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
+            return AcquireOutcome::Aborted;
+        }
+        return AcquireOutcome::BrokerUnreachable;
+    }
+
+    const uint32_t connectedAtMs = millis();
+    m_mqttConnectedAtMs.store(connectedAtMs != 0U ? connectedAtMs : 1U, std::memory_order_release);
+    if (cfg.useShowcaseBroker) {
+        net::ShowcaseDiscovery::touchVerifiedHost(mqttHost, showcaseHttpPort);
+    }
+
+    if (m_lastPublishedCfgGen != startGen) {
+        uint16_t posterW = 32;
+        uint16_t posterH = 32;
+        computeCardPosterDims(m_width, m_height, posterW, posterH);
+        const uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
+        const char* sysCsv = extras ? extras->systems : "";
+        const char* genCsv = extras ? extras->genres : "";
+        const char* decCsv = extras ? extras->decades : "";
+
+        char configTopic[80];
+        snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
+
+        size_t pos = 0U;
+        const size_t scratchCap = m_ioScratchCap;
+        m_ioScratch[0] = '\0';
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "{\"dmd_id\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, m_sessionId);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"client_ip\":\"");
+        appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"udp_ip\":\"");
+        appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"transport\":\"mqtt_tcp\",\"width\":");
+        appendUintToBuf(m_ioScratch, scratchCap, pos, m_width);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"height\":");
+        appendUintToBuf(m_ioScratch, scratchCap, pos, m_height);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_width\":");
+        appendUintToBuf(m_ioScratch, scratchCap, pos, posterW);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_height\":");
+        appendUintToBuf(m_ioScratch, scratchCap, pos, posterH);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"udp_port\":");
+        appendUintToBuf(m_ioScratch, scratchCap, pos, localUdpPort);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"lang\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"domains\":{\"");
+        appendRawToBuf(m_ioScratch, scratchCap, pos, domain);
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "\":{");
+        appendShowcaseCommonConfigJson(
+            m_ioScratch,
+            scratchCap,
+            pos,
+            sysCsv,
+            genCsv,
+            decCsv,
+            cfg.videoType,
+            cfg.showPoster,
+            cfg.showSynopsis,
+            false,
+            cfg.textScrollSpeed,
+            cfg.jacketPanorama,
+            cfg.marqueePanorama,
+            cfg.snapshotPanoramaCount,
+            cfg.showVideo,
+            cfg.videoMaxDurationS,
+            effFps,
+            cfg.videoMode,
+            cfg.colorBoost
+        );
+        appendRawToBuf(m_ioScratch, scratchCap, pos, "}}}");
+
+        if (net::sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, scratchCap)) {
+            m_lastPublishedCfgGen = startGen;
+        }
+    }
+
+    if (!net::sendMqttSubscribePacket(mqttCli, 1, statusTopic, m_wantActive) ||
+        !net::sendMqttSubscribePacket(mqttCli, 2, readyTopic, m_wantActive)) {
+        net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+        return AcquireOutcome::BrokerUnreachable;
+    }
+
+    const uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
+    const uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
+    const uint32_t warmSettleMs = isFollowUpItemInTurn
+        ? 0U
+        : (soloSlot ? 2000U : ((prevSkips >= 1U && playedSoFar == 0U) ? 350U : 0U));
+    const uint32_t retainedWaitMs = isFollowUpItemInTurn
+        ? 200U
+        : (soloSlot ? 2400U : std::max<uint32_t>(250U, warmSettleMs));
 
     bool gotReadyItem = false;
     bool sawReadyFalse = false;
     bool sawServerOnline = false;
-    char itemIdBuf[MAX_ITEM_ID_LEN] = "";
-    bool itemHasStream = false;
-    uint32_t streamMaxMs = configuredMaxStreamMs(cfg) + 4000U;
+    uint32_t readyFalseAtMs = 0U;
+    const uint32_t waitReadyStart = millis();
 
-    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-
-    // =========================================================================
-    // STEP A: Scoped Pre-Stream MQTT Session (`net::RawMqttSocket`, zero heap, zero TIME_WAIT)
-    // =========================================================================
-    {
-        NetworkBudget::ScopedDmdNetActivity mqttAct(NetworkBudget::DmdNetActivity::Mqtt);
-        net::RawMqttSocket mqttCli;
-        if (!net::connectMqttBrokerSession(mqttCli, mqttHost, mqttPort, m_sessionId, m_mqttConnSeq, m_wantActive, 1500, 1000)) {
-            if (!m_wantActive.load(std::memory_order_acquire)) {
-                return true;
-            }
-            return false;
+    while (m_wantActive.load(std::memory_order_acquire) &&
+           !shouldYieldShowcaseToWebUi(m_hasPsram) &&
+           m_cfgGen.load(std::memory_order_acquire) == startGen &&
+           (millis() - waitReadyStart) < retainedWaitMs &&
+           !gotReadyItem) {
+        if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
+            break;
         }
-        m_consecutiveNetFailures = 0;
-        if (cfg.useShowcaseBroker) {
-            net::ShowcaseDiscovery::touchVerifiedHost(mqttHost, showcaseHttpPort);
-        }
-
-        if (m_lastPublishedCfgGen != startGen) {
-            uint16_t posterW = 32;
-            uint16_t posterH = 32;
-            computeCardPosterDims(m_width, m_height, posterW, posterH);
-            uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
-
-            char configTopic[80];
-            snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
-
-            size_t pos = 0U;
-            const size_t scratchCap = m_ioScratchCap;
-            m_ioScratch[0] = '\0';
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "{\"dmd_id\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, m_sessionId);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"client_ip\":\"");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"udp_ip\":\"");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, localIpBuf);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"transport\":\"mqtt_tcp\",\"width\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, m_width);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"height\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, m_height);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_width\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, posterW);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_height\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, posterH);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"udp_port\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, localUdpPort);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"lang\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"domains\":{\"");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, domain);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\":{\"systems\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.systems);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"genres\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.genres);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"decades\":");
-            appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.decades);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_type\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoType);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"show_poster\":");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showPoster ? "true" : "false");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_synopsis\":");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showSynopsis ? "true" : "false");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"text_scroll_speed\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.textScrollSpeed);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"jacket_panorama\":");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.jacketPanorama ? "true" : "false");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"marquee_panorama\":");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.marqueePanorama ? "true" : "false");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"snapshot_panorama_count\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.snapshotPanoramaCount);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_video\":");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showVideo ? "true" : "false");
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_max_duration_s\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.videoMaxDurationS);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_fps\":");
-            appendUintToBuf(m_ioScratch, scratchCap, pos, effFps);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_mode\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoMode);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"color_boost\":\"");
-            appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.colorBoost);
-            appendRawToBuf(m_ioScratch, scratchCap, pos, "\"}}}");
-
-            if (net::sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, scratchCap)) {
-                m_lastPublishedCfgGen = startGen;
-            }
-        }
-
-        net::sendMqttSubscribePacket(mqttCli, 1, statusTopic, m_wantActive);
-        net::sendMqttSubscribePacket(mqttCli, 2, readyTopic, m_wantActive);
-
-        char* primaryRxBuf = m_psramMqttRx
-            ? m_psramMqttRx
-            : reinterpret_cast<char*>(m_frame565);
-        size_t primaryRxCap = m_psramMqttRx
-            ? PSRAM_MQTT_RX_BYTES
-            : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
-
-        uint32_t waitReadyStart = millis();
-        uint32_t readyFalseAtMs = 0;
-
-        while (m_wantActive.load(std::memory_order_acquire) &&
-               !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-               m_cfgGen.load(std::memory_order_acquire) == startGen &&
-               (millis() - waitReadyStart) < maxWaitMs &&
-               !gotReadyItem) {
-            if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
+        if (mqttCli.available() >= 2U) {
+            int rawHdr = mqttCli.readByte();
+            if (rawHdr < 0) {
                 break;
             }
-            if (mqttCli.available() >= 2U) {
-                int rawHdr = mqttCli.readByte();
-                if (rawHdr < 0) {
+            const uint8_t fixedHdr = static_cast<uint8_t>(rawHdr);
+            uint32_t remLen = 0U;
+            uint32_t mult = 1U;
+            bool remOk = true;
+            for (int i = 0; i < 4; ++i) {
+                uint8_t b = 0U;
+                if (!mqttCli.readExact(&b, 1U, m_wantActive, 600U)) {
+                    remOk = false;
                     break;
                 }
-                uint8_t fixedHdr = static_cast<uint8_t>(rawHdr);
-                uint32_t remLen = 0U;
-                uint32_t mult = 1U;
-                for (int i = 0; i < 4; ++i) {
-                    uint8_t b = 0U;
-                    if (!mqttCli.readExact(&b, 1U, m_wantActive, 1000U)) break;
-                    remLen += static_cast<uint32_t>(b & 0x7FU) * mult;
-                    mult *= 128U;
-                    if ((b & 0x80U) == 0U) break;
-                }
-                const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 14336U;
-                if ((fixedHdr & 0xF0U) != 0x30U || remLen < 2U || remLen >= maxMqttPacketBytes) {
-                    if (remLen > 0U) {
-                        mqttCli.drain(remLen, m_wantActive, 1500U);
-                    }
-                    continue;
-                }
-
-                uint8_t tLenBe[2];
-                if (!mqttCli.readExact(tLenBe, 2U, m_wantActive, 1000U)) {
+                remLen += static_cast<uint32_t>(b & 0x7FU) * mult;
+                mult *= 128U;
+                if ((b & 0x80U) == 0U) {
                     break;
                 }
-                uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
-                if (static_cast<uint32_t>(tLen) + 2U > remLen) {
-                    mqttCli.drain(remLen - 2U, m_wantActive, 1000U);
-                    continue;
-                }
-                char topicBuf[112] = "";
-                size_t toReadT = (tLen < sizeof(topicBuf) - 1U) ? tLen : (sizeof(topicBuf) - 1U);
-                if (toReadT > 0U) {
-                    mqttCli.readExact(reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000U);
-                }
-                topicBuf[toReadT] = '\0';
-                if (tLen > toReadT) {
-                    mqttCli.drain(tLen - toReadT, m_wantActive, 1000U);
-                }
-                size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
-
-                char* payloadBuf = nullptr;
-                bool freePayloadAfter = false;
-                if (m_ioScratch && (payloadLen + 1U) <= m_ioScratchCap) {
-                    payloadBuf = m_ioScratch;
-                } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
-                    payloadBuf = primaryRxBuf;
-                } else if (showcaseLargest8BitBlock() >= (payloadLen + 2048U)) {
-                    payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
-                    freePayloadAfter = (payloadBuf != nullptr);
-                }
-                if (!payloadBuf) {
-                    mqttCli.drain(payloadLen, m_wantActive, 1500U);
-                    continue;
-                }
-                const bool borrowsFrameBuf = (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
-                if (borrowsFrameBuf && (m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-                    m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
-                }
-                auto releaseBorrowedFrameBuf = [&](bool preserveAliasedPoster) {
-                    if (!borrowsFrameBuf) return;
-                    const size_t totalFrameBytes = m_framePixels * sizeof(uint16_t);
-                    const size_t keepBytes = (preserveAliasedPoster && m_posterAliasesFrame && m_liveCard.hasPoster)
-                        ? std::min(totalFrameBytes, m_posterCapBytes)
-                        : 0U;
-                    if (totalFrameBytes > keepBytes) {
-                        memset(reinterpret_cast<uint8_t*>(m_frame565) + keepBytes, 0, totalFrameBytes - keepBytes);
-                    }
-                    if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-                        m_frameSeq.fetch_add(1, std::memory_order_release);
-                    }
-                };
-                if (!mqttCli.readExact(reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000U)) {
-                    releaseBorrowedFrameBuf(false);
-                    if (freePayloadAfter) free(payloadBuf);
+            }
+            if (!remOk) {
+                break;
+            }
+            if ((fixedHdr & 0xF0U) != 0x30U || remLen < 2U || remLen > 262144U) {
+                if (remLen > 0U && !mqttCli.drain(remLen, m_wantActive, 1500U)) {
                     break;
                 }
-                payloadBuf[payloadLen] = '\0';
+                continue;
+            }
 
-                if (strcmp(topicBuf, statusTopic) == 0) {
-                    StaticJsonDocument<192> sDoc;
-                    if (deserializeJson(sDoc, payloadBuf) == DeserializationError::Ok) {
-                        bool online = sDoc["online"] | false;
-                        if (!online) {
-                            if (freePayloadAfter) free(payloadBuf);
-                            releaseBorrowedFrameBuf(false);
-                            m_statusState.store(2, std::memory_order_release);
-                            m_lastPublishedCfgGen = 0;
-                            clearLiveCardState();
-                            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                                m_skipTurnImmediately.store(true, std::memory_order_release);
-                            }
-                            net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-                            return true;
-                        }
-                        sawServerOnline = true;
+            uint8_t tLenBe[2] = {0, 0};
+            if (!mqttCli.readExact(tLenBe, 2U, m_wantActive, 800U)) {
+                break;
+            }
+            const uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
+            uint32_t hdrConsumed = 2U + static_cast<uint32_t>(tLen);
+            const uint8_t qos = static_cast<uint8_t>((fixedHdr >> 1) & 0x03U);
+            if (qos > 0U) {
+                hdrConsumed += 2U;
+            }
+            if (hdrConsumed > remLen) {
+                mqttCli.drain(remLen - 2U, m_wantActive, 1000U);
+                continue;
+            }
+
+            char topicBuf[112] = "";
+            const size_t toReadT = (tLen < sizeof(topicBuf) - 1U) ? tLen : (sizeof(topicBuf) - 1U);
+            if (toReadT > 0U && !mqttCli.readExact(reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 800U)) {
+                break;
+            }
+            topicBuf[toReadT] = '\0';
+            if (tLen > toReadT && !mqttCli.drain(tLen - toReadT, m_wantActive, 800U)) {
+                break;
+            }
+            if (qos > 0U) {
+                uint8_t pktIdSkip[2];
+                if (!mqttCli.readExact(pktIdSkip, 2U, m_wantActive, 800U)) {
+                    break;
+                }
+            }
+
+            const size_t payloadLen = static_cast<size_t>(remLen - hdrConsumed);
+            if (strcmp(topicBuf, statusTopic) == 0) {
+                RawSocketJsonStream reader(mqttCli, m_wantActive, payloadLen);
+                StaticJsonDocument<64> sFilter;
+                sFilter["online"] = true;
+                StaticJsonDocument<128> sDoc;
+                const DeserializationError sErr = deserializeJson(
+                    sDoc,
+                    static_cast<Stream&>(reader),
+                    DeserializationOption::Filter(sFilter)
+                );
+                if (!reader.drainRemaining()) {
+                    break;
+                }
+                if (sErr == DeserializationError::Ok) {
+                    const bool online = sDoc["online"] | false;
+                    if (!online) {
+                        net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+                        return AcquireOutcome::ServerOffline;
                     }
-                } else if (strcmp(topicBuf, readyTopic) == 0) {
-                    bool explicitWarming = false;
-                    if (parseReadyPayloadInPlaceBuf(payloadBuf, cfg.showPoster, itemIdBuf, sizeof(itemIdBuf), itemHasStream, streamMaxMs, explicitWarming)) {
-                        gotReadyItem = true;
-                    } else if (explicitWarming) {
-                        m_statusState.store(1, std::memory_order_release);
+                    sawServerOnline = true;
+                }
+            } else if (strcmp(topicBuf, readyTopic) == 0) {
+                // Part A.3: Streaming filtered JSON parse directly off `RawMqttSocket` using
+                // `m_ioScratch` (`0` heap alloc, `0` drop on `> 8 KB` / `256x64` packets)!
+                RawSocketJsonStream reader(mqttCli, m_wantActive, payloadLen);
+                StaticJsonDocument<JSON_OBJECT_SIZE(28)> rFilter;
+                buildShowcaseMqttReadyFilter(rFilter);
+                ScratchSingleBlockAllocator scratchAlloc{m_ioScratch, m_ioScratchCap, false};
+                BasicJsonDocument<ScratchSingleBlockAllocator> doc(m_ioScratchCap, scratchAlloc);
+                const DeserializationError err = deserializeJson(
+                    doc,
+                    static_cast<Stream&>(reader),
+                    DeserializationOption::Filter(rFilter)
+                );
+                if (!reader.drainRemaining()) {
+                    break;
+                }
+                if (err == DeserializationError::Ok) {
+                    const bool rdy = doc["ready"] | false;
+                    JsonObjectConst cardObj = doc["card"].as<JsonObjectConst>();
+                    if (!rdy || cardObj.isNull()) {
                         if (!sawReadyFalse) {
                             sawReadyFalse = true;
                             readyFalseAtMs = millis();
                         }
+                    } else {
+                        extractShowcaseItemFromJson(
+                            doc.as<JsonObjectConst>(),
+                            cardObj,
+                            domain,
+                            m_sessionId,
+                            m_width,
+                            m_height,
+                            m_posterCapBytes,
+                            defaultAccent565(),
+                            outCard,
+                            outInfo.itemId,
+                            sizeof(outInfo.itemId),
+                            outInfo.posterPath,
+                            sizeof(outInfo.posterPath),
+                            outInfo.streamPath,
+                            sizeof(outInfo.streamPath),
+                            outInfo.hasStream,
+                            outInfo.streamMaxMs
+                        );
+                        m_activeItemStreamMaxMs.store(outInfo.streamMaxMs, std::memory_order_relaxed);
+                        m_hasReadyItem.store(true, std::memory_order_release);
+                        gotReadyItem = true;
                     }
-                }
-                releaseBorrowedFrameBuf(true);
-                if (freePayloadAfter) {
-                    free(payloadBuf);
                 }
             } else {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-        }
-
-        if (!gotReadyItem) {
-            net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
-            if (shouldYieldShowcaseToWebUi(m_hasPsram)) {
-                return true;
-            }
-            if (!sawReadyFalse) {
-                m_lastPublishedCfgGen = 0;
-            }
-            if (sawReadyFalse || sawServerOnline) {
-                m_statusState.store(1, std::memory_order_release);
-                if (playedSoFar == 0U && prevSkips < 10U) {
-                    m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
-                } else if (playedSoFar > 0U) {
-                    m_consecutiveWarmSkips.store(0, std::memory_order_release);
+                if (payloadLen > 0U && !mqttCli.drain(payloadLen, m_wantActive, 1000U)) {
+                    break;
                 }
-                if (!soloSlot) {
-                    for (int w = 0;
-                         w < 56 &&
-                         m_wantActive.load(std::memory_order_acquire) &&
-                         !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-                         m_cfgGen.load(std::memory_order_acquire) == startGen;
-                         ++w) {
-                        vTaskDelay(pdMS_TO_TICKS(50));
-                    }
-                    m_skipTurnImmediately.store(true, std::memory_order_release);
-                } else {
-                    for (int w = 0;
-                         w < 10 &&
-                         m_wantActive.load(std::memory_order_acquire) &&
-                         !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-                         m_cfgGen.load(std::memory_order_acquire) == startGen;
-                         ++w) {
-                        vTaskDelay(pdMS_TO_TICKS(50));
-                    }
-                }
-                return true;
             }
-            return false;
+        } else {
+            if (!mqttCli.connected()) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(8));
         }
+    }
 
-        net::sendMqttUnsubscribePacket(mqttCli, 3, readyTopic, m_wantActive);
-        char startCardCmd[256];
-        snprintf(
-            startCardCmd,
-            sizeof(startCardCmd),
-            "{\"action\":\"start_card\",\"item_id\":\"%s\",\"transport\":\"mqtt_tcp\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
-            itemIdBuf,
-            localIpBuf,
-            localIpBuf
-        );
-        net::sendMqttPublishPacket(mqttCli, eventsTopic, startCardCmd, false, m_wantActive, m_ioScratch, m_ioScratchCap);
+    if (!m_wantActive.load(std::memory_order_acquire) || shouldYieldShowcaseToWebUi(m_hasPsram)) {
         net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+        return AcquireOutcome::Aborted;
     }
 
-    m_consecutiveWarmSkips.store(0, std::memory_order_release);
-
-    // =========================================================================
-    // STEP B: Zero-Socket Organic Card Dwell
-    // =========================================================================
-    uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(m_liveCard.synopsis));
-    uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
-    uint32_t cardWaitMs = 4500U;
-    if (cfg.showSynopsis && synGlyphs > 0U) {
-        uint32_t textW = synGlyphs * 6U;
-        uint32_t availW = static_cast<uint32_t>(
-            engines::showcase::ShowcaseCardRenderer::computeCardTextViewportWidth(m_width, m_height, cfg.showPoster)
-        );
-        if (textW > availW) {
-            uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
-            uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
-            if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+    if (!gotReadyItem) {
+        const bool sockDropped = !mqttCli.connected();
+        net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+        if (!sawReadyFalse) {
+            m_lastPublishedCfgGen = 0;
         }
-    }
-    uint32_t cardT0 = millis();
-    while (m_wantActive.load(std::memory_order_acquire) &&
-           !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-           m_cfgGen.load(std::memory_order_acquire) == startGen &&
-           (millis() - cardT0) < cardWaitMs) {
-        vTaskDelay(pdMS_TO_TICKS(30));
-    }
-
-    // =========================================================================
-    // STEP C: Credit-Acked WebSocket / Paced TCP Stream Handoff (`DMDZ` / `DMDS`)
-    // =========================================================================
-    if (m_wantActive.load(std::memory_order_acquire) &&
-        !shouldYieldShowcaseToWebUi(m_hasPsram) &&
-        m_cfgGen.load(std::memory_order_acquire) == startGen &&
-        itemHasStream &&
-        outHttpFallbackItemId &&
-        fallbackItemCap > 0U) {
-        copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
-        return true;
+        if (sawReadyFalse || sawServerOnline) {
+            return AcquireOutcome::ServerWarming;
+        }
+        if (sockDropped) {
+            return AcquireOutcome::BrokerUnreachable;
+        }
+        // Broker connected cleanly, but Showcase service published neither `status` nor `ready`
+        // within `250 ms` -> chain into HTTP fallback in the same turn to verify `:8890` directly!
+        return AcquireOutcome::BrokerUnreachable;
     }
 
-    finishTurnItem();
-    return true;
+    net::sendMqttUnsubscribePacket(mqttCli, 3, readyTopic, m_wantActive);
+    char startCardCmd[256];
+    snprintf(
+        startCardCmd,
+        sizeof(startCardCmd),
+        "{\"action\":\"start_card\",\"item_id\":\"%s\",\"transport\":\"mqtt_tcp\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+        outInfo.itemId,
+        localIpBuf,
+        localIpBuf
+    );
+    net::sendMqttPublishPacket(mqttCli, eventsTopic, startCardCmd, false, m_wantActive, m_ioScratch, m_ioScratchCap);
+    net::sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+    return AcquireOutcome::ReadyItem;
 #else
     (void)cfg;
+    (void)extras;
     (void)domain;
     (void)reqLang;
-    (void)outHttpFallbackItemId;
-    (void)fallbackItemCap;
-    return false;
+    (void)startGen;
+    (void)isFollowUpItemInTurn;
+    return AcquireOutcome::BrokerUnreachable;
 #endif
 }
 
-void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
-    if (!m_ioScratch) return;
-
-    auto handleTransientHttpFailure = [this]() {
-        if (m_consecutiveNetFailures < 10U) {
-            ++m_consecutiveNetFailures;
-        }
-        if (shouldReportNetworkOffline(m_consecutiveNetFailures)) {
-            m_statusState.store(2, std::memory_order_release);
-            clearLiveCardState();
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
-        } else if (m_statusState.load(std::memory_order_acquire) != 0U) {
-            m_statusState.store(1, std::memory_order_release);
-        }
-#if defined(ESP32)
-        for (int w = 0; w < 10 && m_wantActive.load(std::memory_order_acquire); ++w) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-#endif
-    };
-
-    char baseServerUrl[112] = "";
-    char resolvedHost[64] = "";
-    uint16_t resolvedPort = 8890;
-    {
-        bool resolvedOnline = false;
-        if (!net::ShowcaseDiscovery::resolveUrl(
-                cfg.serverUrl,
-                baseServerUrl,
-                sizeof(baseServerUrl),
-                resolvedHost,
-                sizeof(resolvedHost),
-                resolvedPort,
-                resolvedOnline,
-                nullptr,
-                0,
-                true,
-                false) ||
-            net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHost)) {
-            handleTransientHttpFailure();
-            return;
-        }
+MediaShowcaseBase::AcquireOutcome MediaShowcaseBase::acquireItemViaHttp(
+    const ConfigSlot& cfg,
+    const ConfigExtras* extras,
+    const char* domain,
+    const char* reqLang,
+    uint32_t startGen,
+    CardSnapshot& outCard,
+    AcquiredItemInfo& outInfo
+) {
+    outCard = CardSnapshot{};
+    outInfo = AcquiredItemInfo{};
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!m_ioScratch || m_ioScratchCap < 512U) {
+        return AcquireOutcome::ServerOffline;
     }
 
-    net::SecureHttpOptions httpOpts;
-    httpOpts.ownerId = net::OWNER_SHOWCASE;
-    httpOpts.requestTimeoutMs = 3500;
-    httpOpts.handshakeTimeoutSec = 2;
-    httpOpts.keepAlive = false;
+    char resolvedHost[64] = "";
+    uint16_t resolvedPort = 8890;
+    bool resolvedOnline = false;
+    if (!net::ShowcaseDiscovery::resolveUrl(
+            cfg.serverUrl,
+            outInfo.baseServerUrl,
+            sizeof(outInfo.baseServerUrl),
+            resolvedHost,
+            sizeof(resolvedHost),
+            resolvedPort,
+            resolvedOnline,
+            nullptr,
+            0,
+            true,
+            false) ||
+        net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHost)) {
+        return AcquireOutcome::ServerOffline;
+    }
+
+    bool isHttps = false;
+    (void)net::parseEndpointHostAndPort(
+        outInfo.baseServerUrl,
+        resolvedPort,
+        resolvedHost,
+        sizeof(resolvedHost),
+        resolvedPort,
+        &isHttps
+    );
 
     uint16_t pw = 32;
     uint16_t ph = 32;
     computeCardPosterDims(m_width, m_height, pw, ph);
-    uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
+    const uint8_t effFps = resolveEffectiveVideoFps(cfg.videoFps, m_hasPsram);
+    const char* sysCsv = extras ? extras->systems : "";
+    const char* genCsv = extras ? extras->genres : "";
+    const char* decCsv = extras ? extras->decades : "";
 
     size_t pos = 0U;
     const size_t scratchCap = m_ioScratchCap;
@@ -1573,305 +2450,466 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     appendUintToBuf(m_ioScratch, scratchCap, pos, pw);
     appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"poster_height\":");
     appendUintToBuf(m_ioScratch, scratchCap, pos, ph);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"systems\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.systems);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"genres\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.genres);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"decades\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, scratchCap, pos, cfg.decades);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_type\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoType);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"include_poster\":");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showPoster ? "true" : "false");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"include_synopsis\":");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showSynopsis ? "true" : "false");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"text_scroll_speed\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.textScrollSpeed);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"jacket_panorama\":");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.jacketPanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"marquee_panorama\":");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.marqueePanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"snapshot_panorama_count\":");
-    appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.snapshotPanoramaCount);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"show_video\":");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, cfg.showVideo ? "true" : "false");
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_fps\":");
-    appendUintToBuf(m_ioScratch, scratchCap, pos, effFps);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_max_duration_s\":");
-    appendUintToBuf(m_ioScratch, scratchCap, pos, cfg.videoMaxDurationS);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"video_mode\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.videoMode);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"color_boost\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, cfg.colorBoost);
-    appendRawToBuf(m_ioScratch, scratchCap, pos, "\",\"lang\":\"");
+    appendCharToBuf(m_ioScratch, scratchCap, pos, ',');
+    appendShowcaseCommonConfigJson(
+        m_ioScratch,
+        scratchCap,
+        pos,
+        sysCsv,
+        genCsv,
+        decCsv,
+        cfg.videoType,
+        cfg.showPoster,
+        cfg.showSynopsis,
+        true,
+        cfg.textScrollSpeed,
+        cfg.jacketPanorama,
+        cfg.marqueePanorama,
+        cfg.snapshotPanoramaCount,
+        cfg.showVideo,
+        cfg.videoMaxDurationS,
+        effFps,
+        cfg.videoMode,
+        cfg.colorBoost
+    );
+    appendRawToBuf(m_ioScratch, scratchCap, pos, ",\"lang\":\"");
     appendJsonEscapedToBuf(m_ioScratch, scratchCap, pos, reqLang);
     appendRawToBuf(m_ioScratch, scratchCap, pos, "\"}");
 
+    const uint8_t rotSlots = m_rotationSlotCount.load(std::memory_order_relaxed);
+    const uint32_t httpConnTimeoutMs = (rotSlots <= 1U) ? 1200U : 550U;
     {
-        char cfgUrl[160];
-        snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", baseServerUrl, domain);
-        auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", m_ioScratch, httpOpts);
-        if (!cfgResp.ok()) {
-            handleTransientHttpFailure();
-            return;
-        }
+        const uint32_t httpStartMs = millis();
+        m_mqttConnectedAtMs.store(httpStartMs != 0U ? httpStartMs : 1U, std::memory_order_release);
     }
 
-    if (!m_wantActive.load(std::memory_order_acquire)) return;
-
-    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-
-    char unifiedStreamPath[224] = "";
-    uint32_t cardWaitMs = 4500U;
-    {
-        char posterPathBuf[224] = "";
-        CardSnapshot nextCard;
-        bool parsedReady = false;
-        bool serverWarming = false;
-        {
-            char nextUrl[192];
-        snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
-        auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
-        if (!nextResp.ok()) {
-            handleTransientHttpFailure();
-            return;
+    auto parseFilteredNextDoc = [&](JsonObjectConst rootObj) -> AcquireOutcome {
+        const char* status = rootObj["status"] | "warming";
+        JsonObjectConst item = rootObj["item"].as<JsonObjectConst>();
+        if (strcmp(status, "ready") != 0 || item.isNull()) {
+            return AcquireOutcome::ServerWarming;
         }
-        m_consecutiveNetFailures = 0;
+        extractShowcaseItemFromJson(
+            rootObj,
+            item,
+            domain,
+            m_sessionId,
+            m_width,
+            m_height,
+            m_posterCapBytes,
+            defaultAccent565(),
+            outCard,
+            outInfo.itemId,
+            sizeof(outInfo.itemId),
+            outInfo.posterPath,
+            sizeof(outInfo.posterPath),
+            outInfo.streamPath,
+            sizeof(outInfo.streamPath),
+            outInfo.hasStream,
+            outInfo.streamMaxMs
+        );
+        m_activeItemStreamMaxMs.store(outInfo.streamMaxMs, std::memory_order_relaxed);
+        m_hasReadyItem.store(true, std::memory_order_release);
+        return AcquireOutcome::ReadyItem;
+    };
+
+    if (!isHttps) {
+        // Zero-heap, zero-TIME_WAIT plain HTTP path via `RawMqttSocket` (`SO_LINGER {1, 0}`)
+        {
+            char reqHdr[256];
+            const int hdrLen = snprintf(
+                reqHdr,
+                sizeof(reqHdr),
+                "POST /api/v1/%s/config HTTP/1.1\r\n"
+                "Host: %s:%u\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: %u\r\n"
+                "Connection: close\r\n\r\n",
+                domain,
+                resolvedHost,
+                static_cast<unsigned>(resolvedPort),
+                static_cast<unsigned>(pos)
+            );
+            if (hdrLen <= 0 || static_cast<size_t>(hdrLen) >= sizeof(reqHdr)) {
+                return AcquireOutcome::ServerOffline;
+            }
+            net::RawMqttSocket cfgSock;
+            int statusCode = 0;
+            size_t contentLen = 0U;
+            bool hasCl = false;
+            bool chunked = false;
+            const bool cfgOk = openRawHttpSession(
+                cfgSock,
+                resolvedHost,
+                resolvedPort,
+                reqHdr,
+                static_cast<size_t>(hdrLen),
+                m_ioScratch,
+                pos,
+                m_wantActive,
+                httpConnTimeoutMs,
+                1800U,
+                statusCode,
+                contentLen,
+                hasCl,
+                chunked
+            );
+            cfgSock.closeAbort();
+            if (!cfgOk) {
+                return m_wantActive.load(std::memory_order_acquire)
+                    ? AcquireOutcome::ServerOffline
+                    : AcquireOutcome::Aborted;
+            }
+            const uint32_t postCfgAt = millis();
+            m_mqttConnectedAtMs.store(postCfgAt != 0U ? postCfgAt : 1U, std::memory_order_release);
+        }
+
+        if (!m_wantActive.load(std::memory_order_acquire) ||
+            shouldYieldShowcaseToWebUi(m_hasPsram) ||
+            m_cfgGen.load(std::memory_order_acquire) != startGen) {
+            return AcquireOutcome::Aborted;
+        }
+
+        char getReq[256];
+        const int getLen = snprintf(
+            getReq,
+            sizeof(getReq),
+            "GET /api/v1/%s/next?client_id=%s HTTP/1.1\r\n"
+            "Host: %s:%u\r\n"
+            "Accept: application/json\r\n"
+            "Connection: close\r\n\r\n",
+            domain,
+            m_sessionId,
+            resolvedHost,
+            static_cast<unsigned>(resolvedPort)
+        );
+        if (getLen <= 0 || static_cast<size_t>(getLen) >= sizeof(getReq)) {
+            return AcquireOutcome::ServerOffline;
+        }
+        net::RawMqttSocket nextSock;
+        int statusCode = 0;
+        size_t contentLen = 0U;
+        bool hasCl = false;
+        bool chunked = false;
+        if (!openRawHttpSession(
+                nextSock,
+                resolvedHost,
+                resolvedPort,
+                getReq,
+                static_cast<size_t>(getLen),
+                nullptr,
+                0U,
+                m_wantActive,
+                httpConnTimeoutMs,
+                2200U,
+                statusCode,
+                contentLen,
+                hasCl,
+                chunked)) {
+            return AcquireOutcome::ServerOffline;
+        }
         net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
 
-        char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
-        size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
-        size_t respBytes = nextResp.contentLength();
-        if (!rxBuf && m_ioScratch && respBytes > 0U && (respBytes + 1U) <= m_ioScratchCap) {
-            rxBuf = m_ioScratch;
-            rxCap = m_ioScratchCap;
+        RawSocketJsonStream reader(nextSock, m_wantActive, contentLen, hasCl, chunked);
+        StaticJsonDocument<JSON_OBJECT_SIZE(28)> nFilter;
+        buildShowcaseHttpNextFilter(nFilter);
+        ScratchSingleBlockAllocator scratchAlloc{m_ioScratch, m_ioScratchCap, false};
+        BasicJsonDocument<ScratchSingleBlockAllocator> doc(m_ioScratchCap, scratchAlloc);
+        const DeserializationError err = deserializeJson(
+            doc,
+            static_cast<Stream&>(reader),
+            DeserializationOption::Filter(nFilter)
+        );
+        nextSock.closeAbort();
+        if (err != DeserializationError::Ok) {
+            return AcquireOutcome::ServerOffline;
         }
-
-        auto extractNextRoot = [&](JsonObjectConst rootObj) {
-            const char* status = rootObj["status"] | "warming";
-            JsonObjectConst item = rootObj["item"].as<JsonObjectConst>();
-            if (strcmp(status, "ready") == 0 && !item.isNull()) {
-                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
-                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-                nextCard.posterW = pw;
-                nextCard.posterH = ph;
-                nextCard.hasData = true;
-                JsonObjectConst assetsObj = item["assets"].as<JsonObjectConst>();
-                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
-                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
-                float totDur = item["stream_duration_s"] | (item["total_stream_duration_s"] | 8.0f);
-                if (totDur < 2.0f) totDur = 2.0f;
-                m_activeItemStreamMaxMs.store(
-                    static_cast<uint32_t>((totDur + 4.0f) * 1000.0f),
-                    std::memory_order_relaxed
-                );
-                const char* posterB64 = item["poster_rgb565_b64"] | "";
-                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
-                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-                        nextCard.hasPoster = true;
-                    }
-                }
-                parsedReady = true;
-            } else {
-                serverWarming = true;
-            }
-        };
-
-        const bool rxBorrowsFrame = (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565 != nullptr);
-        bool freeRxBufAfter = false;
-#if defined(ESP32)
-        if (!rxBuf && respBytes > 0U && respBytes <= 12288U && showcaseLargest8BitBlock() >= (respBytes + 2048U)) {
-            rxBuf = static_cast<char*>(malloc(respBytes + 1U));
-            if (rxBuf) {
-                rxCap = respBytes + 1U;
-                freeRxBufAfter = true;
-            }
-        }
-#endif
-        if (rxBuf && respBytes > 0U && (respBytes + 1U) <= rxCap) {
-            if (rxBorrowsFrame && (m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-                m_frameSeq.fetch_add(1, std::memory_order_acq_rel);
-            }
-            const bool readOk = readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive);
-            if (readOk) {
-                rxBuf[respBytes] = '\0';
-                StaticJsonDocument<JSON_OBJECT_SIZE(44)> nextDoc;
-                if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
-                    extractNextRoot(nextDoc.as<JsonObjectConst>());
-                }
-            }
-            if (rxBorrowsFrame) {
-                const size_t totalFrameBytes = m_framePixels * sizeof(uint16_t);
-                const size_t keepBytes = (readOk && m_posterAliasesFrame && nextCard.hasPoster)
-                    ? std::min(totalFrameBytes, m_posterCapBytes)
-                    : 0U;
-                if (totalFrameBytes > keepBytes) {
-                    memset(reinterpret_cast<uint8_t*>(m_frame565) + keepBytes, 0, totalFrameBytes - keepBytes);
-                }
-                if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-                    m_frameSeq.fetch_add(1, std::memory_order_release);
-                }
-            }
-            if (freeRxBufAfter) {
-                free(rxBuf);
-                rxBuf = nullptr;
-            }
-        } else {
-            if (freeRxBufAfter && rxBuf) {
-                free(rxBuf);
-                rxBuf = nullptr;
-            }
-            DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
-            if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
-                extractNextRoot(nextDoc.as<JsonObjectConst>());
-            }
-        }
+        return parseFilteredNextDoc(doc.as<JsonObjectConst>());
     }
 
-    if (!parsedReady) {
-        if (serverWarming) {
-            m_statusState.store(1, std::memory_order_release);
-            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                m_skipTurnImmediately.store(true, std::memory_order_release);
-            }
-        } else {
-            handleTransientHttpFailure();
-        }
-        return;
-    }
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    // TLS (`https://`) path via `SecureHttpClient` + filtered streaming JSON parse (PSRAM targets)
+    net::SecureHttpOptions httpOpts;
+    httpOpts.ownerId = net::OWNER_SHOWCASE;
+    httpOpts.requestTimeoutMs = 3000;
+    httpOpts.handshakeTimeoutSec = 2;
+    httpOpts.keepAlive = false;
 
-    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-    if (cfg.showPoster && !nextCard.hasPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterPathBuf[0] != '\0') {
-        char posterUrl[288];
-        if (strncmp(posterPathBuf, "http", 4) == 0) {
-            copySafeStr(posterUrl, sizeof(posterUrl), posterPathBuf);
-        } else {
-            snprintf(posterUrl, sizeof(posterUrl), "%s%s", baseServerUrl, posterPathBuf);
-        }
-        auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
-        if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
-            nextCard.hasPoster = true;
+    {
+        char cfgUrl[160];
+        snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", outInfo.baseServerUrl, domain);
+        auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", m_ioScratch, httpOpts);
+        if (!cfgResp.ok()) {
+            return AcquireOutcome::ServerOffline;
         }
     }
-
-    m_seq.fetch_add(1, std::memory_order_acq_rel);
-    m_liveCard = nextCard;
-    m_seq.fetch_add(1, std::memory_order_release);
-    m_statusState.store(0, std::memory_order_release);
-    m_phaseStartedAtMs = millis();
-    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-
-        uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(nextCard.synopsis));
-        uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
-        if (cfg.showSynopsis && synGlyphs > 0U) {
-            uint32_t textW = synGlyphs * 6U;
-            uint32_t availW = static_cast<uint32_t>(
-                engines::showcase::ShowcaseCardRenderer::computeCardTextViewportWidth(m_width, m_height, cfg.showPoster)
-            );
-            if (textW > availW) {
-                uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
-                uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
-                if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
-            }
-        }
+    if (!m_wantActive.load(std::memory_order_acquire) ||
+        shouldYieldShowcaseToWebUi(m_hasPsram) ||
+        m_cfgGen.load(std::memory_order_acquire) != startGen) {
+        return AcquireOutcome::Aborted;
     }
-    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
-    uint32_t t0 = millis();
-    while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - t0) < cardWaitMs) {
-#if defined(ESP32)
-        vTaskDelay(pdMS_TO_TICKS(40));
+
+    char nextUrl[192];
+    snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", outInfo.baseServerUrl, domain, m_sessionId);
+    auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
+    if (!nextResp.ok()) {
+        return AcquireOutcome::ServerOffline;
+    }
+    net::ShowcaseDiscovery::touchVerifiedHost(resolvedHost, resolvedPort);
+
+    StaticJsonDocument<JSON_OBJECT_SIZE(28)> nFilter;
+    buildShowcaseHttpNextFilter(nFilter);
+    ScratchSingleBlockAllocator scratchAlloc{m_ioScratch, m_ioScratchCap, false};
+    BasicJsonDocument<ScratchSingleBlockAllocator> doc(m_ioScratchCap, scratchAlloc);
+    if (deserializeJson(doc, nextResp.stream(), DeserializationOption::Filter(nFilter)) != DeserializationError::Ok) {
+        return AcquireOutcome::ServerOffline;
+    }
+    return parseFilteredNextDoc(doc.as<JsonObjectConst>());
 #else
-        break;
+    return AcquireOutcome::ServerOffline;
 #endif
-    }
-
-    if (m_wantActive.load(std::memory_order_acquire) &&
-        m_cfgGen.load(std::memory_order_acquire) == startGen &&
-        unifiedStreamPath[0] != '\0') {
-        streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
-    }
-
-    finishTurnItem();
+#else
+    (void)cfg;
+    (void)extras;
+    (void)domain;
+    (void)reqLang;
+    (void)startGen;
+    return AcquireOutcome::ServerOffline;
+#endif
 }
 
-bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
-    if (!serverUrl || !streamPath || streamPath[0] == '\0') {
+bool MediaShowcaseBase::fetchBinaryPosterRgb565(
+    const char* baseServerUrl,
+    const char* posterPath,
+    uint16_t* dst565,
+    size_t expectedBytes
+) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!dst565 || expectedBytes == 0U || !posterPath || posterPath[0] == '\0') {
         return false;
     }
 
-    // Blank the entire Info Card to pure black BEFORE clearing/repurposing `m_poster565` so the
-    // mini-jacket never visibly vanishes inside a still-displayed Card while opening the stream.
-    blankCardBeforeStream();
-    if (m_posterAliasesFrame && m_frame565) {
-        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-            m_frameSeq.fetch_add(1U, std::memory_order_acq_rel);
+    char host[64] = "";
+    uint16_t port = 8890;
+    bool isHttps = false;
+    const char* reqPath = posterPath;
+
+    if (strncmp(posterPath, "http://", 7) == 0 || strncmp(posterPath, "https://", 8) == 0) {
+        if (!net::parseEndpointHostAndPort(posterPath, 8890, host, sizeof(host), port, &isHttps)) {
+            return false;
         }
+        const char* afterScheme = strstr(posterPath, "://");
+        const char* slash = afterScheme ? strchr(afterScheme + 3, '/') : nullptr;
+        reqPath = slash ? slash : "/";
+    } else {
+        if (!baseServerUrl ||
+            !net::parseEndpointHostAndPort(baseServerUrl, 8890, host, sizeof(host), port, &isHttps)) {
+            return false;
+        }
+    }
+    (void)net::ShowcaseDiscovery::resolveHostInPlace(host, sizeof(host), port, false);
+
+    if (!isHttps) {
+        char req[320];
+        const int reqLen = snprintf(
+            req,
+            sizeof(req),
+            "GET %s HTTP/1.1\r\n"
+            "Host: %s:%u\r\n"
+            "Connection: close\r\n\r\n",
+            reqPath,
+            host,
+            static_cast<unsigned>(port)
+        );
+        if (reqLen <= 0 || static_cast<size_t>(reqLen) >= sizeof(req)) {
+            return false;
+        }
+        net::RawMqttSocket sock;
+        int statusCode = 0;
+        size_t contentLen = 0U;
+        bool hasCl = false;
+        bool chunked = false;
+        if (!openRawHttpSession(
+                sock,
+                host,
+                port,
+                req,
+                static_cast<size_t>(reqLen),
+                nullptr,
+                0U,
+                m_wantActive,
+                650U,
+                1500U,
+                statusCode,
+                contentLen,
+                hasCl,
+                chunked)) {
+            return false;
+        }
+        if (hasCl && contentLen < expectedBytes) {
+            sock.closeAbort();
+            return false;
+        }
+
+        uint8_t* dstBytes = reinterpret_cast<uint8_t*>(dst565);
+        bool ok = false;
+        if (!chunked) {
+            ok = sock.readExact(dstBytes, expectedBytes, m_wantActive, 1800U);
+        } else {
+            RawSocketJsonStream bodyStream(sock, m_wantActive, contentLen, hasCl, true);
+            ok = readExactFromStream(bodyStream, dstBytes, expectedBytes, m_wantActive, 1800U);
+        }
+        sock.closeAbort();
+        return ok;
+    }
+
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    char posterUrl[320];
+    if (strncmp(posterPath, "http", 4) == 0) {
+        copySafeStr(posterUrl, sizeof(posterUrl), posterPath);
+    } else {
+        snprintf(posterUrl, sizeof(posterUrl), "%s%s", baseServerUrl ? baseServerUrl : "", posterPath);
+    }
+    net::SecureHttpOptions httpOpts;
+    httpOpts.ownerId = net::OWNER_SHOWCASE;
+    httpOpts.requestTimeoutMs = 2200;
+    httpOpts.handshakeTimeoutSec = 2;
+    httpOpts.keepAlive = false;
+    auto resp = net::SecureHttpClient::get(posterUrl, httpOpts);
+    return resp.ok() && readExactFromStream(resp.stream(), reinterpret_cast<uint8_t*>(dst565), expectedBytes, m_wantActive, 2000U);
+#else
+    return false;
+#endif
+#else
+    (void)baseServerUrl;
+    (void)posterPath;
+    (void)dst565;
+    (void)expectedBytes;
+    return false;
+#endif
+}
+
+
+namespace {
+
+template <typename T>
+struct ScratchSessionGuard {
+    T* ptr = nullptr;
+    bool heapOwned = false;
+
+    ScratchSessionGuard(char* scratch, size_t scratchCap) {
+        if (scratch && scratchCap >= sizeof(T) &&
+            (reinterpret_cast< uintptr_t >(scratch) % alignof(T)) == 0U) {
+            ptr = new (scratch) T();
+            heapOwned = false;
+        } else {
+            void* mem = malloc(sizeof(T));
+            if (mem) {
+                ptr = new (mem) T();
+                heapOwned = true;
+            }
+        }
+    }
+
+    ~ScratchSessionGuard() {
+        if (ptr) {
+            ptr->~T();
+            if (heapOwned) {
+                free(ptr);
+            }
+            ptr = nullptr;
+        }
+    }
+
+    ScratchSessionGuard(const ScratchSessionGuard&) = delete;
+    ScratchSessionGuard& operator=(const ScratchSessionGuard&) = delete;
+};
+
+} // namespace
+
+void MediaShowcaseBase::executeAcquiredItem(
+    const ConfigSlot& cfg,
+    const char* /*domain*/,
+    uint32_t startGen,
+    CardSnapshot& card,
+    const AcquiredItemInfo& info
+) {
+    // Disarm any previous item's stream before touching poster/card buffers
+    if (m_streamExecMode.load(std::memory_order_acquire) != static_cast<uint8_t>(StreamExecMode::LegacyFramePtr) ||
+        m_liveCard.hasVideoFrame) {
+        resetCore1StreamState();
+        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+        m_publishedFramePtr.store(nullptr, std::memory_order_release);
+        m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        m_liveCard.hasVideoFrame = false;
+        m_seq.fetch_add(1U, std::memory_order_release);
         waitRenderBlitQuiescent();
-        if (m_liveCard.hasPoster) {
-            m_seq.fetch_add(1U, std::memory_order_acq_rel);
-            m_liveCard.hasPoster = false;
-            m_seq.fetch_add(1U, std::memory_order_release);
+    }
+    freeSpscRingBuffer();
+
+    // Ensure `m_poster565` is available (e.g., on item 2..N of a multi-item rotation turn)
+    const size_t expectedPosterBytes = static_cast<size_t>(card.posterW) * static_cast<size_t>(card.posterH) * sizeof(uint16_t);
+    if (cfg.showPoster && !m_poster565 && m_posterCapBytes >= expectedPosterBytes && m_posterCapBytes > 0U) {
+#if defined(ESP32) && SHOWCASE_SUPPORT_PSRAM_PRELOAD
+        if (m_hasPsram) {
+            m_poster565 = static_cast<uint16_t*>(heap_caps_malloc(m_posterCapBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         }
-        memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-        if ((m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-            m_frameSeq.fetch_add(1U, std::memory_order_release);
+#endif
+        if (!m_poster565) {
+            m_poster565 = static_cast<uint16_t*>(malloc(m_posterCapBytes));
+        }
+        if (m_poster565) {
+            memset(m_poster565, 0, m_posterCapBytes);
+        }
+    }
+
+    if (cfg.showPoster &&
+        !card.hasPoster &&
+        m_poster565 &&
+        expectedPosterBytes > 0U &&
+        expectedPosterBytes <= m_posterCapBytes &&
+        info.posterPath[0] != '\0') {
+        if (fetchBinaryPosterRgb565(info.baseServerUrl, info.posterPath, m_poster565, expectedPosterBytes)) {
+            card.hasPoster = true;
+        }
+    }
+
+    // Publish Info Card to Core 1
+    m_seq.fetch_add(1U, std::memory_order_acq_rel);
+    m_liveCard = card;
+    m_seq.fetch_add(1U, std::memory_order_release);
+    m_statusState.store(0, std::memory_order_release);
+    m_hasReadyItem.store(true, std::memory_order_release);
+    m_readyStateReceived.store(true, std::memory_order_release);
+    m_turnEvaluated.store(true, std::memory_order_release);
+    m_phaseStartedAtMs = millis();
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+
+    // Compute full-synopsis Card dwell (`900 ms` start hold + full scroll + `700 ms` end hold)
+    uint32_t cardWaitMs = 4500U;
+    const uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(card.synopsis));
+    const uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+    if (cfg.showSynopsis && synGlyphs > 0U && speedPx > 0U) {
+        const uint32_t textW = synGlyphs * 6U;
+        const uint32_t availW = static_cast<uint32_t>(
+            engines::showcase::ShowcaseCardRenderer::computeCardTextViewportWidth(m_width, m_height, cfg.showPoster)
+        );
+        if (textW > availW) {
+            const uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
+            const uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
+            if (synScrollMs > cardWaitMs) {
+                cardWaitMs = synScrollMs;
+            }
         }
     }
 
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (!m_ioScratch) {
-        return false;
-    }
-    struct StepCFrameGuard {
-        MediaShowcaseBase* self;
-        bool releaseOnExit;
-        StepCFrameGuard(MediaShowcaseBase* s, bool rel) : self(s), releaseOnExit(rel) {}
-        ~StepCFrameGuard() {
-            if (releaseOnExit && self) {
-                self->releaseStepCFrameBuffer();
-            }
-        }
-    };
-    const bool acquiredTempFrame = (!m_hasPsram && m_frame565 == nullptr) ? acquireStepCFrameBuffer() : false;
-    StepCFrameGuard stepCGuard(this, acquiredTempFrame);
-#endif
-    if (!m_frame565) {
-        return false;
-    }
-
-    m_presentedStreamFrames.store(0, std::memory_order_release);
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-
     struct ShowcaseStreamCtx {
         MediaShowcaseBase* self;
         uint32_t startGen;
-    } ctx{this, m_cfgGen.load(std::memory_order_acquire)};
+    } ctx{this, startGen};
 
-    net::DmdzStreamParams params;
-    params.serverUrl = serverUrl;
-    params.streamPath = streamPath;
-    params.clientId = m_sessionId;
-    params.logTag = "Showcase";
-    params.ownerId = net::OWNER_SHOWCASE;
-    params.wsCredits = m_hasPsram
-        ? 8U
-        : ((m_ioScratchCap >= 5632U) ? 4U : ((m_ioScratchCap >= 3072U) ? 3U : 2U));
-    params.panelWidth = m_width;
-    params.panelHeight = m_height;
-    params.configuredStreamMs = effectiveMaxStreamMs(cfg);
-    params.maxFramePixels = m_framePixels;
-    params.frameBuf0 = m_frame565;
-    params.frameBuf1 = m_frame565Back;
-    params.ioScratch = m_ioScratch;
-    params.ioScratchCap = m_ioScratch ? m_ioScratchCap : 0U;
-    params.userCtx = &ctx;
-
-    params.checkStop = [](void* raw) -> net::StreamStopReason {
+    auto checkStop = [](void* raw) -> net::StreamStopReason {
         const auto* c = static_cast<const ShowcaseStreamCtx*>(raw);
         if (!c->self->m_wantActive.load(std::memory_order_acquire)) {
             return net::StreamStopReason::Deactivated;
@@ -1885,78 +2923,616 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return net::StreamStopReason::Continue;
     };
 
-    params.onBeginFrameWrite = [](void* raw, uint16_t frameIdx, uint16_t* dstBuf, bool singleBuffer, uint32_t safeFps) {
-        auto* self = static_cast<ShowcaseStreamCtx*>(raw)->self;
-        if (singleBuffer) {
-#if defined(ESP32) && !defined(UNIT_TEST)
-            if (frameIdx > 0U) {
-                const uint32_t handoffBudgetMs = std::max<uint32_t>(18U, 1000U / safeFps);
-                const uint32_t handoffT0 = millis();
-                while (self->m_wantActive.load(std::memory_order_acquire) &&
-                       !shouldYieldShowcaseToWebUi(self->m_hasPsram) &&
-                       self->m_consumedFrameSeq.load(std::memory_order_acquire) != self->m_frameSeq.load(std::memory_order_relaxed) &&
-                       (millis() - handoffT0) < handoffBudgetMs) {
-                    vTaskDelay(1);
+    const uint32_t cardT0 = millis();
+    if (!info.hasStream || info.streamPath[0] == '\0' || info.baseServerUrl[0] == '\0') {
+        while (checkStop(&ctx) == net::StreamStopReason::Continue &&
+               (millis() - cardT0) < cardWaitMs) {
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+        return;
+    }
+
+    probeZeroCopyCanvasEligibility();
+    const bool zeroCopyEligible = m_zeroCopyCanvasEligible.load(std::memory_order_acquire);
+    const char* profile = net::selectDmdzStreamProfile(m_hasPsram, m_width, m_height);
+    const uint32_t maxStreamMs = std::max<uint32_t>(effectiveMaxStreamMs(), info.streamMaxMs);
+
+    auto runSpscSessionLoop = [&](net::DmdzSpscStreamSession& sess, bool alreadyOpened, uint8_t wsCredits, uint16_t wsChunk) -> bool {
+        if (!alreadyOpened) {
+            if (!sess.open(
+                    info.baseServerUrl,
+                    info.streamPath,
+                    m_sessionId,
+                    profile,
+                    wsCredits,
+                    wsChunk,
+                    m_spscRing,
+                    checkStop,
+                    &ctx,
+                    "Showcase")) {
+                return false;
+            }
+        }
+        m_streamHeaderW = sess.header.width > 0U ? sess.header.width : m_width;
+        m_streamHeaderH = sess.header.height > 0U ? sess.header.height : m_height;
+        m_streamHeaderVersion = sess.header.version;
+        m_streamHeaderIsDmdz = sess.header.isDmdz;
+        m_streamTotalFrames = sess.header.totalFrames;
+        const uint32_t safeFps = std::max<uint32_t>(1U, sess.header.fps);
+        m_streamFrameIntervalUs = 1000000U / safeFps;
+
+        m_presentedStreamFrames.store(0U, std::memory_order_release);
+        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+        m_core1DecPartialRem = 0U;
+        m_core1StreamArmed = false;
+        m_core1StreamFinished.store(false, std::memory_order_release);
+        m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::SpscRing), std::memory_order_release);
+
+        m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        m_liveCard.hasVideoFrame = true;
+        m_seq.fetch_add(1U, std::memory_order_release);
+        m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+
+        const uint32_t streamT0 = millis();
+        uint32_t eofDrainStartMs = 0U;
+        while (checkStop(&ctx) == net::StreamStopReason::Continue &&
+               (millis() - streamT0) < maxStreamMs &&
+               !m_core1StreamFinished.load(std::memory_order_acquire)) {
+            if (!sess.streamEof) {
+                (void)sess.pump(m_spscRing, 14U, checkStop, &ctx);
+            } else {
+                if (m_spscRing.empty() && m_core1DecPartialRem == 0U) {
+                    break;
                 }
+                if (eofDrainStartMs == 0U) {
+                    eofDrainStartMs = millis();
+                } else if ((millis() - eofDrainStartMs) > 2500U) {
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(8));
             }
-#else
-            (void)safeFps;
-#endif
-            if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) == 0U) {
-                self->m_frameSeq.fetch_add(1U, std::memory_order_acq_rel);
-            }
-            // Wait for any in-flight Core 1 `blit565` to finish before mutating `dstBuf` in-place.
-            self->waitRenderBlitQuiescent();
         }
-        if (frameIdx == 0U && self->m_posterAliasesFrame) {
-            if (self->m_liveCard.hasPoster) {
-                self->m_seq.fetch_add(1, std::memory_order_acq_rel);
-                self->m_liveCard.hasPoster = false;
-                self->m_seq.fetch_add(1, std::memory_order_release);
-            }
-            const size_t maxBufBytes = self->m_framePixels * sizeof(uint16_t);
-            memset(dstBuf, 0, std::min(maxBufBytes, self->m_posterCapBytes));
-        }
+
+        const uint32_t framesShown = m_presentedStreamFrames.load(std::memory_order_acquire);
+        sess.close(true);
+
+        m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
+        m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+        waitRenderBlitQuiescent();
+        freeSpscRingBuffer();
+        return framesShown > 0U;
     };
 
-    params.onFinishFrameWrite = [](void* raw, uint16_t /*frameIdx*/, const uint16_t* dstBuf, uint16_t /*w*/, uint16_t /*h*/, bool okFrame, bool singleBuffer) {
-        auto* self = static_cast<ShowcaseStreamCtx*>(raw)->self;
-        if (!okFrame) {
-            if (singleBuffer) {
-                self->m_publishedFramePtr.store(nullptr, std::memory_order_release);
-                if (self->m_liveCard.hasVideoFrame) {
-                    self->m_seq.fetch_add(1U, std::memory_order_acq_rel);
-                    self->m_liveCard.hasVideoFrame = false;
-                    self->m_seq.fetch_add(1U, std::memory_order_release);
+    // =========================================================================
+    // TIER 1 (`profile == "sram"`, `!m_hasPsram`)
+    // =========================================================================
+    if (!m_hasPsram) {
+        NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
+        ScratchSessionGuard<net::DmdzSpscStreamSession> spscGuard(m_ioScratch, m_ioScratchCap);
+        bool preOpened = false;
+        const uint32_t preConnectOffsetMs = (cardWaitMs > 300U) ? (cardWaitMs - 300U) : 0U;
+
+        while (checkStop(&ctx) == net::StreamStopReason::Continue) {
+            const uint32_t elapsed = millis() - cardT0;
+            if (elapsed >= cardWaitMs) {
+                break;
+            }
+            if (!preOpened &&
+                zeroCopyEligible &&
+                m_core1Decoder != nullptr &&
+                spscGuard.ptr != nullptr &&
+                elapsed >= preConnectOffsetMs) {
+                if (m_spscRingStorage != nullptr || allocateSpscRingBuffer(SRAM_SPSC_HI_RING_BYTES)) {
+                    preOpened = spscGuard.ptr->open(
+                        info.baseServerUrl,
+                        info.streamPath,
+                        m_sessionId,
+                        profile,
+                        4U,
+                        1360U,
+                        m_spscRing,
+                        checkStop,
+                        &ctx,
+                        "Showcase"
+                    );
                 }
-                if ((self->m_frameSeq.load(std::memory_order_relaxed) & 1U) != 0U) {
-                    self->m_frameSeq.fetch_sub(1U, std::memory_order_release);
-                }
+            }
+            if (preOpened && !spscGuard.ptr->streamEof) {
+                const uint32_t remCard = cardWaitMs - elapsed;
+                (void)spscGuard.ptr->pump(m_spscRing, std::min<uint32_t>(20U, remCard), checkStop, &ctx);
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+        }
+
+        if (checkStop(&ctx) != net::StreamStopReason::Continue) {
+            if (preOpened && spscGuard.ptr) {
+                spscGuard.ptr->close(true);
+            }
+            freeSpscRingBuffer();
+            return;
+        }
+
+        // Part A.3: Blank Info Card (`Phase::StreamBlank` + `m_blankPresentedSeq`) BEFORE freeing `m_poster565`!
+        freePosterAfterBlank();
+
+        bool acquiredFallbackFrame = false;
+        if (!zeroCopyEligible && m_frame565 == nullptr) {
+            acquiredFallbackFrame = acquireStepCFrameBuffer();
+        }
+
+        if (m_core1Decoder != nullptr &&
+            spscGuard.ptr != nullptr &&
+            (zeroCopyEligible || m_frame565 != nullptr) &&
+            (m_spscRingStorage != nullptr || allocateSpscRingBuffer(SRAM_SPSC_HI_RING_BYTES))) {
+            (void)runSpscSessionLoop(*spscGuard.ptr, preOpened, 4U, 1360U);
+            if (acquiredFallbackFrame) {
+                releaseStepCFrameBuffer();
             }
             return;
         }
-        self->m_publishedFramePtr.store(dstBuf, std::memory_order_release);
-        const uint32_t curSeq = self->m_frameSeq.load(std::memory_order_relaxed);
-        self->m_frameSeq.store((curSeq & 1U) ? (curSeq + 1U) : (curSeq + 2U), std::memory_order_release);
-        if (!self->m_liveCard.hasVideoFrame) {
-            self->m_seq.fetch_add(1, std::memory_order_acq_rel);
-            self->m_liveCard.hasVideoFrame = true;
-            self->m_seq.fetch_add(1, std::memory_order_release);
+
+        if (preOpened && spscGuard.ptr) {
+            spscGuard.ptr->close(true);
         }
-        if (self->m_phase.load(std::memory_order_relaxed) != static_cast<uint8_t>(Phase::LiveStream)) {
-            self->m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+        if (acquiredFallbackFrame) {
+            releaseStepCFrameBuffer();
         }
-    };
+        freeSpscRingBuffer();
+        return;
+    }
 
-    params.getPresentedFrames = [](void* raw) -> uint32_t {
-        return static_cast<const ShowcaseStreamCtx*>(raw)->self->m_presentedStreamFrames.load(std::memory_order_acquire);
-    };
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    // =========================================================================
+    // TIER 2 (`profile == "psram"`, `W*H <= 8192`) & TIER 3 (`profile == "psram_hd"`, `W*H > 8192`)
+    // =========================================================================
+    NetworkBudget::ScopedDmdNetActivity streamAct(NetworkBudget::DmdNetActivity::Stream);
+    const bool isTier3Hd = (static_cast<uint32_t>(m_width) * static_cast<uint32_t>(m_height)) > 8192U;
+    size_t maxPreloadCap = PSRAM_TIER2_MAX_PRELOAD_BYTES;
+    if (isTier3Hd) {
+        const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        maxPreloadCap = (freePsram > PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
+            ? std::min<size_t>(PSRAM_TIER3_MAX_PRELOAD_BYTES, freePsram - PSRAM_TIER3_MIN_FREE_RESERVE_BYTES)
+            : 0U;
+    }
 
-    params.onNextFrameDueMs = [](void* raw, uint32_t dueMs) {
-        static_cast<ShowcaseStreamCtx*>(raw)->self->m_nextStreamFrameDueMs.store(dueMs, std::memory_order_relaxed);
-    };
+    bool usePreloadPlayback = false;
+    {
+        ScratchSessionGuard<net::DmdzPreloadSession> preloadGuard(m_ioScratch, m_ioScratchCap);
+        bool preloadOpened = false;
+        if (preloadGuard.ptr != nullptr && m_core1Decoder != nullptr && maxPreloadCap >= 131072U) {
+            m_preloadBytesDownloaded.store(0U, std::memory_order_release);
+            m_preloadComplete.store(false, std::memory_order_release);
+            preloadOpened = preloadGuard.ptr->open(
+                info.baseServerUrl,
+                info.streamPath,
+                m_sessionId,
+                profile,
+                maxPreloadCap,
+                m_preloadBytesDownloaded,
+                m_preloadComplete,
+                checkStop,
+                &ctx,
+                "Showcase"
+            );
+        }
 
-    return net::DmdzStreamClient::stream(params);
+        // Download in background during `Phase::Card` (`cardWaitMs`)
+        while (checkStop(&ctx) == net::StreamStopReason::Continue) {
+            const uint32_t elapsed = millis() - cardT0;
+            if (elapsed >= cardWaitMs) {
+                break;
+            }
+            if (preloadOpened && !m_preloadComplete.load(std::memory_order_acquire)) {
+                const uint32_t remCard = cardWaitMs - elapsed;
+                (void)preloadGuard.ptr->pump(
+                    m_preloadBytesDownloaded,
+                    m_preloadComplete,
+                    std::min<uint32_t>(30U, remCard),
+                    checkStop,
+                    &ctx
+                );
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(25));
+            }
+        }
+
+        if (checkStop(&ctx) != net::StreamStopReason::Continue) {
+            if (preloadOpened && preloadGuard.ptr) {
+                preloadGuard.ptr->releasePreloadBuffer();
+                net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
+            }
+            return;
+        }
+
+        if (preloadOpened && preloadGuard.ptr && preloadGuard.ptr->headerParsed && !preloadGuard.ptr->tooLargeForPreload) {
+            if (!isTier3Hd) {
+                // Tier 2: finish remaining tail (if any) before `LiveStream` so 0 Wi-Fi traffic occurs during playback
+                const uint32_t finishT0 = millis();
+                while (!m_preloadComplete.load(std::memory_order_acquire) &&
+                       checkStop(&ctx) == net::StreamStopReason::Continue &&
+                       (millis() - finishT0) < 900U) {
+                    (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 25U, checkStop, &ctx);
+                }
+                if (m_preloadComplete.load(std::memory_order_acquire)) {
+                    preloadGuard.ptr->closeSocket();
+                }
+            } else {
+                // Tier 3: ensure `>= 128 KB` or `>= 15` frames buffered before starting progressive playback
+                const uint32_t cushionT0 = millis();
+                while (!m_preloadComplete.load(std::memory_order_acquire) &&
+                       m_preloadBytesDownloaded.load(std::memory_order_acquire) < PSRAM_TIER3_START_CUSHION_BYTES &&
+                       preloadGuard.ptr->framesBuffered < 15U &&
+                       checkStop(&ctx) == net::StreamStopReason::Continue &&
+                       (millis() - cushionT0) < 1000U) {
+                    (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 25U, checkStop, &ctx);
+                }
+            }
+
+            if (preloadGuard.ptr->preloadBuf != nullptr &&
+                m_preloadBytesDownloaded.load(std::memory_order_acquire) > 16U) {
+                usePreloadPlayback = true;
+            }
+        }
+
+        if (usePreloadPlayback) {
+            freePosterAfterBlank();
+            if (!zeroCopyEligible && m_frame565 == nullptr) {
+                (void)acquireStepCFrameBuffer();
+            }
+
+            if (zeroCopyEligible || m_frame565 != nullptr) {
+                m_preloadReadPtr = preloadGuard.ptr->preloadBuf;
+                m_streamHeaderW = preloadGuard.ptr->header.width > 0U ? preloadGuard.ptr->header.width : m_width;
+                m_streamHeaderH = preloadGuard.ptr->header.height > 0U ? preloadGuard.ptr->header.height : m_height;
+                m_streamHeaderVersion = preloadGuard.ptr->header.version;
+                m_streamHeaderIsDmdz = preloadGuard.ptr->header.isDmdz;
+                m_streamTotalFrames = preloadGuard.ptr->header.totalFrames;
+                const uint32_t safeFps = std::max<uint32_t>(1U, preloadGuard.ptr->header.fps);
+                m_streamFrameIntervalUs = 1000000U / safeFps;
+
+                m_presentedStreamFrames.store(0U, std::memory_order_release);
+                m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+                m_core1PreloadOffset = 16U;
+                m_core1PreloadFrameIdx = 0U;
+                m_core1DecPartialRem = 0U;
+                m_core1StreamArmed = false;
+                m_core1StreamFinished.store(false, std::memory_order_release);
+                m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::PsramPreload), std::memory_order_release);
+
+                m_seq.fetch_add(1U, std::memory_order_acq_rel);
+                m_liveCard.hasVideoFrame = true;
+                m_seq.fetch_add(1U, std::memory_order_release);
+                m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+
+                const uint32_t streamT0 = millis();
+                while (checkStop(&ctx) == net::StreamStopReason::Continue &&
+                       (millis() - streamT0) < maxStreamMs &&
+                       !m_core1StreamFinished.load(std::memory_order_acquire)) {
+                    if (!m_preloadComplete.load(std::memory_order_acquire)) {
+                        (void)preloadGuard.ptr->pump(m_preloadBytesDownloaded, m_preloadComplete, 18U, checkStop, &ctx);
+                        if (m_preloadComplete.load(std::memory_order_acquire)) {
+                            preloadGuard.ptr->closeSocket();
+                        }
+                    } else {
+                        vTaskDelay(pdMS_TO_TICKS(20));
+                    }
+                }
+
+                m_streamExecMode.store(static_cast<uint8_t>(StreamExecMode::LegacyFramePtr), std::memory_order_release);
+                m_preloadReadPtr = nullptr;
+                m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+                waitRenderBlitQuiescent();
+            }
+
+            preloadGuard.ptr->releasePreloadBuffer();
+            net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
+            return;
+        }
+
+        if (preloadOpened && preloadGuard.ptr) {
+            preloadGuard.ptr->releasePreloadBuffer();
+        }
+    }
+
+    // Fallback for Tier 2 (`> 1.5 MB` -> `256 KB` PSRAM SPSC WS `credits=12, chunk=1400`)
+    // and Tier 3 (`> maxPreloadCap` -> `768 KB` PSRAM SPSC WS `credits=16, chunk=1400`)
+    freePosterAfterBlank();
+    if (!zeroCopyEligible && m_frame565 == nullptr) {
+        (void)acquireStepCFrameBuffer();
+    }
+
+    const size_t psramRingTarget = isTier3Hd ? PSRAM_TIER3_SPSC_RING_BYTES : PSRAM_TIER2_SPSC_RING_BYTES;
+    const uint8_t psramWsCredits = isTier3Hd ? 16U : 12U;
+    ScratchSessionGuard<net::DmdzSpscStreamSession> wsFallbackGuard(m_ioScratch, m_ioScratchCap);
+    if (wsFallbackGuard.ptr != nullptr &&
+        m_core1Decoder != nullptr &&
+        (zeroCopyEligible || m_frame565 != nullptr) &&
+        allocateSpscRingBuffer(psramRingTarget)) {
+        (void)runSpscSessionLoop(*wsFallbackGuard.ptr, false, psramWsCredits, 1400U);
+    } else {
+        net::DmdzStreamClient::notifyHttpStreamPurge(info.baseServerUrl, info.streamPath, m_sessionId, profile);
+    }
+#endif
+#else
+    (void)cfg;
+    (void)startGen;
+    (void)info;
+#endif
+}
+
+bool MediaShowcaseBase::renderStreamFrameCore1(IDrawingSurface* s) {
+    if (!s || !m_core1Decoder) {
+        return false;
+    }
+
+    const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    if (execMode != StreamExecMode::SpscRing && execMode != StreamExecMode::PsramPreload) {
+        return false;
+    }
+#else
+    if (execMode != StreamExecMode::SpscRing) {
+        return false;
+    }
+#endif
+
+    const uint32_t nowUs = micros();
+    if (m_core1StreamArmed && m_core1DecPartialRem == 0U) {
+        const int32_t diffUs = static_cast<int32_t>(nowUs - m_core1NextFrameDueUs);
+        if (diffUs < -750) {
+            return false;
+        }
+    }
+
+    const uint16_t decW = m_streamHeaderW > 0U ? m_streamHeaderW : m_width;
+    const uint16_t decH = m_streamHeaderH > 0U ? m_streamHeaderH : m_height;
+    const size_t decPixels = static_cast<size_t>(decW) * static_cast<size_t>(decH);
+    const size_t rawFrameBytes = decPixels * sizeof(uint16_t);
+
+    // Pre-check data availability BEFORE borrowing `ScopedCanvasGuard` (since `acquireCanvas()` marks surface dirty!)
+    uint16_t spscPayloadLen = 0U;
+    bool spscOversizedStart = false;
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    const uint8_t* preloadFramePayload = nullptr;
+    uint16_t preloadPayloadLen = 0U;
+#endif
+
+    if (execMode == StreamExecMode::SpscRing) {
+        if (m_streamHeaderIsDmdz) {
+            if (m_core1DecPartialRem > 0U) {
+                if (m_spscRing.consumerSize() == 0U) {
+                    return false;
+                }
+            } else {
+                if (!m_spscRing.peekFrameLength(spscPayloadLen)) {
+                    return false;
+                }
+                const size_t totalWire = 2U + static_cast<size_t>(spscPayloadLen);
+                if (totalWire <= m_spscRing.capacity()) {
+                    if (m_spscRing.consumerSize() < totalWire) {
+                        return false;
+                    }
+                } else {
+                    spscOversizedStart = true;
+                }
+            }
+        } else {
+            if (m_spscRing.consumerSize() < rawFrameBytes) {
+                return false;
+            }
+        }
+    }
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    else {
+        // `PsramPreload` (complete or progressive `psram_hd`)
+        const uint8_t* base = m_preloadReadPtr;
+        const size_t downloaded = m_preloadBytesDownloaded.load(std::memory_order_acquire);
+        const bool complete = m_preloadComplete.load(std::memory_order_acquire);
+        if (!base || (m_streamTotalFrames > 0U && m_core1PreloadFrameIdx >= m_streamTotalFrames)) {
+            m_core1StreamFinished.store(true, std::memory_order_release);
+            return false;
+        }
+        if (m_streamHeaderIsDmdz) {
+            if (m_core1PreloadOffset + 2U > downloaded) {
+                if (complete) {
+                    m_core1StreamFinished.store(true, std::memory_order_release);
+                }
+                return false;
+            }
+            preloadPayloadLen = static_cast<uint16_t>(base[m_core1PreloadOffset]) |
+                                (static_cast<uint16_t>(base[m_core1PreloadOffset + 1U]) << 8);
+            const size_t endOff = m_core1PreloadOffset + 2U + static_cast<size_t>(preloadPayloadLen);
+            if (endOff > downloaded) {
+                if (complete) {
+                    m_core1StreamFinished.store(true, std::memory_order_release);
+                }
+                return false;
+            }
+            preloadFramePayload = base + m_core1PreloadOffset + 2U;
+        } else {
+            const size_t endOff = m_core1PreloadOffset + rawFrameBytes;
+            if (endOff > downloaded) {
+                if (complete) {
+                    m_core1StreamFinished.store(true, std::memory_order_release);
+                }
+                return false;
+            }
+            preloadFramePayload = base + m_core1PreloadOffset;
+        }
+    }
+#endif
+
+    // Borrow Zero-Copy linear canvas via `ScopedCanvasGuard` when unrotated & matching geometry;
+    // otherwise decode into Core 0-allocated `m_frame565` and blit via `s->blit565`.
+    const bool tryZeroCopy = m_zeroCopyCanvasEligible.load(std::memory_order_acquire) &&
+                             s->hasCanvas() &&
+                             s->getRotation() == 0 &&
+                             decW == m_width &&
+                             decH == m_height;
+
+    ScopedCanvasGuard canvasGuard(tryZeroCopy ? s : nullptr);
+    const bool usingZeroCopy = canvasGuard.isValid() &&
+                               canvasGuard.width() == decW &&
+                               canvasGuard.height() == decH &&
+                               (canvasGuard.stridePixels() == 0U || canvasGuard.stridePixels() == decW);
+
+    uint16_t* dstPixels = usingZeroCopy ? canvasGuard.data() : m_frame565;
+    if (!dstPixels || (!usingZeroCopy && decPixels > m_framePixels)) {
+        canvasGuard.release();
+        return false;
+    }
+
+    if (!m_core1StreamArmed) {
+        m_core1Decoder->resetStream(decW, decH, m_streamHeaderVersion);
+        memset(dstPixels, 0, rawFrameBytes);
+    }
+
+    bool frameComplete = false;
+    bool decodeOk = true;
+
+    if (execMode == StreamExecMode::SpscRing) {
+        if (!m_streamHeaderIsDmdz) {
+            const size_t popped = m_spscRing.pop(reinterpret_cast<uint8_t*>(dstPixels), rawFrameBytes);
+            decodeOk = (popped == rawFrameBytes);
+            frameComplete = decodeOk;
+        } else if (m_core1DecPartialRem > 0U) {
+            const size_t avail = m_spscRing.consumerSize();
+            const size_t take = (avail < m_core1DecPartialRem) ? avail : m_core1DecPartialRem;
+            const uint8_t* p1 = nullptr;
+            const uint8_t* p2 = nullptr;
+            size_t n1 = 0U;
+            size_t n2 = 0U;
+            m_spscRing.getConsumerSlices(0U, take, p1, n1, p2, n2);
+            if (n1 > 0U && !m_core1Decoder->feed(p1, n1, dstPixels)) {
+                decodeOk = false;
+            }
+            if (decodeOk && n2 > 0U && !m_core1Decoder->feed(p2, n2, dstPixels)) {
+                decodeOk = false;
+            }
+            m_spscRing.consumeRead(take);
+            m_core1DecPartialRem = static_cast<uint16_t>(m_core1DecPartialRem - take);
+            if (!decodeOk) {
+                m_core1DecPartialRem = 0U;
+                m_core1StreamFinished.store(true, std::memory_order_release);
+            } else if (m_core1DecPartialRem == 0U) {
+                decodeOk = m_core1Decoder->finishFrame();
+                frameComplete = decodeOk;
+            }
+        } else if (spscOversizedStart) {
+            m_spscRing.consumeRead(2U);
+            if (!m_core1Decoder->beginFrame(spscPayloadLen)) {
+                m_core1StreamFinished.store(true, std::memory_order_release);
+                canvasGuard.release();
+                return false;
+            }
+            m_core1DecPartialRem = spscPayloadLen;
+            const size_t avail = m_spscRing.consumerSize();
+            const size_t take = (avail < m_core1DecPartialRem) ? avail : m_core1DecPartialRem;
+            if (take > 0U) {
+                const uint8_t* p1 = nullptr;
+                const uint8_t* p2 = nullptr;
+                size_t n1 = 0U;
+                size_t n2 = 0U;
+                m_spscRing.getConsumerSlices(0U, take, p1, n1, p2, n2);
+                if (n1 > 0U && !m_core1Decoder->feed(p1, n1, dstPixels)) {
+                    decodeOk = false;
+                }
+                if (decodeOk && n2 > 0U && !m_core1Decoder->feed(p2, n2, dstPixels)) {
+                    decodeOk = false;
+                }
+                m_spscRing.consumeRead(take);
+                m_core1DecPartialRem = static_cast<uint16_t>(m_core1DecPartialRem - take);
+            }
+            if (!decodeOk) {
+                m_core1DecPartialRem = 0U;
+                m_core1StreamFinished.store(true, std::memory_order_release);
+            } else if (m_core1DecPartialRem == 0U) {
+                decodeOk = m_core1Decoder->finishFrame();
+                frameComplete = decodeOk;
+            }
+        } else {
+            // Normal complete compressed frame in SPSC ring (`2 + spscPayloadLen` bytes)
+            const uint8_t* p1 = nullptr;
+            const uint8_t* p2 = nullptr;
+            size_t n1 = 0U;
+            size_t n2 = 0U;
+            m_spscRing.getConsumerSlices(2U, spscPayloadLen, p1, n1, p2, n2);
+            decodeOk = m_core1Decoder->beginFrame(spscPayloadLen);
+            if (decodeOk && n1 > 0U) {
+                decodeOk = m_core1Decoder->feed(p1, n1, dstPixels);
+            }
+            if (decodeOk && n2 > 0U) {
+                decodeOk = m_core1Decoder->feed(p2, n2, dstPixels);
+            }
+            if (decodeOk) {
+                decodeOk = m_core1Decoder->finishFrame();
+            }
+            m_spscRing.consumeRead(2U + static_cast<size_t>(spscPayloadLen));
+            frameComplete = decodeOk;
+                if (!decodeOk) {
+                    m_core1StreamFinished.store(true, std::memory_order_release);
+                }
+        }
+    }
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+    else {
+        // `PsramPreload`
+        if (m_streamHeaderIsDmdz) {
+            decodeOk = m_core1Decoder->beginFrame(preloadPayloadLen) &&
+                       (preloadPayloadLen == 0U || m_core1Decoder->feed(preloadFramePayload, preloadPayloadLen, dstPixels)) &&
+                       m_core1Decoder->finishFrame();
+            m_core1PreloadOffset += 2U + static_cast<size_t>(preloadPayloadLen);
+        } else {
+            memcpy(dstPixels, preloadFramePayload, rawFrameBytes);
+            m_core1PreloadOffset += rawFrameBytes;
+            decodeOk = true;
+        }
+        ++m_core1PreloadFrameIdx;
+        frameComplete = decodeOk;
+        if (!decodeOk ||
+            (m_streamTotalFrames > 0U && m_core1PreloadFrameIdx >= m_streamTotalFrames)) {
+            m_core1StreamFinished.store(true, std::memory_order_release);
+        }
+    }
+#endif
+
+    if (!frameComplete) {
+        canvasGuard.release();
+        return false;
+    }
+
+    if (usingZeroCopy) {
+        canvasGuard.markDrawnAndRelease();
+    } else {
+        canvasGuard.release();
+        if (s->width() != static_cast<int>(decW) || s->height() != static_cast<int>(decH)) {
+            s->clear(0);
+        }
+        s->blit565(dstPixels, 0, 0, static_cast<int16_t>(decW), static_cast<int16_t>(decH));
+    }
+
+    const uint32_t presented = m_presentedStreamFrames.fetch_add(1U, std::memory_order_relaxed) + 1U;
+    if (m_streamTotalFrames > 0U && presented >= m_streamTotalFrames) {
+        m_core1StreamFinished.store(true, std::memory_order_release);
+    }
+
+    const uint32_t postDecodeUs = micros();
+    if (!m_core1StreamArmed) {
+        m_core1StreamArmed = true;
+        m_core1NextFrameDueUs = postDecodeUs + m_streamFrameIntervalUs;
+    } else {
+        m_core1NextFrameDueUs += m_streamFrameIntervalUs;
+        // Part B.3: Smooth catchup without burst if behind by `> 2` frames!
+        const uint32_t maxLagUs = m_streamFrameIntervalUs * 2U;
+        if (static_cast<int32_t>(postDecodeUs - m_core1NextFrameDueUs) > static_cast<int32_t>(maxLagUs)) {
+            m_core1NextFrameDueUs = postDecodeUs + m_streamFrameIntervalUs;
+        }
+    }
+    const int32_t remUs = static_cast<int32_t>(m_core1NextFrameDueUs - postDecodeUs);
+    const uint32_t remMs = (remUs > 0) ? static_cast<uint32_t>((remUs + 999) / 1000) : 1U;
+    m_nextStreamFrameDueMs.store(millis() + remMs, std::memory_order_relaxed);
+    return true;
 }
 
 void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs) {
@@ -1971,15 +3547,14 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
 }
 
 void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs) {
-    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
     engines::showcase::ShowcaseCardRenderer::drawCardPhase(
         s,
         m_domain,
         m_statusState.load(std::memory_order_relaxed),
         card,
         m_poster565,
-        cfg.showPoster,
-        cfg.showSynopsis,
+        m_cfgShowPoster.load(std::memory_order_relaxed),
+        m_cfgShowSynopsis.load(std::memory_order_relaxed),
         m_titleStepPx,
         m_synScrollPx,
         elapsedMs
@@ -1988,15 +3563,42 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
 
 void MediaShowcaseBase::update(EngineContext* context) {
     (void)context;
-    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    ConfigSnapshotGuard guard = ::config.acquireSnapshot();
     const auto& snap = guard.get();
-    m_rotationSlotCount.store(static_cast<uint8_t>(snap.rotation.size()), std::memory_order_relaxed);
+    const uint8_t rotSlots = static_cast<uint8_t>(snap.rotation.size());
+    m_rotationSlotCount.store(rotSlots, std::memory_order_relaxed);
 
-    uint32_t now = millis();
-    uint32_t s1 = m_seq.load(std::memory_order_acquire);
+    const uint32_t now = millis();
+
+    // Part A.2: 1:1 RPi `turn_evaluated` readiness gate on Core 1
+    if (!m_turnEvaluated.load(std::memory_order_acquire)) {
+        const bool hasReady = m_hasReadyItem.load(std::memory_order_acquire);
+        if (hasReady) {
+            m_turnEvaluated.store(true, std::memory_order_release);
+        } else if (m_readyStateReceived.load(std::memory_order_acquire)) {
+            m_turnEvaluated.store(true, std::memory_order_release);
+            if (rotSlots > 1U) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+        } else if (rotSlots > 1U) {
+            const uint32_t mqttConnMs = m_mqttConnectedAtMs.load(std::memory_order_acquire);
+            const uint32_t graceMs = (m_consecutiveWarmSkips.load(std::memory_order_acquire) > 0U &&
+                                      m_itemsPlayedInTurn.load(std::memory_order_acquire) == 0U)
+                ? 350U
+                : 0U;
+            const bool retainedExpired = (mqttConnMs != 0U) && ((now - mqttConnMs) >= (250U + graceMs));
+            const bool connectExpired = (mqttConnMs == 0U) && ((now - m_activatedAtMs) >= 850U);
+            if (retainedExpired || connectExpired || !m_taskAlive.load(std::memory_order_acquire)) {
+                m_turnEvaluated.store(true, std::memory_order_release);
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+        }
+    }
+
+    const uint32_t s1 = m_seq.load(std::memory_order_acquire);
     if ((s1 & 1U) == 0U && s1 != m_lastRenderedCardSeq) {
         CardSnapshot temp = m_liveCard;
-        uint32_t s2 = m_seq.load(std::memory_order_acquire);
+        const uint32_t s2 = m_seq.load(std::memory_order_acquire);
         if (s1 == s2) {
             m_renderCard = temp;
             m_lastRenderedCardSeq = s1;
@@ -2010,7 +3612,7 @@ void MediaShowcaseBase::update(EngineContext* context) {
         }
     }
 
-    uint8_t curPhase = m_phase.load(std::memory_order_acquire);
+    const uint8_t curPhase = m_phase.load(std::memory_order_acquire);
     if (curPhase != m_lastRenderedPhase) {
         m_lastRenderedPhase = curPhase;
         m_cardLastTickMs = now;
@@ -2018,38 +3620,62 @@ void MediaShowcaseBase::update(EngineContext* context) {
     }
 
     if (curPhase == static_cast<uint8_t>(Phase::LiveStream)) {
-        uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
-        if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
-            m_dirty = true;
-        } else if (!m_renderCard.hasVideoFrame && (now - m_lastScrollStepMs) >= 90U) {
-            m_lastScrollStepMs = now;
-            m_dirty = true;
+        const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
+        if (execMode == StreamExecMode::LegacyFramePtr) {
+            const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+            if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedFrameSeq && m_renderCard.hasVideoFrame) {
+                m_dirty = true;
+            } else if (!m_renderCard.hasVideoFrame && (now - m_lastScrollStepMs) >= 90U) {
+                m_lastScrollStepMs = now;
+                m_dirty = true;
+            }
+        } else {
+            const uint32_t dueMs = m_nextStreamFrameDueMs.load(std::memory_order_relaxed);
+            const bool frameDue = (!m_core1StreamArmed) ||
+                                  (m_core1DecPartialRem > 0U) ||
+                                  (dueMs == 0U) ||
+                                  (static_cast<int32_t>(now - dueMs) >= -1);
+            if (frameDue) {
+                if (execMode == StreamExecMode::SpscRing) {
+                    if (m_spscRing.consumerSize() > 0U) {
+                        m_dirty = true;
+                    }
+#if SHOWCASE_SUPPORT_PSRAM_PRELOAD
+                } else if (execMode == StreamExecMode::PsramPreload) {
+                    const size_t dl = m_preloadBytesDownloaded.load(std::memory_order_acquire);
+                    if (dl > m_core1PreloadOffset || m_preloadComplete.load(std::memory_order_acquire)) {
+                        m_dirty = true;
+                    }
+#endif
+                }
+            }
         }
     } else if (curPhase == static_cast<uint8_t>(Phase::StreamBlank)) {
-        // Hold clean black cut with zero redraw spin while Core 0 establishes the stream socket.
+        // Hold clean black cut with zero redraw spin while Core 0 hands off to the stream.
     } else if (!m_renderCard.hasData) {
         if ((now - m_lastScrollStepMs) >= 30U) {
             m_lastScrollStepMs = now;
             m_dirty = true;
         }
     } else {
-        uint32_t dtMs = now - m_cardLastTickMs;
+        const uint32_t dtMs = now - m_cardLastTickMs;
         if (dtMs > 0U) {
             m_cardLastTickMs = now;
-            uint32_t frameUnits = (dtMs <= 24U)
+            const uint32_t frameUnits = (dtMs <= 24U)
                 ? 1U
                 : std::max<uint32_t>(1U, (std::min<uint32_t>(dtMs, 2000U) * 60U + 500U) / 1000U);
 
-            uint32_t prevTitleStep = m_titleStepPx;
-            uint32_t prevSynPx = m_synScrollPx;
+            const uint32_t prevTitleStep = m_titleStepPx;
+            const uint32_t prevSynPx = m_synScrollPx;
 
             m_titleSubpixelRem += frameUnits * 30U;
             m_titleStepPx += m_titleSubpixelRem / 60U;
             m_titleSubpixelRem %= 60U;
 
-            const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
-            if (cfg.showSynopsis && m_renderCard.synopsis[0] != '\0' && (now - m_cardAnimStartMs) >= 900U) {
-                uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+            if (m_cfgShowSynopsis.load(std::memory_order_relaxed) &&
+                m_renderCard.synopsis[0] != '\0' &&
+                (now - m_cardAnimStartMs) >= 900U) {
+                const uint32_t speedPx = m_cfgSynopsisSpeedPx.load(std::memory_order_relaxed);
                 m_synSubpixelRem += frameUnits * speedPx;
                 m_synScrollPx += m_synSubpixelRem / 60U;
                 m_synSubpixelRem %= 60U;
@@ -2086,8 +3712,8 @@ void MediaShowcaseBase::render(EngineContext* context) {
         }
     };
 
-    uint32_t elapsedMs = millis() - m_activatedAtMs;
-    Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
+    const uint32_t elapsedMs = millis() - m_activatedAtMs;
+    const Phase curPhase = static_cast<Phase>(m_phase.load(std::memory_order_acquire));
 
     if (curPhase == Phase::StreamBlank) {
         BlitSeqGuard blitGuard{m_renderBlitSeq};
@@ -2099,6 +3725,15 @@ void MediaShowcaseBase::render(EngineContext* context) {
     }
 
     if (curPhase == Phase::LiveStream) {
+        const StreamExecMode execMode = static_cast<StreamExecMode>(m_streamExecMode.load(std::memory_order_acquire));
+        if (execMode != StreamExecMode::LegacyFramePtr) {
+            BlitSeqGuard blitGuard{m_renderBlitSeq};
+            const bool drew = renderStreamFrameCore1(s);
+            m_dirty = false;
+            m_renderedNewFrame = drew;
+            return;
+        }
+
         const uint16_t* framePtr = m_publishedFramePtr.load(std::memory_order_acquire);
         if (m_renderCard.hasVideoFrame && framePtr != nullptr) {
             const uint32_t fSeq1 = m_frameSeq.load(std::memory_order_acquire);
@@ -2159,105 +3794,49 @@ void MediaShowcaseBase::render(EngineContext* context) {
 }
 
 EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
-    EngineDescriptor desc;
-    initShowcaseCommonDescriptor(desc, "retro_games", "Retro Games Showcase", "arcade");
-
-    static constexpr FieldTableEntry kFields[] = {
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width cover/jacket from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Marquee / Banner Panorama", "Scroll the arcade marquee or title banner from top to bottom after the jacket", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional gameplay snapshots to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "20", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+    static constexpr FieldTableEntry kDomainFields[] = {
         ConfigField("systems", ConfigType::LIST, "Arcade & Console Systems", "Select one or more systems dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
         ConfigField("genres", ConfigType::LIST, "Game Genres", "Select one or more genres dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept)
     };
-    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
+    EngineDescriptor desc;
+    initShowcaseCommonDescriptor(desc, "retro_games", "Retro Games Showcase", "arcade", kDomainFields, 3U);
     desc.factory = []() { return std::unique_ptr<IEngine>(new RetroGamesEngine()); };
     return desc;
 }
 
 EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
-    EngineDescriptor desc;
-    initShowcaseCommonDescriptor(desc, "movie_showcase", "Movie Showcase", "media");
-
-    static constexpr FieldTableEntry kFields[] = {
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width movie poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the movie backdrop banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional movie stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "20", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+    static constexpr FieldTableEntry kDomainFields[] = {
         ConfigField("genres", ConfigType::LIST, "Movie Genres", "Select one or more movie genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (trailer,scene,any)", "any", false, "", "", "", "any,trailer,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
-    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
+    EngineDescriptor desc;
+    initShowcaseCommonDescriptor(desc, "movie_showcase", "Movie Showcase", "media", kDomainFields, 3U);
     desc.factory = []() { return std::unique_ptr<IEngine>(new MovieShowcaseEngine()); };
     return desc;
 }
 
 EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
-    EngineDescriptor desc;
-    initShowcaseCommonDescriptor(desc, "series_showcase", "Series Showcase", "media");
-
-    static constexpr FieldTableEntry kFields[] = {
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width series poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the series banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional episode stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "20", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+    static constexpr FieldTableEntry kDomainFields[] = {
         ConfigField("genres", ConfigType::LIST, "Series Genres", "Select one or more series genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,trailer,any)", "any", false, "", "", "", "any,opening,trailer", "", false, "", ValidationPolicy::FallbackDefault)
     };
-    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
+    EngineDescriptor desc;
+    initShowcaseCommonDescriptor(desc, "series_showcase", "Series Showcase", "media", kDomainFields, 3U);
     desc.factory = []() { return std::unique_ptr<IEngine>(new SeriesShowcaseEngine()); };
     return desc;
 }
 
 EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
-    EngineDescriptor desc;
-    initShowcaseCommonDescriptor(desc, "anime_showcase", "Anime Showcase", "media");
-
-    static constexpr FieldTableEntry kFields[] = {
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width anime key visual from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the anime banner from top to bottom after the key visual", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional anime stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "20", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+    static constexpr FieldTableEntry kDomainFields[] = {
         ConfigField("genres", ConfigType::LIST, "Anime Genres", "Select one or more anime genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,ending,scene,any)", "opening", false, "", "", "", "any,opening,ending,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
-    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
+    EngineDescriptor desc;
+    initShowcaseCommonDescriptor(desc, "anime_showcase", "Anime Showcase", "media", kDomainFields, 3U);
     desc.factory = []() { return std::unique_ptr<IEngine>(new AnimeShowcaseEngine()); };
     return desc;
 }

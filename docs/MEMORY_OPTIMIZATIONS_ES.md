@@ -241,6 +241,26 @@ Cuando `StockEngine` o `CryptoEngine` conmutaban a modo gráfico de velas, las v
 
 ---
 
+### 2.17 DMD Media Showcase V3.1: Huella Compacta, Decodificación Zero-Copy en SRAM1 y Streaming Adaptativo de 3 Niveles (S19)
+
+#### El Problema: Retención Multi-Instancia, Duplicación de Framebuffer y Microcortes Wi-Fi
+Mantener los cuatro motores DMD Media Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) en rotación `Lazy-Once` retenía grandes búferes de configuración en línea por instancia, duplicaba un búfer RGB565 `m_frame565` de `8.192 B` junto al lienzo `SRAM1` de `CanvasBufferedSurface` en ESP32 clásico, y arriesgaba dividir la Zona de Sandbox si los búferes transitorios se asignaban antes que la pila FreeRTOS `ShowcaseWkr`.
+
+#### La Solución Arquitectónica
+1. **Huella `MediaShowcaseBase` Compacta (`<= 1.600 B`):**
+   - Los filtros fríos se trasladan a una estructura `ConfigExtras` en heap y las ranuras de configuración de doble búfer se compactan, garantizando `static_assert(sizeof(MediaShowcaseBase) <= 1600)` en las cuatro instancias `Lazy-Once`.
+2. **Orden de Asignación Task-First y Reutilización Placement-New:**
+   - `activate()` crea `ShowcaseWkr` (pila de `5.120 B` en `esp32dev`, `6.144 B` en S3 PSRAM) **primero**, antes de asignar `m_ioScratch` o `m_spscRing`, evitando que la pila del worker fragmente el bloque contiguo de 8 bits.
+   - `DmdzSpscStreamSession` y `DmdzPreloadSession` (`<= 1.472 B`) se construyen mediante placement-new (`ScratchSessionGuard`) dentro de `m_ioScratch`, consumiendo `0 B` adicionales de heap o pila.
+3. **Decodificación Core 1 Zero-Copy con `ScopedCanvasGuard` + `FRAME_PAL8` (`0x05`):**
+   - Devolver `allowsOverlay() == false` durante `Phase::StreamBlank` y `Phase::LiveStream` mantiene invariante entre cuadros el búfer lineal RGB565 `SRAM1` de `CanvasBufferedSurface`, permitiendo a Core 1 decodificar en el sitio los opcodes `DMDZ` v2 (`0x00..0x04` más `FRAME_PAL8` `0x05`, RLE indexado de 1..128 colores) con `0 B` de `m_frame565` en paneles sin rotación (respaldo a `m_frame565` asignado en Core 0 en geometrías rotadas).
+4. **Streaming Adaptativo de 3 Niveles (`sram`, `psram`, `psram_hd`):**
+   - **Nivel 1 (`sram`, `!m_hasPsram`):** Anillo sin bloqueos `DmdzSpscByteRing` (`10.240 B` / `8.192 B` / `6.144 B` / `4.096 B`), preconexión WebSocket ~`300 ms` antes de finalizar `Phase::Card` y retención de créditos `'A'` cuando `spscRing.freeBytes() < 1.536 B && spscRing.size() > 0`.
+   - **Nivel 2 (`psram`, `W * H <= 8.192`):** Precarga HTTP bulk `DMDZ` v2 completa hasta `1,5 MB` en `ps_malloc` durante `Phase::Card`, logrando reproducción 100% desde PSRAM con **cero tráfico Wi-Fi** en `Phase::LiveStream` (respaldo WebSocket SPSC en PSRAM de `256 KB` si supera `1,5 MB`).
+   - **Nivel 3 (`psram_hd`, `W * H > 8.192`):** Descarga HTTP bulk progresiva en bloques de `16 KB` en `ps_malloc` hasta `3,5 MB` (reservando `>= 2,5 MB` de PSRAM libre) desde `Phase::Card` mediante contadores atómicos `m_preloadBytesDownloaded` / `m_preloadComplete` (respaldo WebSocket SPSC en PSRAM de `768 KB` si supera `maxProgressiveBytes`).
+
+---
+
 ## 3. Impacto Cuantitativo y Comparativa de Memoria
 
 Mediciones realizadas en **ESP32dev (Xtensa Dual-Core 240 MHz, Sin PSRAM)** controlando una **matriz HUB75 128×32**:
@@ -283,3 +303,4 @@ Para garantizar que el éxito empírico se traduzca en rigor arquitectónico:
 * **Invariante 19 (Aislamiento de Hardware DMA):** Los búferes DMA de HUB75 se acceden exclusivamente a través de `IDrawingSurface`.
 * **Invariante 21 (Aislamiento de Salida HUB75):** Durante la reconfiguración del pipeline de presentación, la señal OE se mantiene inactiva (HIGH) hasta que el primer frame válido ha sido confirmado con éxito.
 * **Desalojo Prioritario `WEBUI_SYNC` (Solo `esp32dev`, Cero Impacto PSRAM):** En ESP32 clásico sin PSRAM (`!hasPsram`), abrir `/` o `/index.html` activa `DisplaySourceId::WEBUI_SYNC` (`Prioridad 110`, `TIMED 4500 ms`), retirando los motores de rotación activos (`evictAllActiveEnginesForMemory()`) y reduciendo temporalmente el DMA HUB75 a 2 bits mientras muestra un aviso localizado sin heap (`CARGANDO / INTERFAZ WEB...` en ES/EN/FR). Tras cargar la SPA comprimida y el arranque `/api/*`, la rotación se reanuda automáticamente a **8 bits** (reduciendo dinámicamente a 4 bits solo cuando la SRAM disponible o una geometría `128x64` lo requiere mediante `scalesRgb565FrameWithGeometry`).
+* **Disciplina Zero-Copy y Task-First de Showcase V3.1:** `MediaShowcaseBase` limita `sizeof(MediaShowcaseBase) <= 1.600 B`, inicia `ShowcaseWkr` antes de los búferes transitorios del heap, libera los pósteres binarios `.rgb565` estrictamente tras presentar un fotograma negro en `Phase::StreamBlank`, y decodifica `DMDZ` v2 (`FRAME_PAL8` `0x05`) directamente en el búfer `SRAM1` de `CanvasBufferedSurface` vía `ScopedCanvasGuard` (`0 B` de framebuffer duplicado en paneles sin rotación).
