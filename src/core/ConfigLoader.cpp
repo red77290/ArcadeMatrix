@@ -694,24 +694,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         LOGI("ConfigLoader", "Loading modular configuration from /config/...");
         if (mgr.loadAll(*this)) {
             if (wifi.ssid.isEmpty()) {
-                String bakPath = String(filepath) + ".bak";
-                const char* candidates[2] = { filepath, bakPath.c_str() };
-                for (int i = 0; i < 2; ++i) {
-                    String raw;
-                    if (!sdStorage.readString(candidates[i], raw) || raw.length() < 16) continue;
-                    ConfigLoader backupCfg;
-                    if (!backupCfg.parseFromJson(raw.c_str())) continue;
-                    if (!backupCfg.wifi.ssid.isEmpty()) {
-                        LOGW("ConfigLoader", "Auto-healing empty Wi-Fi credentials in /config/network.json from %s (SSID: '%s')",
-                             candidates[i], backupCfg.wifi.ssid.c_str());
-                        wifi = backupCfg.wifi;
-                        if (!mqtt.enabled && backupCfg.mqtt.enabled) mqtt = backupCfg.mqtt;
-                        if (dataMqtt.broker.isEmpty() && !backupCfg.dataMqtt.broker.isEmpty()) dataMqtt = backupCfg.dataMqtt;
-                        if (!showcase.enabled && backupCfg.showcase.enabled) showcase = backupCfg.showcase;
-                        mgr.saveNetwork(wifi, mqtt, dataMqtt, &showcase);
-                        break;
-                    }
-                }
+                autoHealNetworkFromBackups(sdStorage, mgr, filepath);
             }
             bool hadPlaylist = sdStorage.exists("/config/playlist.json");
             ConfigSanitizer::sanitize(*this, !hadPlaylist);
@@ -837,28 +820,67 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     }
 }
 
-bool ConfigLoader::tryLoadFallbackMatrixFromBackups(
+bool __attribute__((noinline)) ConfigLoader::autoHealNetworkFromBackups(
+    IConfigStorage& storage,
+    ModularConfigManager& mgr,
+    const char* filepath
+) {
+    if (!wifi.ssid.isEmpty()) {
+        return false;
+    }
+    String bakPath = String(filepath) + ".bak";
+    const char* candidates[2] = { filepath, bakPath.c_str() };
+    for (int i = 0; i < 2; ++i) {
+        String raw;
+        if (!storage.readString(candidates[i], raw) || raw.length() < 16) continue;
+        // Allocate transient ConfigLoader on the heap (never on loopTask's 8 KB stack)
+        std::unique_ptr<ConfigLoader> backupCfg(new (std::nothrow) ConfigLoader());
+        if (!backupCfg) {
+            LOGE("ConfigLoader", "Out of heap allocating transient ConfigLoader for network auto-heal");
+            break;
+        }
+        if (!backupCfg->parseFromJson(raw.c_str())) continue;
+        if (!backupCfg->wifi.ssid.isEmpty()) {
+            LOGW("ConfigLoader", "Auto-healing empty Wi-Fi credentials in /config/network.json from %s (SSID: '%s')",
+                 candidates[i], backupCfg->wifi.ssid.c_str());
+            wifi = backupCfg->wifi;
+            if (!mqtt.enabled && backupCfg->mqtt.enabled) mqtt = backupCfg->mqtt;
+            if (dataMqtt.broker.isEmpty() && !backupCfg->dataMqtt.broker.isEmpty()) dataMqtt = backupCfg->dataMqtt;
+            if (!showcase.enabled && backupCfg->showcase.enabled) showcase = backupCfg->showcase;
+            mgr.saveNetwork(wifi, mqtt, dataMqtt, &showcase);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool __attribute__((noinline)) ConfigLoader::tryLoadFallbackMatrixFromStorage(
+    IConfigStorage& storage,
     MatrixConfig& outMatrix,
     uint16_t maxTotalW,
     uint16_t maxTotalH,
     const char* filepath
 ) const {
-    SdConfigStorage sdStorage;
     String bakPath = String(filepath) + ".bak";
     const char* candidates[2] = { bakPath.c_str(), filepath };
     for (int i = 0; i < 2; ++i) {
         String raw;
-        if (!sdStorage.readString(candidates[i], raw) || raw.length() < 16) continue;
-        ConfigLoader backupCfg;
-        if (!backupCfg.parseFromJson(raw.c_str())) continue;
-        int w = backupCfg.matrix.width;
-        int h = backupCfg.matrix.height;
-        int c = backupCfg.matrix.chainLength;
+        if (!storage.readString(candidates[i], raw) || raw.length() < 16) continue;
+        // Allocate transient ConfigLoader on the heap (never on loopTask's 8 KB stack)
+        std::unique_ptr<ConfigLoader> backupCfg(new (std::nothrow) ConfigLoader());
+        if (!backupCfg) {
+            LOGE("ConfigLoader", "Out of heap allocating transient ConfigLoader for matrix fallback");
+            break;
+        }
+        if (!backupCfg->parseFromJson(raw.c_str())) continue;
+        int w = backupCfg->matrix.width;
+        int h = backupCfg->matrix.height;
+        int c = backupCfg->matrix.chainLength;
         if (w >= 16 && h >= 16 && c >= 1) {
             uint32_t totalW = static_cast<uint32_t>(w) * static_cast<uint32_t>(c);
             uint32_t totalH = static_cast<uint32_t>(h);
             if (totalW <= maxTotalW && totalH <= maxTotalH) {
-                outMatrix = backupCfg.matrix;
+                outMatrix = backupCfg->matrix;
                 LOGI("ConfigLoader", "Recovered valid fallback MatrixConfig (%dx%d, Chain %d) from %s",
                      w, h, c, candidates[i]);
                 return true;
@@ -866,6 +888,16 @@ bool ConfigLoader::tryLoadFallbackMatrixFromBackups(
         }
     }
     return false;
+}
+
+bool ConfigLoader::tryLoadFallbackMatrixFromBackups(
+    MatrixConfig& outMatrix,
+    uint16_t maxTotalW,
+    uint16_t maxTotalH,
+    const char* filepath
+) const {
+    SdConfigStorage sdStorage;
+    return tryLoadFallbackMatrixFromStorage(sdStorage, outMatrix, maxTotalW, maxTotalH, filepath);
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {

@@ -275,6 +275,8 @@ enum ConfigSaveDomain : uint8_t {
 };
 
 class ConfigLoader;
+class IConfigStorage;
+class ModularConfigManager;
 
 /**
  * @brief Move-only RAII Guard for borrowing immutable ConfigSnapshot.
@@ -319,6 +321,18 @@ public:
     bool loadFromSD(const char* filepath);
     bool saveToSD(const char* filepath);
     bool saveDomainsToSD(uint8_t domainMask, const char* filepath = "/config.json");
+    bool autoHealNetworkFromBackups(
+        IConfigStorage& storage,
+        ModularConfigManager& mgr,
+        const char* filepath = "/config.json"
+    );
+    bool tryLoadFallbackMatrixFromStorage(
+        IConfigStorage& storage,
+        MatrixConfig& outMatrix,
+        uint16_t maxTotalW,
+        uint16_t maxTotalH,
+        const char* filepath = "/config.json"
+    ) const;
     bool tryLoadFallbackMatrixFromBackups(
         MatrixConfig& outMatrix,
         uint16_t maxTotalW,
