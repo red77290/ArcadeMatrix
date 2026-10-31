@@ -2368,17 +2368,24 @@ void test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds(void) {
     using core::drawing::DmdzStreamDecoder;
     using core::drawing::DmdzStreamHeader;
 
+    // Legacy v1 `DMDZ` headers (`version < 2`) are strictly rejected in lossless v2-only codec
+    const uint8_t legacyV1HdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 1, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
+    };
+    DmdzStreamHeader hdr;
+    TEST_ASSERT_FALSE(DmdzStreamDecoder::parseHeader(legacyV1HdrRaw, hdr));
+
     const uint8_t dmdzHdrRaw[16] = {
-        'D', 'M', 'D', 'Z', 1, 20,
+        'D', 'M', 'D', 'Z', 2, 20,
         16, 0,   // width = 16
         6, 0,    // height = 6 (96 pixels -> exercises LONG SKIP > 64!)
         4, 0,    // totalFrames = 4
         50, 0,   // frameDurMs = 50
         0, 0
     };
-    DmdzStreamHeader hdr;
     TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(dmdzHdrRaw, hdr));
     TEST_ASSERT_TRUE(hdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT8(2, hdr.version);
     TEST_ASSERT_EQUAL_UINT8(20, hdr.fps);
     TEST_ASSERT_EQUAL_UINT16(16, hdr.width);
     TEST_ASSERT_EQUAL_UINT16(6, hdr.height);
@@ -2583,189 +2590,92 @@ void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
     TEST_ASSERT_EQUAL_UINT8(6, stage2Graceful);
 }
 
-void test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder(void) {
-    using core::drawing::DmdzWsDemuxer;
-    using core::drawing::buildDmdzWebSocketPath;
-
-    // 1. WebSocket path builder: mqtt_tcp, http_poll, purge=false, api_key, and invalid routes
-    char wsPath[288] = "";
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/games/stream/ss_1942.rgb565.stream?purge=true&paced=1&codec=dmdz1&client_id=esp32_g",
+void test_dmdz_http_stream_and_delete_path_builders_and_content_length(void) {
+    // 1. `formatDmdzHttpStreamPath`: `purge=false` (SD download / PSRAM preload / FrontendSync) & `purge=true`,
+    //    `codec=dmdz2`, `client_id`, `api_key` preservation, full `http://` URL stripping, and invalid route rejection
+    char httpPath[320] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "http://192.168.1.40:8890/api/v1/games/stream/ss_1942.rgb565.stream?purge=true&api_key=sec_token_1",
         "esp32_games_128x32",
-        wsPath,
-        sizeof(wsPath)
+        false,
+        httpPath,
+        sizeof(httpPath)
     ));
     TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/ss_1942.dmdz?purge=true&client_id=esp32_games_128x32",
-        wsPath
+        "/api/v1/games/stream/ss_1942.rgb565.stream?purge=false&codec=dmdz2&client_id=esp32_games_128x32&api_key=sec_token_1",
+        httpPath
     );
 
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream?purge=false&api_key=sec_token_1",
-        "esp32_movies",
-        wsPath,
-        sizeof(wsPath)
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream",
+        "esp32s3_movies",
+        true,
+        httpPath,
+        sizeof(httpPath)
     ));
     TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/movies/ws/tmdb_603_c1.dmdz?purge=false&client_id=esp32_movies&api_key=sec_token_1",
-        wsPath
+        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream?purge=true&codec=dmdz2&client_id=esp32s3_movies",
+        httpPath
     );
-    TEST_ASSERT_FALSE(buildDmdzWebSocketPath("/api/v1/games/next", "c1", wsPath, sizeof(wsPath)));
 
-    // 2. Verify masked client credit ACK frame unmasks to 1-byte `'A'` (0x41)
-    TEST_ASSERT_EQUAL_UINT8(0x82U, DmdzWsDemuxer::kMaskedCreditAckFrame[0]);
-    TEST_ASSERT_EQUAL_UINT8(0x81U, DmdzWsDemuxer::kMaskedCreditAckFrame[1]);
-    uint8_t unmaskedAck = static_cast<uint8_t>(
-        DmdzWsDemuxer::kMaskedCreditAckFrame[6] ^ DmdzWsDemuxer::kMaskedCreditAckFrame[2]
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream?api_key=tok99",
+        "",
+        false,
+        httpPath,
+        sizeof(httpPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream?purge=false&codec=dmdz2&api_key=tok99",
+        httpPath
     );
-    TEST_ASSERT_EQUAL_UINT8('A', unmaskedAck);
 
-    // 3. Stream assembly: [16-byte header WS msg] + [PING "hb"] + [1024-byte ext16 WS msg] +
-    //    [fragmented FIN=0 + FIN=1 WS msg] + [CLOSE]
-    std::vector<uint8_t> wire;
-    std::vector<uint8_t> expected;
+    TEST_ASSERT_FALSE(net::formatDmdzHttpStreamPath("/api/v1/games/next", "c1", false, httpPath, sizeof(httpPath)));
+    TEST_ASSERT_FALSE(net::formatDmdzHttpStreamPath(nullptr, "c1", false, httpPath, sizeof(httpPath)));
 
-    // Msg #1: 16-byte unmasked binary frame (`0x82, 0x10`)
-    wire.push_back(0x82U);
-    wire.push_back(16U);
-    for (uint8_t i = 0; i < 16U; ++i) {
-        uint8_t v = static_cast<uint8_t>(0xA0U + i);
-        wire.push_back(v);
-        expected.push_back(v);
-    }
+    // 2. `formatDmdzHttpDeletePath`: preserves `api_key`, appends `client_id`, strips scheme+host
+    char delPath[320] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "http://192.168.1.40:8890/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?purge=false&api_key=tok99",
+        "esp32_dev_series",
+        delPath,
+        sizeof(delPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?client_id=esp32_dev_series&api_key=tok99",
+        delPath
+    );
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream",
+        "",
+        delPath,
+        sizeof(delPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream",
+        delPath
+    );
+    TEST_ASSERT_FALSE(net::formatDmdzHttpDeletePath("/api/v1/games/next", "c1", delPath, sizeof(delPath)));
 
-    // Interleaved server PING (`0x89, 0x02, 'h', 'b'`) inside the same TCP buffer as Msg #2!
-    wire.push_back(0x89U);
-    wire.push_back(2U);
-    wire.push_back('h');
-    wire.push_back('b');
+    // 3. `parseContentLengthHeader` case-insensitivity & strict digit validation
+    size_t contentLen = 0U;
+    TEST_ASSERT_TRUE(net::parseContentLengthHeader(
+        "HTTP/1.1 200 OK\r\nServer: uvicorn\r\ncontent-length:   245776  \r\nContent-Type: application/octet-stream\r\n\r\n",
+        contentLen
+    ));
+    TEST_ASSERT_EQUAL_UINT32(245776U, static_cast<uint32_t>(contentLen));
+    TEST_ASSERT_FALSE(net::parseContentLengthHeader("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", contentLen));
+    TEST_ASSERT_FALSE(net::parseContentLengthHeader("HTTP/1.1 200 OK\r\nContent-Length: abc\r\n\r\n", contentLen));
 
-    // Msg #2: 1024-byte unmasked binary frame (`0x82, 126, 0x04, 0x00`)
-    wire.push_back(0x82U);
-    wire.push_back(126U);
-    wire.push_back(0x04U);
-    wire.push_back(0x00U);
-    for (size_t i = 0; i < 1024U; ++i) {
-        uint8_t v = static_cast<uint8_t>((i * 7U + 3U) & 0xFFU);
-        wire.push_back(v);
-        expected.push_back(v);
-    }
-
-    // Msg #3: 2-fragment RFC 6455 message (`FIN=0, op=2` 5 bytes + `FIN=1, op=0` 4 bytes -> MUST emit 1 credit ACK!)
-    wire.push_back(0x02U);
-    wire.push_back(5U);
-    for (uint8_t i = 0; i < 5U; ++i) {
-        wire.push_back(static_cast<uint8_t>(0x30U + i));
-        expected.push_back(static_cast<uint8_t>(0x30U + i));
-    }
-    wire.push_back(0x80U);
-    wire.push_back(4U);
-    for (uint8_t i = 0; i < 4U; ++i) {
-        wire.push_back(static_cast<uint8_t>(0x40U + i));
-        expected.push_back(static_cast<uint8_t>(0x40U + i));
-    }
-
-    // Final CLOSE frame (`0x88, 0x02, 0x03, 0xE8`)
-    wire.push_back(0x88U);
-    wire.push_back(2U);
-    wire.push_back(0x03U);
-    wire.push_back(0xE8U);
-
-    DmdzWsDemuxer demux;
-    std::vector<uint8_t> actual;
-    uint32_t totalCredits = 0U;
-    uint32_t pongCount = 0U;
-    size_t wirePos = 0U;
-
-    // Feed through tiny Prime-sized network chunks (13 B) and prime-sized destination buffers (19 B)
-    while (wirePos < wire.size() && !demux.isClosed()) {
-        size_t netAvail = std::min<size_t>(13U, wire.size() - wirePos);
-        size_t chunkOff = 0U;
-        while (chunkOff < netAvail && !demux.isClosed()) {
-            uint8_t dstBuf[19];
-            size_t consumed = 0U;
-            uint8_t credits = 0U;
-            size_t produced = demux.decode(
-                wire.data() + wirePos + chunkOff,
-                netAvail - chunkOff,
-                consumed,
-                dstBuf,
-                sizeof(dstBuf),
-                credits
-            );
-            TEST_ASSERT_FALSE(demux.hasError());
-            chunkOff += consumed;
-            totalCredits += credits;
-            actual.insert(actual.end(), dstBuf, dstBuf + produced);
-            if (demux.hasPendingPong()) {
-                uint8_t pong[131] = {0};
-                size_t pongLen = demux.takePendingPongFrame(pong);
-                TEST_ASSERT_EQUAL_UINT32(8U, static_cast<uint32_t>(pongLen));
-                TEST_ASSERT_EQUAL_UINT8(0x8AU, pong[0]);
-                TEST_ASSERT_EQUAL_UINT8(0x82U, pong[1]);
-                TEST_ASSERT_EQUAL_UINT8('h', static_cast<uint8_t>(pong[6] ^ pong[2]));
-                TEST_ASSERT_EQUAL_UINT8('b', static_cast<uint8_t>(pong[7] ^ pong[3]));
-                ++pongCount;
-            }
-            if (consumed == 0U && produced == 0U && !demux.hasPendingPong()) {
-                break;
-            }
-        }
-        wirePos += chunkOff;
-    }
-
-    TEST_ASSERT_TRUE(demux.isClosed());
-    TEST_ASSERT_FALSE(demux.hasError());
-    TEST_ASSERT_EQUAL_UINT32(1U, pongCount);
-    TEST_ASSERT_EQUAL_UINT32(3U, totalCredits); // Exactly 3 logical WS messages!
-    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.size()), static_cast<uint32_t>(actual.size()));
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), actual.data(), expected.size());
+    // 4. `DmdzHttpStreamSession` zero-heap scratch footprint invariant (`<= 1,472 B`)
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        static_cast<uint32_t>(engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES),
+        static_cast<uint32_t>(sizeof(net::DmdzHttpStreamSession))
+    );
 }
 
-void test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits(void) {
-    using namespace core::drawing;
-
-    // 1. `buildDmdzWebSocketPath` In-Game Showcase `purge=false` + PSRAM `credits=8` + clamping
-    char wsPath[256] = "";
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/games/stream/pkg_games_42.rgb565.stream?purge=false&paced=1&codec=dmdz1",
-        "esp32_ab12_games_128x32_sync",
-        wsPath,
-        sizeof(wsPath),
-        8U
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/pkg_games_42.dmdz?purge=false&client_id=esp32_ab12_games_128x32_sync&credits=8",
-        wsPath
-    );
-
-    // Default `credits=2` omits `&credits=` for zero wire overhead on `ESP32_STD`
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/games/stream/pkg_games_42.rgb565.stream?purge=false&paced=1&codec=dmdz1",
-        "esp32_sync",
-        wsPath,
-        sizeof(wsPath),
-        2U
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/pkg_games_42.dmdz?purge=false&client_id=esp32_sync",
-        wsPath
-    );
-
-    // Clamping `credits` to `[1, 16]`
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/movies/stream/pkg_movies_9.rgb565.stream",
-        "esp32_s3",
-        wsPath,
-        sizeof(wsPath),
-        99U
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/movies/ws/pkg_movies_9.dmdz?purge=true&client_id=esp32_s3&credits=16",
-        wsPath
-    );
-
-    // 2. `net::parseEndpointHostAndPort`
+void test_dmdz_stream_client_endpoint_and_chunked_helpers(void) {
+    // 1. `net::parseEndpointHostAndPort`
     char host[64] = "";
     uint16_t port = 0U;
     bool isHttps = false;
@@ -2793,15 +2703,15 @@ void test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits(void) {
     TEST_ASSERT_EQUAL_UINT16(443U, port);
     TEST_ASSERT_TRUE(isHttps);
 
-    // 3. `net::hasChunkedTransferEncoding`
+    // 2. `net::hasChunkedTransferEncoding`
     TEST_ASSERT_TRUE(net::hasChunkedTransferEncoding(
-        "HTTP/1.1 200 OK\r\ntransfer-encoding: gzip, Chunked\r\nX-DMD-Paced: 1"
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: gzip, Chunked\r\nContent-Type: application/octet-stream"
     ));
     TEST_ASSERT_FALSE(net::hasChunkedTransferEncoding(
-        "HTTP/1.1 200 OK\r\nContent-Length: 8208\r\nX-DMD-Paced: 1"
+        "HTTP/1.1 200 OK\r\nContent-Length: 8208\r\nContent-Type: application/octet-stream"
     ));
 
-    // 4. `net::HttpChunkedDecoder` across extensions & tiny slices
+    // 3. `net::HttpChunkedDecoder` across extensions & tiny slices
     const char* rawChunked =
         "5;ext=abc\r\nHello\r\n"
         "7\r\n, DMDZ!\r\n"
@@ -2836,9 +2746,7 @@ void test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits(void) {
     TEST_ASSERT_TRUE(chunkDec.hasError());
 }
 
-void test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack(void) {
-    using core::drawing::DmdzWsDemuxer;
-
+void test_hub75_lut_4bit_neutral_grey_and_cie_monotonicity(void) {
     // 1. Verify full 256-entry CIE 1931 LUT reaches `maxAllowed` at full brightness across all depths
     //    (guards against truncated CIE tables wrapping indices 208..255 to 0).
     const uint8_t depths[] = {2, 4, 5, 6, 7, 8};
@@ -2879,46 +2787,10 @@ void test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack(void) {
         }
         TEST_ASSERT_TRUE(lutR[5] >= 1U);
     }
-
-    // 3. Coalesced WebSocket credit ACK frames (`1..16` `'A'` bytes in a single masked RFC 6455 binary frame)
-    uint8_t ackBuf[22] = {0};
-    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(0U, ackBuf)));
-    TEST_ASSERT_EQUAL_UINT32(10U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(4U, ackBuf)));
-    TEST_ASSERT_EQUAL_UINT8(0x82U, ackBuf[0]);
-    TEST_ASSERT_EQUAL_UINT8(0x84U, ackBuf[1]);
-    for (uint8_t i = 0U; i < 4U; ++i) {
-        TEST_ASSERT_EQUAL_UINT8('A', static_cast<uint8_t>(ackBuf[6U + i] ^ DmdzWsDemuxer::kMaskKey[i & 3U]));
-    }
-    // Clamp > 16 to 16 bytes
-    TEST_ASSERT_EQUAL_UINT32(22U, static_cast<uint32_t>(DmdzWsDemuxer::buildMaskedCreditAckFrame(99U, ackBuf)));
-    TEST_ASSERT_EQUAL_UINT8(0x90U, ackBuf[1]);
 }
 
-void test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure(void) {
-    using core::drawing::DmdzWsDemuxer;
-
-    // 1. WebSocket credit batching & strict `!hasPsram` (`wsCredits=2, ackBatch=1`) vs `hasPsram` (`wsCredits=8, ackBatch=2`)
-    TEST_ASSERT_EQUAL_UINT8(1U, net::clampWsCredits(0U));
-    TEST_ASSERT_EQUAL_UINT8(2U, net::clampWsCredits(2U));
-    TEST_ASSERT_EQUAL_UINT8(8U, net::clampWsCredits(8U));
-    TEST_ASSERT_EQUAL_UINT8(16U, net::clampWsCredits(42U));
-
-    TEST_ASSERT_EQUAL_UINT8(1U, net::computeWsAckBatch(net::clampWsCredits(2U))); // `!hasPsram` (`esp32dev`)
-    TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(8U))); // `hasPsram` (`esp32s3`)
-
-    // 2. Credit backpressure gating (`ringFree >= 1152U` or deadlock-free `ringCount == 0U`)
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(0U, 1U, false, 0U, 4096U, 4096U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 1U, false, 2944U, 1152U, 4096U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 1U, false, 2945U, 1151U, 4096U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 1U, true, 3072U, 1024U, 4096U));
-    // Deadlock-freedom when Core 0 drained the ring (`ringCount == 0`) on a tiny/exhausted ring
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 4096U));
-    // PSRAM `ackBatch = 2` coalescing
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 2U, false, 1024U, 7168U, 8192U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 2048U, 6144U, 8192U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 1024U, 7168U, 8192U));
-
-    // 3. `StreamByteRing` `initFromSlice`, `peek`, and circular wraparound across 4096 B `ioScratch`
+void test_stream_byte_ring_and_spsc_byte_ring_non_pow2_wraparound(void) {
+    // 1. `StreamByteRing` `initFromSlice`, `peek`, and circular wraparound across 4096 B `ioScratch`
     uint8_t scratch[4096];
     for (size_t i = 0U; i < sizeof(scratch); ++i) {
         scratch[i] = static_cast<uint8_t>((i * 37U + 11U) & 0xFFU);
@@ -2932,7 +2804,6 @@ void test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure
     for (size_t i = 0U; i < sizeof(extraIn); ++i) {
         extraIn[i] = static_cast<uint8_t>((i + 0xA0U) & 0xFFU);
     }
-    // Push 200 B across the 4096 B wrap boundary (`tail` starts at 4090 -> wraps to 194)
     TEST_ASSERT_EQUAL_UINT32(200U, static_cast<uint32_t>(ring.push(extraIn, sizeof(extraIn))));
     TEST_ASSERT_EQUAL_UINT32(290U, static_cast<uint32_t>(ring.size()));
 
@@ -2948,149 +2819,74 @@ void test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure
     TEST_ASSERT_TRUE(ring.empty());
     TEST_ASSERT_EQUAL_UINT8_ARRAY(extraIn, popped + 90U, sizeof(extraIn));
 
-    // 4. End-to-end simulation of a 5,500 B oversized `DMDZ` keyframe streaming through a 4,096 B
-    //    `StreamByteRing` with `wsCredits = 2`, `ackBatch = 1` (`!hasPsram` `esp32dev` profile):
-    //    verifies zero deadlock AND strict `esp_wifi` in-flight packet bounding!
-    std::vector<uint8_t> expectedPayload(5500U);
-    for (size_t i = 0U; i < expectedPayload.size(); ++i) {
-        expectedPayload[i] = static_cast<uint8_t>((i * 131U + 7U) & 0xFFU);
+    // 2. `DmdzSpscByteRing`: non-power-of-two capacity (`cap = 100`) full 100% fill and `[0, 2 * cap)` Lamport wraparound
+    uint8_t storage100[100] = {0};
+    net::DmdzSpscByteRing spsc;
+    spsc.init(storage100, sizeof(storage100));
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(spsc.capacity()));
+    TEST_ASSERT_TRUE(spsc.empty());
+
+    uint8_t pat[100];
+    for (size_t i = 0U; i < sizeof(pat); ++i) {
+        pat[i] = static_cast<uint8_t>((i * 41U + 9U) & 0xFFU);
+    }
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(spsc.push(pat, 100U)));
+    TEST_ASSERT_TRUE(spsc.full());
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(spsc.freeBytes()));
+
+    uint8_t out[100] = {0};
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.pop(out, 37U)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(pat, out, 37U);
+    TEST_ASSERT_EQUAL_UINT32(63U, static_cast<uint32_t>(spsc.size()));
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.freeBytes()));
+
+    // Cycle 60 rounds of odd-sized 37-byte frames across `cap = 100` (`2 * cap = 200` wraps > 11 times!)
+    spsc.reset();
+    for (int round = 0; round < 60; ++round) {
+        uint8_t frame[37];
+        const uint16_t payLen = 35U;
+        frame[0] = static_cast<uint8_t>(payLen & 0xFFU);
+        frame[1] = static_cast<uint8_t>(payLen >> 8);
+        for (size_t i = 0U; i < payLen; ++i) {
+            frame[2U + i] = static_cast<uint8_t>((round * 13 + static_cast<int>(i)) & 0xFFU);
+        }
+        TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.push(frame, sizeof(frame))));
+        uint16_t peekedLen = 0U;
+        TEST_ASSERT_TRUE(spsc.hasCompleteFrame(peekedLen));
+        TEST_ASSERT_EQUAL_UINT16(payLen, peekedLen);
+
+        const uint8_t* p1 = nullptr;
+        const uint8_t* p2 = nullptr;
+        size_t n1 = 0U;
+        size_t n2 = 0U;
+        spsc.getConsumerSlices(2U, payLen, p1, n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT32(payLen, static_cast<uint32_t>(n1 + n2));
+        uint8_t reassembled[35] = {0};
+        if (n1 > 0U) memcpy(reassembled, p1, n1);
+        if (n2 > 0U) memcpy(reassembled + n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(frame + 2U, reassembled, payLen);
+        spsc.consumeRead(37U);
+        TEST_ASSERT_TRUE(spsc.empty());
     }
 
-    // Build unmasked server->client WS binary frames of <= 1024 B payload each (6 WS frames total)
-    std::vector<std::vector<uint8_t>> serverWsFrames;
-    for (size_t pos = 0U; pos < expectedPayload.size(); pos += 1024U) {
-        const size_t chunkLen = std::min<size_t>(1024U, expectedPayload.size() - pos);
-        std::vector<uint8_t> frame;
-        frame.push_back(0x82U); // FIN + Binary
-        if (chunkLen < 126U) {
-            frame.push_back(static_cast<uint8_t>(chunkLen));
-        } else {
-            frame.push_back(126U);
-            frame.push_back(static_cast<uint8_t>((chunkLen >> 8) & 0xFFU));
-            frame.push_back(static_cast<uint8_t>(chunkLen & 0xFFU));
-        }
-        frame.insert(frame.end(), expectedPayload.begin() + pos, expectedPayload.begin() + pos + chunkLen);
-        serverWsFrames.push_back(frame);
-    }
-    TEST_ASSERT_EQUAL_UINT32(6U, static_cast<uint32_t>(serverWsFrames.size()));
-
-    ring.init(scratch, sizeof(scratch));
-    DmdzWsDemuxer wsDemux;
-    size_t nextServerFrame = 0U;
-    uint16_t serverCredits = 2U; // Initial `wsCredits = 2` on `esp32dev`
-    uint16_t pendingWsCredits = 0U;
-    const uint8_t ackBatch = net::computeWsAckBatch(2U);
-    std::vector<uint8_t> wireInFlight;
-    std::vector<uint8_t> decodedOut;
-    bool sawCreditWithheld = false;
-
-    auto serverSendAvailable = [&]() {
-        while (serverCredits > 0U && nextServerFrame < serverWsFrames.size()) {
-            const auto& f = serverWsFrames[nextServerFrame++];
-            wireInFlight.insert(wireInFlight.end(), f.begin(), f.end());
-            --serverCredits;
-        }
-    };
-
-    auto pumpWireToRing = [&]() {
-        size_t wireConsumed = 0U;
-        while (wireConsumed < wireInFlight.size() && !ring.full()) {
-            const size_t space = ring.freeBytes();
-            const size_t step = std::min<size_t>({static_cast<size_t>(512U), space, wireInFlight.size() - wireConsumed});
-            size_t off = 0U;
-            while (off < step) {
-                const size_t contig = ring.contiguousWriteCap();
-                TEST_ASSERT_TRUE(contig > 0U);
-                size_t consumed = 0U;
-                uint8_t credits = 0U;
-                const size_t produced = wsDemux.decode(
-                    wireInFlight.data() + wireConsumed + off,
-                    step - off,
-                    consumed,
-                    ring.writePtr(),
-                    contig,
-                    credits
-                );
-                TEST_ASSERT_FALSE(wsDemux.hasError());
-                off += consumed;
-                if (produced > 0U) {
-                    ring.commitWrite(produced);
-                }
-                pendingWsCredits = static_cast<uint16_t>(pendingWsCredits + credits);
-            }
-            wireConsumed += step;
-            if (pendingWsCredits > 0U &&
-                !net::canFlushWsCredits(pendingWsCredits, ackBatch, false, ring.size(), ring.freeBytes(), ring.capacity())) {
-                sawCreditWithheld = true;
-            }
-            while (net::canFlushWsCredits(pendingWsCredits, ackBatch, false, ring.size(), ring.freeBytes(), ring.capacity())) {
-                serverCredits = static_cast<uint16_t>(serverCredits + pendingWsCredits);
-                pendingWsCredits = 0U;
-            }
-        }
-        wireInFlight.erase(wireInFlight.begin(), wireInFlight.begin() + wireConsumed);
-        // Critical `esp32dev` invariant: unread wire bytes waiting outside `rxRing` must NEVER exceed 1 WS frame!
-        TEST_ASSERT_TRUE(wireInFlight.size() <= 1028U);
-    };
-
-    // Pre-buffer up to `safePrebufCap = 4096 - 1152 = 2944 B` before Core 0 begins decoding
-    while (ring.size() < 2944U && (nextServerFrame < serverWsFrames.size() || !wireInFlight.empty())) {
-        serverSendAvailable();
-        pumpWireToRing();
-    }
-    TEST_ASSERT_TRUE(ring.size() >= 2944U);
-    TEST_ASSERT_TRUE(sawCreditWithheld);
-
-    // Core 0 consumes in 384 B decode chunks (`DmdzStreamClient` chunk size), releasing credits dynamically
-    uint8_t decChunk[384];
-    size_t guardIters = 0U;
-    while (decodedOut.size() < expectedPayload.size()) {
-        TEST_ASSERT_TRUE(++guardIters < 64U);
-        serverSendAvailable();
-        pumpWireToRing();
-        const size_t want = std::min<size_t>(sizeof(decChunk), expectedPayload.size() - decodedOut.size());
-        const size_t got = ring.pop(decChunk, want);
-        if (got > 0U) {
-            decodedOut.insert(decodedOut.end(), decChunk, decChunk + got);
-        }
-        while (net::canFlushWsCredits(pendingWsCredits, ackBatch, true, ring.size(), ring.freeBytes(), ring.capacity())) {
-            serverCredits = static_cast<uint16_t>(serverCredits + pendingWsCredits);
-            pendingWsCredits = 0U;
-        }
-    }
-
-    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expectedPayload.size()), static_cast<uint32_t>(decodedOut.size()));
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedPayload.data(), decodedOut.data(), expectedPayload.size());
-    TEST_ASSERT_TRUE(ring.empty());
-    TEST_ASSERT_TRUE(wireInFlight.empty());
+    // 3. `SRAM_SPSC_DEFAULT_RING_BYTES` (`8,448 B`) holds an entire `128x32` `kFrameRaw` (`8,195 B`) atomically
+    std::vector<uint8_t> storage8448(engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES, 0U);
+    net::DmdzSpscByteRing ring8448;
+    ring8448.init(storage8448.data(), storage8448.size());
+    std::vector<uint8_t> fullRaw128x32(2U + 1U + 128U * 32U * 2U, 0x5AU);
+    fullRaw128x32[0] = static_cast<uint8_t>(8193U & 0xFFU);
+    fullRaw128x32[1] = static_cast<uint8_t>(8193U >> 8);
+    fullRaw128x32[2] = core::drawing::DmdzStreamDecoder::kFrameRaw;
+    TEST_ASSERT_EQUAL_UINT32(fullRaw128x32.size(), static_cast<uint32_t>(ring8448.push(fullRaw128x32.data(), fullRaw128x32.size())));
+    uint16_t rawLen = 0U;
+    TEST_ASSERT_TRUE(ring8448.hasCompleteFrame(rawLen));
+    TEST_ASSERT_EQUAL_UINT16(8193U, rawLen);
 }
 
-void test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path(void) {
+void test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects(void) {
     using core::drawing::DmdzStreamDecoder;
-    using core::drawing::buildDmdzWebSocketPath;
 
-    // 1. WebSocket path negotiation: v=2 + credits=4 + chunk=1360 (`esp32dev` 6 KB sliding window)
-    char wsPath[288] = "";
-    TEST_ASSERT_TRUE(buildDmdzWebSocketPath(
-        "/api/v1/games/stream/pkg_games_abc123.rgb565.stream?purge=true",
-        "esp32_edc5d7_games_128x32",
-        wsPath,
-        sizeof(wsPath),
-        4U,
-        2U,
-        1360U
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/pkg_games_abc123.dmdz?purge=true&client_id=esp32_edc5d7_games_128x32&credits=4&v=2&chunk=1360",
-        wsPath
-    );
-
-    // 2. Credit backpressure with `minFreeOverride = 1424U` (`1360 B` full-MSS chunk + `64 B` headroom)
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4720U, 1424U, 6144U, 1424U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4721U, 1423U, 6144U, 1424U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 6144U, 1424U));
-
-    // 3. `DmdzStreamDecoder` v2 1-byte chunked round-trip across `kFrameRaw`, `kFrameScroll2D` (+/-),
+    // 1. `DmdzStreamDecoder` v2 1-byte chunked round-trip across `kFrameRaw`, `kFrameScroll2D` (+/-),
     //    `OP_LUMA` (negative odd `dg = -7`), `OP_TLUMA`, `OP_LZ` (overlapping copy), and `OP_TDIFF`
     uint16_t fb[8 * 4];
     memset(fb, 0, sizeof(fb));
@@ -3163,240 +2959,117 @@ void test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path(void) {
     }
     TEST_ASSERT_EQUAL_HEX16(0x732DU, fb[31]);
 
-    // 4. `v1` decoder strictly rejects `v2`-only frame types & opcodes
-    DmdzStreamDecoder decV1;
-    decV1.init(8U, 4U, 1U);
-    TEST_ASSERT_TRUE(decV1.beginFrame(sizeof(scroll2dPos)));
-    TEST_ASSERT_FALSE(decV1.feed(scroll2dPos, sizeof(scroll2dPos), fb));
-    TEST_ASSERT_TRUE(decV1.hasError());
-}
-
-void test_dmdz_v2_frame_pal8_1_to_128_colors_scroll2d_and_profile_paths(void) {
-    using core::drawing::DmdzStreamDecoder;
-
-    // 1. 3-tier adaptive profile selector & WS/HTTP path builders
-    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 32U));
-    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 64U));
-    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 32U));
-    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 64U)); // 8,192 px
-    TEST_ASSERT_EQUAL_STRING("psram_hd", net::selectDmdzStreamProfile(true, 256U, 64U)); // 16,384 px
-
-    char wsPath[320] = "";
-    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
-        "/api/v1/movies/stream/pkg_movies_blade_runner.rgb565.stream?purge=true&api_key=secret42",
-        "esp32_sram_movies",
-        wsPath,
-        sizeof(wsPath),
-        4U,
-        2U,
-        1360U,
-        "sram"
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/movies/ws/pkg_movies_blade_runner.dmdz?purge=true&client_id=esp32_sram_movies&credits=4&v=2&chunk=1360&api_key=secret42&profile=sram",
-        wsPath
-    );
-
-    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
-        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream",
-        "esp32s3_hd_anime",
-        wsPath,
-        sizeof(wsPath),
-        16U,
-        2U,
-        1400U,
-        "psram_hd"
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/anime/ws/pkg_anime_akira.dmdz?purge=true&client_id=esp32s3_hd_anime&credits=16&v=2&chunk=1400&profile=psram_hd",
-        wsPath
-    );
-
-    char httpPath[320] = "";
-    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
-        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?api_key=tok99&purge=true",
-        "esp32s3_psram_series",
-        false,
-        false,
-        "psram",
-        httpPath,
-        sizeof(httpPath)
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?purge=false&paced=0&codec=dmdz2&client_id=esp32s3_psram_series&api_key=tok99&profile=psram",
-        httpPath
-    );
-
-    // 2. `FRAME_PAL8` (`0x05`) 1-color palette (`palHdr = 0x00`, `m_last = m_pal[0]` right after table)
-    uint16_t fb[8 * 4];
-    memset(fb, 0, sizeof(fb));
-    DmdzStreamDecoder dec;
-    dec.init(8U, 4U, 2U);
-
-    auto feedOneByteAtATime = [&](const uint8_t* payload, size_t n) -> bool {
-        if (!dec.beginFrame(static_cast<uint16_t>(n))) {
-            return false;
-        }
-        for (size_t i = 0U; i < n; ++i) {
-            if (!dec.feed(payload + i, 1U, fb)) {
-                return false;
-            }
-        }
-        return dec.finishFrame();
-    };
-
-    const uint8_t pal1Frame[] = {
-        DmdzStreamDecoder::kFramePal8,
-        0x00U,              // hasScroll2D = false, palCount = 1
-        0xE0U, 0x07U,       // m_pal[0] = 0x07E0 (m_last seeded to 0x07E0 immediately!)
-        static_cast<uint8_t>(0xC0U | 30U) // PAL_RUN of count = (30 + 2) = 32 pixels of m_last
-    };
-    TEST_ASSERT_TRUE(feedOneByteAtATime(pal1Frame, sizeof(pal1Frame)));
-    for (size_t i = 0U; i < 32U; ++i) {
-        TEST_ASSERT_EQUAL_HEX16(0x07E0U, fb[i]);
-    }
-
-    // 3. `FRAME_PAL8` (`0x05`) with 128-color palette (`palHdr = 0x7F`), `PAL_INDEX`, `PAL_RUN`, `PAL_SKIP`, `PAL_LONG_SKIP`
-    uint16_t bigFb[300];
-    for (size_t i = 0U; i < 300U; ++i) {
-        bigFb[i] = 0x1234U;
-    }
-    DmdzStreamDecoder bigDec;
-    bigDec.init(300U, 1U, 2U);
-    std::vector<uint8_t> pal128;
-    pal128.push_back(DmdzStreamDecoder::kFramePal8);
-    pal128.push_back(0x7FU); // 128 colors, no scroll
-    for (uint16_t c = 0U; c < 128U; ++c) {
-        const uint16_t rgb = static_cast<uint16_t>(0x2000U + c);
-        pal128.push_back(static_cast<uint8_t>(rgb & 0xFFU));
-        pal128.push_back(static_cast<uint8_t>(rgb >> 8));
-    }
-    pal128.push_back(0x7FU); // PAL_INDEX 127 -> bigFb[0] = 0x207F
-    pal128.push_back(static_cast<uint8_t>(0xC0U | 2U)); // PAL_RUN 4 -> bigFb[1..4] = 0x207F (pos = 5)
-    pal128.push_back(static_cast<uint8_t>(0x80U | 9U)); // PAL_SKIP 10 -> bigFb[5..14] preserved 0x1234 (pos = 15)
-    pal128.push_back(0xFFU); // PAL_LONG_SKIP 280 -> bigFb[15..294] preserved 0x1234 (pos = 295)
-    pal128.push_back(static_cast<uint8_t>(280U & 0xFFU));
-    pal128.push_back(static_cast<uint8_t>((280U >> 8) & 0xFFU));
-    pal128.push_back(0x05U); // PAL_INDEX 5 -> bigFb[295] = 0x2005
-    pal128.push_back(static_cast<uint8_t>(0xC0U | 2U)); // PAL_RUN 4 -> bigFb[296..299] = 0x2005 (pos = 300)
-
-    TEST_ASSERT_TRUE(bigDec.beginFrame(static_cast<uint16_t>(pal128.size())));
-    for (size_t i = 0U; i < pal128.size(); ++i) {
-        TEST_ASSERT_TRUE(bigDec.feed(pal128.data() + i, 1U, bigFb));
-    }
-    TEST_ASSERT_TRUE(bigDec.finishFrame());
-    for (size_t i = 0U; i < 5U; ++i) {
-        TEST_ASSERT_EQUAL_HEX16(0x207FU, bigFb[i]);
-    }
-    for (size_t i = 5U; i < 295U; ++i) {
-        TEST_ASSERT_EQUAL_HEX16(0x1234U, bigFb[i]);
-    }
-    for (size_t i = 295U; i < 300U; ++i) {
-        TEST_ASSERT_EQUAL_HEX16(0x2005U, bigFb[i]);
-    }
-
-    // 4. `FRAME_PAL8` with `hasScroll2D` (`dx = +1, dy = +1` and `dx = -1, dy = -1`)
-    for (uint16_t k = 0U; k < 32U; ++k) {
-        fb[k] = static_cast<uint16_t>(0x4000U + k);
-    }
-    const uint8_t palScrollPos[] = {
-        DmdzStreamDecoder::kFramePal8,
-        static_cast<uint8_t>(0x80U | 1U), // hasScroll2D = true, palCount = 2
-        1U, 1U,                           // dx = +1, dy = +1 (fb[0] shifts from old fb[1*8 + 1] = 0x4009)
-        0x11U, 0xAAU,                     // m_pal[0] = 0xAA11
-        0x22U, 0xBBU,                     // m_pal[1] = 0xBB22
-        static_cast<uint8_t>(0x80U | 29U), // PAL_SKIP 30 (keep shifted pixels 0..29)
-        0x00U,                            // fb[30] = 0xAA11
-        0x01U                             // fb[31] = 0xBB22
-    };
-    TEST_ASSERT_TRUE(feedOneByteAtATime(palScrollPos, sizeof(palScrollPos)));
-    TEST_ASSERT_EQUAL_HEX16(0x4009U, fb[0]);
-    TEST_ASSERT_EQUAL_HEX16(0xAA11U, fb[30]);
-    TEST_ASSERT_EQUAL_HEX16(0xBB22U, fb[31]);
-
-    // 5. Out-of-range palette index & `v1` rejection
-    const uint8_t badPalIdx[] = {
-        DmdzStreamDecoder::kFramePal8,
-        0x01U,        // palCount = 2
-        0x00U, 0x00U,
-        0xFFU, 0xFFU,
-        0x02U         // PAL_INDEX 2 >= palCount (2) -> error!
-    };
-    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(badPalIdx)));
-    TEST_ASSERT_FALSE(dec.feed(badPalIdx, sizeof(badPalIdx), fb));
+    // 2. Reject unknown/obsolete frame type `0x05` cleanly
+    const uint8_t badType05[] = {0x05U, 0x00U};
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(badType05)));
+    TEST_ASSERT_FALSE(dec.feed(badType05, sizeof(badType05), fb));
     TEST_ASSERT_TRUE(dec.hasError());
 
+    // 3. Reject legacy `version == 1` at `init()`
     DmdzStreamDecoder decV1;
     decV1.init(8U, 4U, 1U);
-    TEST_ASSERT_TRUE(decV1.beginFrame(sizeof(pal1Frame)));
-    TEST_ASSERT_FALSE(decV1.feed(pal1Frame, sizeof(pal1Frame), fb));
     TEST_ASSERT_TRUE(decV1.hasError());
+    TEST_ASSERT_FALSE(decV1.beginFrame(sizeof(scroll2dPos)));
 }
 
-void test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure(void) {
-    // 1. Non-power-of-two capacity (`cap = 100`) full 100% fill and `[0, 2 * cap)` Lamport wraparound
-    uint8_t storage100[100] = {0};
-    net::DmdzSpscByteRing ring;
-    ring.init(storage100, sizeof(storage100));
-    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(ring.capacity()));
-    TEST_ASSERT_TRUE(ring.empty());
-
-    uint8_t pat[100];
-    for (size_t i = 0U; i < sizeof(pat); ++i) {
-        pat[i] = static_cast<uint8_t>((i * 41U + 9U) & 0xFFU);
-    }
-    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(ring.push(pat, 100U)));
-    TEST_ASSERT_TRUE(ring.full());
-    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(ring.freeBytes()));
-
-    uint8_t out[100] = {0};
-    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.pop(out, 37U)));
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(pat, out, 37U);
-    TEST_ASSERT_EQUAL_UINT32(63U, static_cast<uint32_t>(ring.size()));
-    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.freeBytes()));
-
-    // Cycle 60 rounds of odd-sized 37-byte frames across `cap = 100` (`2 * cap = 200` wraps > 11 times!)
-    ring.reset();
-    for (int round = 0; round < 60; ++round) {
-        uint8_t frame[37];
-        const uint16_t payLen = 35U;
-        frame[0] = static_cast<uint8_t>(payLen & 0xFFU);
-        frame[1] = static_cast<uint8_t>(payLen >> 8);
-        for (size_t i = 0U; i < payLen; ++i) {
-            frame[2U + i] = static_cast<uint8_t>((round * 13 + static_cast<int>(i)) & 0xFFU);
-        }
-        TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(ring.push(frame, sizeof(frame))));
-        uint16_t peekedLen = 0U;
-        TEST_ASSERT_TRUE(ring.hasCompleteFrame(peekedLen));
-        TEST_ASSERT_EQUAL_UINT16(payLen, peekedLen);
-
-        const uint8_t* p1 = nullptr;
-        const uint8_t* p2 = nullptr;
-        size_t n1 = 0U;
-        size_t n2 = 0U;
-        ring.getConsumerSlices(2U, payLen, p1, n1, p2, n2);
-        TEST_ASSERT_EQUAL_UINT32(payLen, static_cast<uint32_t>(n1 + n2));
-        uint8_t reassembled[35] = {0};
-        if (n1 > 0U) memcpy(reassembled, p1, n1);
-        if (n2 > 0U) memcpy(reassembled + n1, p2, n2);
-        TEST_ASSERT_EQUAL_UINT8_ARRAY(frame + 2U, reassembled, payLen);
-        ring.consumeRead(37U);
-        TEST_ASSERT_TRUE(ring.empty());
-    }
-
-    // 2. Non-power-of-two `6,144 B` ring + `kSpscWsCreditMinRingFreeBytes` (`1,536 B`) backpressure
-    std::vector<uint8_t> storage6k(6144U, 0U);
-    net::DmdzSpscByteRing ring6k;
-    ring6k.init(storage6k.data(), storage6k.size());
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4608U, 1536U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4609U, 1535U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 6144U, net::kSpscWsCreditMinRingFreeBytes));
-}
-
-void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
+void test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload(void) {
     using core::drawing::DmdzStreamDecoder;
     using engines::showcase::ShowcaseStreamPlayer;
 
+    class NativeCanvasSurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        uint32_t blits = 0U;
+        NativeCanvasSurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0U; i < 128U * 32U; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            ++blits;
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 128U, 32U, 128U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    // 1. Atomic 1-tick `128x32` `kFrameRaw` (`8,195 B`) in default `8,448 B` SPSC ring (`0` partial frames!)
+    NativeCanvasSurface128x32 surf128;
+    ShowcaseStreamPlayer atomicPlayer;
+    TEST_ASSERT_TRUE(atomicPlayer.probeZeroCopyOnCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_TRUE(atomicPlayer.isZeroCopyEligible());
+    TEST_ASSERT_NULL(atomicPlayer.fallbackFrameBuffer());
+    TEST_ASSERT_TRUE(atomicPlayer.ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(atomicPlayer.allocateSpscRing(ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES, false));
+
+    const uint16_t fullRawPayLen = 1U + 128U * 32U * 2U; // 8,193 B
+    std::vector<uint8_t> fullRawWire(2U + fullRawPayLen);
+    fullRawWire[0] = static_cast<uint8_t>(fullRawPayLen & 0xFFU);
+    fullRawWire[1] = static_cast<uint8_t>(fullRawPayLen >> 8);
+    fullRawWire[2] = DmdzStreamDecoder::kFrameRaw;
+    for (size_t k = 0U; k < 128U * 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x2000U + (k & 0x0FFFU));
+        fullRawWire[3U + k * 2U] = static_cast<uint8_t>(px & 0xFFU);
+        fullRawWire[4U + k * 2U] = static_cast<uint8_t>(px >> 8);
+    }
+
+    // Push only 4,000 B (< 8,195 B, while ringCap is 8,448 B >= 8,195 B): Core 1 MUST wait for the full frame
+    // instead of tearing `SRAM1` Canvas with a half-frame!
+    TEST_ASSERT_EQUAL_UINT32(4000U, static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data(), 4000U)));
+    atomicPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 25U);
+    TEST_ASSERT_FALSE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_EQUAL_UINT32(0U, atomicPlayer.presentedFrames());
+    TEST_ASSERT_EQUAL_HEX16(0x0000U, surf128.pixels[0]);
+
+    // Push remaining 4,195 B -> atomic single-tick decode!
+    TEST_ASSERT_EQUAL_UINT32(
+        fullRawWire.size() - 4000U,
+        static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data() + 4000U, fullRawWire.size() - 4000U))
+    );
+    TEST_ASSERT_TRUE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_TRUE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_EQUAL_UINT32(1U, atomicPlayer.presentedFrames());
+    TEST_ASSERT_EQUAL_UINT32(1U, surf128.extDraws);
+    TEST_ASSERT_EQUAL_UINT32(0U, surf128.blits);
+    TEST_ASSERT_TRUE(atomicPlayer.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x2000U, surf128.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x2FFFU, surf128.pixels[128 * 32 - 1]);
+    atomicPlayer.releaseAll();
+
+    // 2. Tiny `64 B` SPSC ring incremental fallback (`2 + payLen > ringCap`) + lossless `kFrameScroll2D`
     class NativeCanvasSurface8x4 : public IDrawingSurface {
     public:
         uint16_t pixels[8 * 4];
@@ -3446,17 +3119,12 @@ void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
         size_t memoryUsageBytes() const override { return sizeof(pixels); }
     };
 
-    // 1. Zero-Copy `ScopedCanvasGuard` (`rotation == 0`, `fallbackFrameBuffer() == nullptr`)
-    //    including incremental oversized SPSC frame (`2 + payLen > ringCap - 1600`) + 2D scroll `FRAME_PAL8`
     NativeCanvasSurface8x4 surf;
     ShowcaseStreamPlayer player;
     TEST_ASSERT_TRUE(player.probeZeroCopyOnCore1(&surf, 8U, 4U));
-    TEST_ASSERT_TRUE(player.isZeroCopyEligible());
-    TEST_ASSERT_NULL(player.fallbackFrameBuffer());
-
     TEST_ASSERT_TRUE(player.ensureDecoderAllocated(false));
-    // Small 64-byte SPSC ring so a 67-byte `kFrameRaw` (`2 + 65 > 64`) MUST stream incrementally across 2 slices!
     TEST_ASSERT_TRUE(player.allocateSpscRing(64U, false));
+
     std::vector<uint8_t> rawWire;
     const uint16_t rawPayLen = 1U + 32U * 2U; // 65 B > 64 B ring!
     rawWire.push_back(static_cast<uint8_t>(rawPayLen & 0xFFU));
@@ -3468,18 +3136,17 @@ void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
         rawWire.push_back(static_cast<uint8_t>(px >> 8));
     }
 
-    // Push first 40 B, start incremental Core 1 decode, then push remaining 27 B + a `FRAME_PAL8` scroll frame
     TEST_ASSERT_EQUAL_UINT32(40U, static_cast<uint32_t>(player.spscRing().push(rawWire.data(), 40U)));
     player.armSpscStreamForTest(8U, 4U, 2U, true, 2U, 20U);
     TEST_ASSERT_TRUE(player.shouldMarkCore1Dirty(millis()));
-    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U)); // Partial frame consumed (`m_core1DecPartialRem > 0`)
+    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U));
     TEST_ASSERT_EQUAL_UINT32(0U, player.presentedFrames());
 
     TEST_ASSERT_EQUAL_UINT32(
         rawWire.size() - 40U,
         static_cast<uint32_t>(player.spscRing().push(rawWire.data() + 40U, rawWire.size() - 40U))
     );
-    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U)); // Completes Frame 0 Zero-Copy!
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
     TEST_ASSERT_NULL(player.fallbackFrameBuffer());
     TEST_ASSERT_EQUAL_UINT32(1U, player.presentedFrames());
     TEST_ASSERT_EQUAL_UINT32(1U, surf.extDraws);
@@ -3487,19 +3154,17 @@ void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
     TEST_ASSERT_EQUAL_HEX16(0x3000U, surf.pixels[0]);
     TEST_ASSERT_EQUAL_HEX16(0x301FU, surf.pixels[31]);
 
-    // Frame 1: `FRAME_PAL8` with `hasScroll2D` (`dx=+1, dy=+1`)
-    const uint8_t palScrollWire[] = {
-        8U, 0U, // payLen = 8
-        DmdzStreamDecoder::kFramePal8,
-        static_cast<uint8_t>(0x80U | 0U), // hasScroll2D = true, palCount = 1
+    // Frame 1: lossless `kFrameScroll2D` (`dx=+1, dy=+1`) + `SKIP 31` + `LIT(1)=0xCAFE`
+    const uint8_t scroll2dWire[] = {
+        7U, 0U, // payLen = 7
+        DmdzStreamDecoder::kFrameScroll2D,
         1U, 1U,                           // dx = +1, dy = +1 -> pixels[0] = old pixels[9] (0x3009)
-        0xFEU, 0xCAU,                     // m_pal[0] = 0xCAFE
-        static_cast<uint8_t>(0x80U | 30U), // PAL_SKIP 31 (pixels 0..30)
-        0x00U                             // PAL_INDEX 0 -> pixels[31] = 0xCAFE
+        static_cast<uint8_t>(0x00U | 30U), // SKIP 31 (pixels 0..30)
+        0xE0U, 0xFEU, 0xCAU                // LIT 1 -> pixels[31] = 0xCAFE
     };
     TEST_ASSERT_EQUAL_UINT32(
-        sizeof(palScrollWire),
-        static_cast<uint32_t>(player.spscRing().push(palScrollWire, sizeof(palScrollWire)))
+        sizeof(scroll2dWire),
+        static_cast<uint32_t>(player.spscRing().push(scroll2dWire, sizeof(scroll2dWire)))
     );
     advanceVirtualMillis(55U);
     TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
@@ -3508,25 +3173,23 @@ void test_showcase_stream_player_zero_copy_rotated_fallback_and_preload(void) {
     TEST_ASSERT_EQUAL_HEX16(0x3009U, surf.pixels[0]);
     TEST_ASSERT_EQUAL_HEX16(0xCAFEU, surf.pixels[31]);
 
-    // 2. Rotated surface (`rotation == 1`) disables Zero-Copy and routes through `m_fallbackFrame565` + `blit565`
+    // 3. Rotated surface (`rotation == 1`) disables Zero-Copy and routes through `m_fallbackFrame565` + `blit565`
     surf.setRotation(1U);
     player.onGeometryChanged(surf.getRotation());
     TEST_ASSERT_FALSE(player.isZeroCopyEligible());
     TEST_ASSERT_TRUE(player.acquireFallbackFrameBuffer(8U, 4U, false));
     TEST_ASSERT_NOT_NULL(player.fallbackFrameBuffer());
 
-    // 3. `PsramPreload` progressive download (`Tier 2` / `Tier 3` `psram_hd`): Core 1 waits when download cursor
-    //    has not yet reached full frame, then presents as soon as Core 0 advances `bytesDownloaded`!
+    // 4. `PsramPreload` (`ESP32-S3` <= 4 MB): Core 1 waits while download is incomplete, then presents lossless `kFrameKey`
     std::vector<uint8_t> preloadBlob(16U, 0U);
-    const uint8_t palSolid[] = {
+    const uint8_t keySolid[] = {
         5U, 0U,
-        DmdzStreamDecoder::kFramePal8,
-        0x00U,
-        0x1FU, 0x00U,                     // 0x001F blue
-        static_cast<uint8_t>(0xC0U | 30U) // PAL_RUN 32
+        DmdzStreamDecoder::kFrameKey,
+        0xE0U, 0x1FU, 0x00U,             // LIT 1: 0x001F blue
+        static_cast<uint8_t>(0x40U | 30U) // RUN 31 -> 32 pixels
     };
-    preloadBlob.insert(preloadBlob.end(), palSolid, palSolid + sizeof(palSolid));
-    player.armPreloadStreamForTest(preloadBlob.data(), 18U, false, 8U, 4U, 2U, true, 1U, 20U); // Only 2B of frame downloaded
+    preloadBlob.insert(preloadBlob.end(), keySolid, keySolid + sizeof(keySolid));
+    player.armPreloadStreamForTest(preloadBlob.data(), 18U, false, 8U, 4U, 2U, true, 1U, 20U);
     TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U));
     TEST_ASSERT_FALSE(player.isCore1StreamFinished());
 
@@ -3630,14 +3293,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_cie_depth_lut_monotonic_and_8bit_identity);
     RUN_TEST(test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds);
     RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
-    RUN_TEST(test_dmdz_ws_demuxer_credit_acks_ping_pong_and_path_builder);
-    RUN_TEST(test_dmdz_stream_client_shared_helpers_and_ingame_ws_credits);
-    RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_coalesced_ws_credit_ack);
-    RUN_TEST(test_stream_byte_ring_wraparound_oversized_frame_and_ws_credit_backpressure);
-    RUN_TEST(test_dmdz_v2_decoder_2d_scroll_lz77_luma_raw_and_mss_ws_path);
-    RUN_TEST(test_dmdz_v2_frame_pal8_1_to_128_colors_scroll2d_and_profile_paths);
-    RUN_TEST(test_dmdz_spsc_byte_ring_non_pow2_wraparound_and_credit_backpressure);
-    RUN_TEST(test_showcase_stream_player_zero_copy_rotated_fallback_and_preload);
+    RUN_TEST(test_dmdz_http_stream_and_delete_path_builders_and_content_length);
+    RUN_TEST(test_dmdz_stream_client_endpoint_and_chunked_helpers);
+    RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_cie_monotonicity);
+    RUN_TEST(test_stream_byte_ring_and_spsc_byte_ring_non_pow2_wraparound);
+    RUN_TEST(test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects);
+    RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
 
     return UNITY_END();
 }

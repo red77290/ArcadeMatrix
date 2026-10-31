@@ -3741,37 +3741,41 @@ void test_showcase_and_ingame_odd_seqlock_skip_and_rearm(void) {
     }
 }
 
-void test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants(void) {
-    // 1. `!hasPsram` (`wsCredits=4 -> ackBatch=2`, fallback `wsCredits=2 -> ackBatch=1`) & `hasPsram` (`wsCredits=8 -> ackBatch=2`)
-    TEST_ASSERT_EQUAL_UINT8(1U, net::computeWsAckBatch(net::clampWsCredits(2U)));
-    TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(4U)));
-    TEST_ASSERT_EQUAL_UINT8(2U, net::computeWsAckBatch(net::clampWsCredits(8U)));
-
-    // 2. Credit backpressure withholds `'A'` when `ringFree < minFree` and `ringCount > 0`,
-    //    but always flushes when `ringCount == 0` (deadlock-freedom for frames > `ringCap`).
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 1U, false, 2944U, 1152U, 4096U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(1U, 1U, false, 2945U, 1151U, 4096U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 1U, true, 3072U, 1024U, 4096U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(1U, 2U, true, 0U, 0U, 4096U));
-    TEST_ASSERT_TRUE(net::canFlushWsCredits(2U, 2U, false, 4720U, 1424U, 6144U, 1424U));
-    TEST_ASSERT_FALSE(net::canFlushWsCredits(2U, 2U, false, 4721U, 1423U, 6144U, 1424U));
-
-    char wsPathV2[288] = "";
-    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
-        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=true",
+void test_dmdz_http_stream_paths_ring_buffer_and_esp32dev_8bit_admission(void) {
+    // 1. Plain HTTP/1.1 `DMDZ` v2 stream & `DELETE` purge path builders
+    char streamPath[288] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "http://192.168.1.40:8890/api/v1/games/stream/pkg_games_test.rgb565.stream?api_key=tok42&purge=true",
         "esp32_dev_games",
-        wsPathV2,
-        sizeof(wsPathV2),
-        4U,
-        2U,
-        1360U
+        false,
+        streamPath,
+        sizeof(streamPath)
     ));
     TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/pkg_games_test.dmdz?purge=true&client_id=esp32_dev_games&credits=4&v=2&chunk=1360",
-        wsPathV2
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=false&codec=dmdz2&client_id=esp32_dev_games&api_key=tok42",
+        streamPath
     );
 
-    // 3. `StreamByteRing` circular wraparound & peek invariants on heap-backed 4096 B buffer
+    char deletePath[288] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=false&api_key=tok42",
+        "esp32_dev_games",
+        deletePath,
+        sizeof(deletePath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?client_id=esp32_dev_games&api_key=tok42",
+        deletePath
+    );
+
+    size_t contentLen = 0U;
+    TEST_ASSERT_TRUE(net::parseContentLengthHeader(
+        "HTTP/1.1 200 OK\r\ncontent-length: 147472\r\nContent-Type: application/octet-stream\r\n\r\n",
+        contentLen
+    ));
+    TEST_ASSERT_EQUAL_UINT32(147472U, static_cast<uint32_t>(contentLen));
+
+    // 2. `StreamByteRing` circular wraparound & peek invariants on heap-backed 4096 B buffer
     std::unique_ptr<uint8_t[]> scratch(new uint8_t[4096]());
     net::StreamByteRing ring;
     ring.init(scratch.get(), 4096U);
@@ -3790,7 +3794,7 @@ void test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants(void) {
     }
     TEST_ASSERT_TRUE(ring.empty());
 
-    // 4. Verify `retro_games` descriptor remains 100% admitted at 8-bit color depth on `ESP32_DEV` (`128x32`)
+    // 3. Verify `retro_games` descriptor remains 100% admitted at 8-bit color depth on `ESP32_DEV` (`128x32`)
     EngineRegistry::clear();
     EngineRegistrar::registerAll();
     const EngineDescriptor* retroDesc = EngineRegistry::getDescriptor("retro_games");
@@ -3811,46 +3815,37 @@ void test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants(void) {
     TEST_ASSERT_TRUE(verdict.compatible());
 }
 
-void test_dmdz_pal8_spsc_ring_and_3tier_profile_contracts(void) {
-    TEST_ASSERT_EQUAL_STRING("sram", net::selectDmdzStreamProfile(false, 128U, 32U));
-    TEST_ASSERT_EQUAL_STRING("psram", net::selectDmdzStreamProfile(true, 128U, 64U));
-    TEST_ASSERT_EQUAL_STRING("psram_hd", net::selectDmdzStreamProfile(true, 256U, 64U));
-
-    char wsPath[288] = "";
-    TEST_ASSERT_TRUE(core::drawing::buildDmdzWebSocketPath(
-        "/api/v1/games/stream/pkg_games_sf2.rgb565.stream",
-        "esp32_dev_games",
-        wsPath,
-        sizeof(wsPath),
-        4U,
-        2U,
-        1360U,
-        "sram"
-    ));
-    TEST_ASSERT_EQUAL_STRING(
-        "/api/v1/games/ws/pkg_games_sf2.dmdz?purge=true&client_id=esp32_dev_games&credits=4&v=2&chunk=1360&profile=sram",
-        wsPath
+void test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts(void) {
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        static_cast<uint32_t>(engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES),
+        static_cast<uint32_t>(sizeof(net::DmdzHttpStreamSession))
     );
+    // Default `8,448 B` SRAM SPSC ring fits a full `128x32` `kFrameRaw` (`2 + 1 + 8192 = 8195 B`) atomically
+    TEST_ASSERT_TRUE(engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES >= 8195U);
 
     uint16_t fb[16] = {0};
     core::drawing::DmdzStreamDecoder dec;
     dec.init(4U, 4U, 2U);
-    const uint8_t pal8Key[] = {
-        core::drawing::DmdzStreamDecoder::kFramePal8,
-        0x01U,        // 2 colors, no scroll
-        0x1FU, 0x00U, // m_pal[0] = 0x001F
-        0x00U, 0xF8U, // m_pal[1] = 0xF800
-        static_cast<uint8_t>(0xC0U | 6U), // PAL_RUN 8 of m_pal[0] (0x001F)
-        0x01U,        // PAL_INDEX 1 (0xF800)
-        static_cast<uint8_t>(0xC0U | 5U)  // PAL_RUN 7 of 0xF800
+    const uint8_t keyFrame[] = {
+        core::drawing::DmdzStreamDecoder::kFrameKey,
+        0xE0U, 0x1FU, 0x00U,             // LIT 1: 0x001F
+        static_cast<uint8_t>(0x40U | 6U), // RUN 7 -> 8 pixels of 0x001F
+        0xE0U, 0x00U, 0xF8U,             // LIT 1: 0xF800
+        static_cast<uint8_t>(0x40U | 6U)  // RUN 7 -> 8 pixels of 0xF800
     };
-    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(pal8Key)));
-    for (size_t i = 0U; i < sizeof(pal8Key); ++i) {
-        TEST_ASSERT_TRUE(dec.feed(pal8Key + i, 1U, fb));
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(keyFrame)));
+    for (size_t i = 0U; i < sizeof(keyFrame); ++i) {
+        TEST_ASSERT_TRUE(dec.feed(keyFrame + i, 1U, fb));
     }
     TEST_ASSERT_TRUE(dec.finishFrame());
     for (size_t i = 0U; i < 8U; ++i) TEST_ASSERT_EQUAL_HEX16(0x001FU, fb[i]);
     for (size_t i = 8U; i < 16U; ++i) TEST_ASSERT_EQUAL_HEX16(0xF800U, fb[i]);
+
+    // Reject unknown/obsolete frame type `0x05` cleanly
+    const uint8_t unknownTypeFrame[] = {0x05U, 0x00U};
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(unknownTypeFrame)));
+    TEST_ASSERT_FALSE(dec.feed(unknownTypeFrame, sizeof(unknownTypeFrame), fb));
+    TEST_ASSERT_TRUE(dec.hasError());
 
     uint8_t ringMem[96] = {0};
     net::DmdzSpscByteRing spsc;
@@ -3999,8 +3994,8 @@ void setup() {
     RUN_TEST(test_compatibility_evaluator_chained_width_no_multiplication);
     RUN_TEST(test_showcase_and_ingame_next_frame_due_ms_pacing);
     RUN_TEST(test_showcase_and_ingame_odd_seqlock_skip_and_rearm);
-    RUN_TEST(test_dmdz_stream_ring_buffer_and_ws_credit_backpressure_invariants);
-    RUN_TEST(test_dmdz_pal8_spsc_ring_and_3tier_profile_contracts);
+    RUN_TEST(test_dmdz_http_stream_paths_ring_buffer_and_esp32dev_8bit_admission);
+    RUN_TEST(test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts);
 
     UNITY_END();
 }

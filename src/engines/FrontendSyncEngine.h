@@ -22,8 +22,9 @@ class IDrawingSurface;
  * Strictly enforces all real-time architectural invariants on Core 1:
  * - Zero dynamic allocation, zero String, and zero std::mutex on Core 1.
  * - Shares `engines::showcase::ShowcaseStreamPlayer` with `MediaShowcaseBase` for Zero-Copy
- *   `ScopedCanvasGuard` in-place `DMDZ` v2 (`FRAME_PAL8` + RLE/LZ/Scroll2D) decoding across
- *   all 3 adaptive tiers (`sram`, `psram`, `psram_hd`), with rotated `IDrawingSurface::blit565` fallback.
+ *   `ScopedCanvasGuard` in-place `DMDZ` v2 (`16-bit` True-RGB565 lossless `RLE` / `LZ` / `Scroll2D`)
+ *   decoding (`esp32dev` SD cache `/cache/showcase_sync.dmdz` and `ESP32-S3` PSRAM preload / `1 MB` SPSC),
+ *   with rotated `IDrawingSurface::blit565` fallback.
  * - Allocation-free and wait-free deactivate() / pause() / resume().
  */
 class InGameShowcaseEngine : public IEngine {
@@ -298,7 +299,7 @@ private:
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
     std::atomic<bool> m_workerWakeLatch{false};
-    static constexpr size_t STREAM_SESSION_SCRATCH_BYTES = 1536U;
+    static constexpr size_t STREAM_SESSION_SCRATCH_BYTES = 2816U;
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     char* m_streamIoScratch = nullptr;
     size_t m_streamIoScratchCap = 0;

@@ -597,7 +597,7 @@ Ejemplo de instancia: `{"instance_id":"home_data","engine_id":"mqttdata","config
 | :--- | :--- | :--- | :--- |
 | `showcase.enabled` | `bool` | `false` | Interruptor de activación global (desactivado por defecto para evitar peticiones de red innecesarias si `dmd_media_showcase` no está instalado). |
 | `showcase.server_url` | `String` | `"http://dmdmediashowcase.local:8890"` | URL HTTP pre-rellenada (autodescubrimiento mDNS) de su servidor **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** en la red local (verificada por el indicador **`🟢 Comunicación OK`** en la Web UI). |
-| `showcase.transport_mode` | `Options` | `mqtt_tcp` | Protocolo de transporte (`mqtt_tcp` para control MQTT en tiempo real + flujo WebSocket `DMDZ` con créditos ACK / TCP `DMDS` sin heap, o `http_poll` para sondeo HTTP directo). |
+| `showcase.transport_mode` | `Options` | `mqtt_tcp` | Protocolo de transporte (`mqtt_tcp` para control MQTT en tiempo real + streaming HTTP/1.1 directo `DMDZ` v2 / `DMDS` sin pérdida cero-heap, o `http_poll` para sondeo HTTP directo). |
 | `showcase.use_showcase_broker` | `bool` | `true` | Conecta automáticamente al broker MQTT alojado en el servidor Showcase (`<server_ip>:1883`). |
 | `showcase.mqtt_broker_source` | `Options` | `global` | Fuente del broker MQTT cuando `use_showcase_broker` es `false` (`global` usa `mqtt.server`, `custom` usa `mqtt_custom_url`). |
 | `showcase.mqtt_custom_url` | `String` | `""` | URL personalizada del broker MQTT (ej. `mqtt://192.168.1.200:1883`) cuando `mqtt_broker_source` es `custom`. |
