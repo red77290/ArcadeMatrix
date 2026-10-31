@@ -33,7 +33,6 @@ struct Hub75EncodingParams {
     const uint8_t* lutG = nullptr;   ///< 64-byte CIE 1931 gamma LUT for Green (6-bit)
     const uint8_t* lutB = nullptr;   ///< 32-byte CIE 1931 gamma LUT for Blue (5-bit)
     uint8_t rotation = 0;            ///< Physical orientation (0 or 2 for 180 deg)
-    uint8_t startRow = 0;            ///< Starting scan row `0 .. rowsPerFrame-1` (rotates wrap boundary in single-DMA mode)
     DmaRowFlush rowFlush = nullptr;  ///< Optional per-row cache writeback hook while row planes sit hot in L1 DCache
     void* flushCtx = nullptr;        ///< User context passed to `rowFlush`
 };

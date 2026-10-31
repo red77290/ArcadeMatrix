@@ -1044,10 +1044,10 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
                 return true;
             }
             bool waited = false;
-            const size_t sliceBudget = gentleBackgroundSlice ? 16384U : 65536U;
+            const size_t sliceBudget = gentleBackgroundSlice ? 8192U : 65536U;
             size_t sliceRead = 0U;
             while (downloaded < preloadCap && !httpGuard.ptr->streamEof && sliceRead < sliceBudget) {
-                const size_t maxChunk = gentleBackgroundSlice ? 16384U : 32768U;
+                const size_t maxChunk = gentleBackgroundSlice ? 8192U : 32768U;
                 const size_t want = std::min<size_t>(
                     preloadCap - downloaded,
                     std::min<size_t>(maxChunk, sliceBudget - sliceRead)
@@ -1093,7 +1093,7 @@ bool ShowcaseStreamPlayer::runStreamSession(const ShowcaseStreamRunOptions& opts
                     const uint32_t remCard = opts.preStreamCardWaitMs - elapsed;
                     (void)pumpPsramPreload(std::min<uint32_t>(16U, remCard), /*gentleBackgroundSlice=*/true);
                     if (!m_preloadComplete.load(std::memory_order_acquire)) {
-                        vTaskDelay(pdMS_TO_TICKS(4));
+                        vTaskDelay(pdMS_TO_TICKS(5));
                     }
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(25));

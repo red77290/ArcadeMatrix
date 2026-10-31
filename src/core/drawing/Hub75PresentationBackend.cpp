@@ -250,10 +250,8 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         // 2. Pre-flight budget validation
         // 3. Wait for safe window (if synchronizer configured)
         // 4. Optional transient blanking
-        // 5. Rotate `startRow` by coprime `+7` (`gcd(7, rowsPerFrame) == 1`) so the
-        //    wrap boundary never parks between `row (rpf-1)` and `row 0` (`y = 31/32`
-        //    center seam on 64px-tall 1/32-scan panels during vertical panorama/video
-        //    motion), and flush each `rowBitStruct` immediately while hot in L1 DCache.
+        // 5. Monotonic top-to-bottom scan-row encode (`row 0 .. rowsPerFrame-1`) with
+        //    immediate per-row L1 DCache writeback (`target.rowFlush`).
         // 6. Commit frame
         // =========================================================================
         bool isSpiram = false;
@@ -292,9 +290,6 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             blankStart = micros();
             _engine->setBlank(true);
         }
-
-        params.startRow = static_cast<uint8_t>(_nextStartRow % target.rowsPerFrame);
-        _nextStartRow = static_cast<uint8_t>((static_cast<uint16_t>(params.startRow) + 7U) % target.rowsPerFrame);
 
         uint32_t t_enc = micros();
         Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
