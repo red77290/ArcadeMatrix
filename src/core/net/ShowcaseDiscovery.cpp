@@ -11,6 +11,7 @@
 #include "../../hal/HardwareHAL.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <fcntl.h>
@@ -126,11 +127,49 @@ void writeCache(const char* ip, uint16_t port, const char* version) {
     }
 }
 
+void extractJsonVersionField(const char* body, char* outVer, size_t verCap) {
+    if (!outVer || verCap == 0) return;
+    outVer[0] = '\0';
+    if (!body) return;
+    const char* key = strstr(body, "\"version\"");
+    if (!key) return;
+    const char* colon = strchr(key + 9, ':');
+    if (!colon) return;
+    const char* q1 = strchr(colon + 1, '"');
+    if (!q1) return;
+    const char* q2 = strchr(q1 + 1, '"');
+    if (!q2 || q2 <= q1 + 1) return;
+    size_t len = static_cast<size_t>(q2 - (q1 + 1));
+    if (len >= verCap) len = verCap - 1;
+    memcpy(outVer, q1 + 1, len);
+    outVer[len] = '\0';
+}
+
+bool hasJsonStatusOk(const char* body) {
+    if (!body) return false;
+    const char* p = body;
+    while ((p = strstr(p, "\"status\"")) != nullptr) {
+        const char* cur = p + 8;
+        while (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n') ++cur;
+        if (*cur == ':') {
+            ++cur;
+            while (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n') ++cur;
+            if (strncmp(cur, "\"ok\"", 4) == 0) {
+                return true;
+            }
+        }
+        p += 8;
+    }
+    return false;
+}
+
 #if defined(ESP32) && !defined(UNIT_TEST)
 std::atomic<bool> s_bgScanBusy{false};
 std::atomic<bool> s_scanMutexFlag{false};
 std::atomic<bool> s_mdnsBusy{false};
 std::atomic<uint32_t> s_lastSubnetScanMs{0};
+std::atomic<uint32_t> s_bgProbeSeq{0};
+std::atomic<bool> s_bgProbeQueued{false};
 char s_bgProbeUrl[96] = "";
 bool s_bgProbeForce = false;
 
@@ -154,24 +193,6 @@ void snapshotCandidates(char outIps[6][20], uint8_t& outCount) {
             return;
         }
     }
-}
-
-void extractJsonVersionField(const char* body, char* outVer, size_t verCap) {
-    if (!outVer || verCap == 0) return;
-    outVer[0] = '\0';
-    if (!body) return;
-    const char* key = strstr(body, "\"version\"");
-    if (!key) return;
-    const char* colon = strchr(key + 9, ':');
-    if (!colon) return;
-    const char* q1 = strchr(colon + 1, '"');
-    if (!q1) return;
-    const char* q2 = strchr(q1 + 1, '"');
-    if (!q2 || q2 <= q1 + 1) return;
-    size_t len = static_cast<size_t>(q2 - (q1 + 1));
-    if (len >= verCap) len = verCap - 1;
-    memcpy(outVer, q1 + 1, len);
-    outVer[len] = '\0';
 }
 
 bool isUsableIpv4(const IPAddress& addr) {
@@ -258,28 +279,31 @@ bool verifyShowcaseHealthHttp(
     lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
     lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
 
-    char reqBuf[128];
+    char reqBuf[192];
     int reqLen = snprintf(
         reqBuf,
         sizeof(reqBuf),
-        "GET /api/v1/health HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n\r\n",
+        "GET /api/v1/health HTTP/1.0\r\nHost: %s:%u\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
         host,
         static_cast<unsigned>(port)
     );
-    if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) <= 0) {
+    if (reqLen <= 0 || static_cast<size_t>(reqLen) >= sizeof(reqBuf) ||
+        lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) <= 0) {
         closeAbort();
         return false;
     }
 
-    char rxBuf[384];
+    char rxBuf[768];
     size_t total = 0;
+    bool verified = false;
     uint32_t t0 = millis();
     while ((millis() - t0) < 600U && total < sizeof(rxBuf) - 1U) {
         int r = lwip_recv(fd, rxBuf + total, sizeof(rxBuf) - 1U - total, 0);
         if (r > 0) {
             total += static_cast<size_t>(r);
             rxBuf[total] = '\0';
-            if (strstr(rxBuf, "dmd-media-showcase") != nullptr && strstr(rxBuf, "\"version\"") != nullptr) {
+            if (ShowcaseDiscovery::parseHealthHttpResponse(rxBuf, outVer, verCap)) {
+                verified = true;
                 break;
             }
         } else {
@@ -289,18 +313,10 @@ bool verifyShowcaseHealthHttp(
     closeAbort();
     rxBuf[total] = '\0';
 
-    bool isShowcase = (strstr(rxBuf, "dmd-media-showcase") != nullptr) ||
-                      (strstr(rxBuf, "\"mqtt_port\"") != nullptr && strstr(rxBuf, "\"ok\"") != nullptr);
-    if (!isShowcase) {
-        return false;
+    if (!verified) {
+        verified = ShowcaseDiscovery::parseHealthHttpResponse(rxBuf, outVer, verCap);
     }
-    if (outVer && verCap > 0) {
-        extractJsonVersionField(rxBuf, outVer, verCap);
-        if (outVer[0] == '\0') {
-            copySafe(outVer, verCap, "1.1.4");
-        }
-    }
-    return true;
+    return verified;
 }
 
 bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
@@ -338,20 +354,30 @@ bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap
         }
     }
 
-    int n = MDNS.queryService("dmd-showcase", "tcp");
-    for (int i = 0; i < n; ++i) {
-        IPAddress sip = MDNS.IP(i);
-        if (isUsableIpv4(sip) && !isUnreachableDockerBridgeIp(sip)) {
-            char cand[20];
-            snprintf(cand, sizeof(cand), "%u.%u.%u.%u", sip[0], sip[1], sip[2], sip[3]);
-            uint16_t sPort = MDNS.port(i) > 0 ? MDNS.port(i) : port;
-            if (sPort == port && verifyShowcaseHealthHttp(cand, port, 400, outVer, verCap)) {
-                copySafe(outIp, ipCap, cand);
-                writeCache(cand, port, outVer);
-                ShowcaseDiscovery::recordCandidateIpStr(cand);
-                return true;
+    // Use bounded 450 ms ESP-IDF PTR query instead of Arduino `MDNS.queryService` (which blocks 3000 ms).
+    mdns_result_t* results = nullptr;
+    if (mdns_query_ptr("_dmd-showcase", "_tcp", 450, 4, &results) == ESP_OK && results != nullptr) {
+        for (mdns_result_t* r = results; r != nullptr; r = r->next) {
+            uint16_t sPort = (r->port > 0) ? r->port : port;
+            if (sPort != port) continue;
+            for (mdns_ip_addr_t* a = r->addr; a != nullptr; a = a->next) {
+                if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+                    IPAddress sip(a->addr.u_addr.ip4.addr);
+                    if (isUsableIpv4(sip) && !isUnreachableDockerBridgeIp(sip)) {
+                        char cand[20];
+                        snprintf(cand, sizeof(cand), "%u.%u.%u.%u", sip[0], sip[1], sip[2], sip[3]);
+                        if (verifyShowcaseHealthHttp(cand, port, 400, outVer, verCap)) {
+                            copySafe(outIp, ipCap, cand);
+                            writeCache(cand, port, outVer);
+                            ShowcaseDiscovery::recordCandidateIpStr(cand);
+                            mdns_query_results_free(results);
+                            return true;
+                        }
+                    }
+                }
             }
         }
+        mdns_query_results_free(results);
     }
     return false;
 }
@@ -359,10 +385,24 @@ bool tryMdnsLookup(const char* rawHost, uint16_t port, char* outIp, size_t ipCap
 bool tryCandidatePeers(uint16_t port, char* outIp, size_t ipCap, char* outVer, size_t verCap) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
-    // Seed configured MQTT broker IP if valid IPv4
+    // Seed configured MQTT / DataMQTT / custom Showcase broker IPs if valid IPv4
     {
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const auto& snap = guard.get();
+        if (snap.showcase.mqtt_custom_url.length() > 0) {
+            char cScheme[12] = "";
+            char cHost[64] = "";
+            uint16_t cPort = 1883;
+            if (ShowcaseDiscovery::parseEndpoint(
+                    snap.showcase.mqtt_custom_url.c_str(), 1883,
+                    cScheme, sizeof(cScheme), cHost, sizeof(cHost), cPort) &&
+                isValidCandidateIpv4(cHost)) {
+                ShowcaseDiscovery::recordCandidateIpStr(cHost);
+            }
+        }
+        if (snap.dataMqtt.broker.length() > 0 && isValidCandidateIpv4(snap.dataMqtt.broker.c_str())) {
+            ShowcaseDiscovery::recordCandidateIpStr(snap.dataMqtt.broker.c_str());
+        }
         if (snap.mqtt.broker.length() > 0 && isValidCandidateIpv4(snap.mqtt.broker.c_str())) {
             ShowcaseDiscovery::recordCandidateIpStr(snap.mqtt.broker.c_str());
         }
@@ -517,43 +557,71 @@ bool scanLocalSubnet24(uint16_t port, char* outIp, size_t ipCap, char* outVer, s
     return found;
 }
 
+bool dequeueProbeRequest(char* outUrl, size_t urlCap, bool& outForce) {
+    if (!s_bgProbeQueued.exchange(false, std::memory_order_acq_rel)) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint32_t s1 = s_bgProbeSeq.load(std::memory_order_acquire);
+        if ((s1 & 1U) != 0U) continue;
+        char localUrl[96];
+        copySafe(localUrl, sizeof(localUrl), s_bgProbeUrl);
+        bool localForce = s_bgProbeForce;
+        uint32_t s2 = s_bgProbeSeq.load(std::memory_order_acquire);
+        if (s1 == s2) {
+            copySafe(outUrl, urlCap, localUrl);
+            outForce = localForce;
+            return true;
+        }
+    }
+    return false;
+}
+
 void bgScanTaskEntry(void* arg) {
     uint16_t port = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(arg));
     if (port == 0) port = 8890;
-    char probeUrl[96] = "";
-    copySafe(probeUrl, sizeof(probeUrl), s_bgProbeUrl);
-    bool force = s_bgProbeForce;
-    s_bgProbeUrl[0] = '\0';
-    s_bgProbeForce = false;
 
-    if (probeUrl[0] != '\0') {
-        char resolvedUrl[112] = "";
-        char resolvedHost[64] = "";
-        char ver[24] = "";
-        uint16_t resolvedPort = port;
-        bool online = false;
-        ShowcaseDiscovery::resolveUrl(
-            probeUrl,
-            resolvedUrl,
-            sizeof(resolvedUrl),
-            resolvedHost,
-            sizeof(resolvedHost),
-            resolvedPort,
-            online,
-            ver,
-            sizeof(ver),
-            true,
-            force
-        );
-    } else {
-        char ip[24] = "";
-        char ver[24] = "";
-        if (!tryCandidatePeers(port, ip, sizeof(ip), ver, sizeof(ver))) {
-            if (!tryMdnsLookup("dmdmediashowcase.local", port, ip, sizeof(ip), ver, sizeof(ver))) {
-                scanLocalSubnet24(port, ip, sizeof(ip), ver, sizeof(ver));
+    for (int pass = 0; pass < 3; ++pass) {
+        char probeUrl[96] = "";
+        bool force = false;
+        const bool hasReq = dequeueProbeRequest(probeUrl, sizeof(probeUrl), force);
+        if (!hasReq && pass > 0) {
+            break;
+        }
+
+        if (probeUrl[0] != '\0') {
+            char resolvedUrl[112] = "";
+            char resolvedHost[64] = "";
+            char ver[24] = "";
+            uint16_t resolvedPort = port;
+            bool online = false;
+            ShowcaseDiscovery::resolveUrl(
+                probeUrl,
+                resolvedUrl,
+                sizeof(resolvedUrl),
+                resolvedHost,
+                sizeof(resolvedHost),
+                resolvedPort,
+                online,
+                ver,
+                sizeof(ver),
+                true,
+                force
+            );
+        } else {
+            char ip[24] = "";
+            char ver[24] = "";
+            if (!tryCandidatePeers(port, ip, sizeof(ip), ver, sizeof(ver))) {
+                if (!tryMdnsLookup("dmdmediashowcase.local", port, ip, sizeof(ip), ver, sizeof(ver))) {
+                    scanLocalSubnet24(port, ip, sizeof(ip), ver, sizeof(ver));
+                }
             }
         }
+        if (!s_bgProbeQueued.load(std::memory_order_acquire)) {
+            break;
+        }
     }
+
     s_bgScanBusy.store(false, std::memory_order_release);
     vTaskDelete(nullptr);
 }
@@ -937,6 +1005,10 @@ bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRef
         return false;
     }
 
+    if (forceRefresh) {
+        invalidateCache();
+    }
+
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
     if (!hasPsram) {
         auto act = NetworkBudget::getDmdNetActivity();
@@ -946,12 +1018,19 @@ bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRef
         if (!forceRefresh && act != NetworkBudget::DmdNetActivity::Idle) {
             return false;
         }
-        if (ESP.getFreeHeap() < 10240U || ESP.getMaxAllocHeap() < 4608U) {
+        if (ESP.getFreeHeap() < 10240U || ESP.getMaxAllocHeap() < 5120U) {
             return false;
         }
     } else if (ESP.getFreeHeap() < 16384U) {
         return false;
     }
+
+    // Publish latest requested probe URL/force flag so even an already-running task picks up a fresh test URL.
+    s_bgProbeSeq.fetch_add(1U, std::memory_order_acq_rel);
+    copySafe(s_bgProbeUrl, sizeof(s_bgProbeUrl), rawUrl);
+    s_bgProbeForce = s_bgProbeForce || forceRefresh;
+    s_bgProbeSeq.fetch_add(1U, std::memory_order_release);
+    s_bgProbeQueued.store(true, std::memory_order_release);
 
     if (s_bgScanBusy.load(std::memory_order_acquire)) {
         return true;
@@ -960,9 +1039,7 @@ bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRef
     if (!s_bgScanBusy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return true;
     }
-    copySafe(s_bgProbeUrl, sizeof(s_bgProbeUrl), rawUrl);
-    s_bgProbeForce = forceRefresh;
-    uint32_t stackBytes = hasPsram ? 4096U : 3584U;
+    uint32_t stackBytes = hasPsram ? 6144U : 4608U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         bgScanTaskEntry,
         "ShowcaseDisc",
@@ -973,16 +1050,104 @@ bool ShowcaseDiscovery::triggerBackgroundProbe(const char* rawUrl, bool forceRef
         0 // Core 0 only
     );
     if (ok != pdPASS) {
+        s_bgProbeQueued.store(false, std::memory_order_release);
+        s_bgProbeSeq.fetch_add(1U, std::memory_order_acq_rel);
         s_bgProbeUrl[0] = '\0';
         s_bgProbeForce = false;
+        s_bgProbeSeq.fetch_add(1U, std::memory_order_release);
         s_bgScanBusy.store(false, std::memory_order_release);
         return false;
     }
     return true;
 #else
+    if (forceRefresh) {
+        invalidateCache();
+    }
     (void)rawUrl;
-    (void)forceRefresh;
     return false;
+#endif
+}
+
+bool ShowcaseDiscovery::parseHealthHttpResponse(const char* rawResp, char* outVer, size_t verCap) {
+    if (outVer && verCap > 0) {
+        outVer[0] = '\0';
+    }
+    if (!rawResp || rawResp[0] == '\0') {
+        return false;
+    }
+
+    // Require HTTP/1.x 200 status line when HTTP headers are present
+    const char* body = rawResp;
+    if (strncmp(rawResp, "HTTP/", 5) == 0) {
+        const char* sp = strchr(rawResp, ' ');
+        if (!sp) return false;
+        while (*sp == ' ') ++sp;
+        if (strncmp(sp, "200", 3) != 0 || (sp[3] != ' ' && sp[3] != '\r' && sp[3] != '\n' && sp[3] != '\0')) {
+            return false;
+        }
+        const char* sep = strstr(rawResp, "\r\n\r\n");
+        if (sep) {
+            body = sep + 4;
+        } else {
+            sep = strstr(rawResp, "\n\n");
+            if (!sep) return false;
+            body = sep + 2;
+        }
+    }
+
+    if (!hasJsonStatusOk(body)) {
+        return false;
+    }
+
+    // Match real `HealthResponse` schema from `dmd_media_showcase` (`converter_version` /
+    // `providers_configured` appear within the first ~120 B, long before `providers_detailed`)
+    // as well as compact/legacy payloads (`mqtt_port`, `dmd-media-showcase`).
+    const bool hasShowcaseSignature =
+        (strstr(body, "\"converter_version\"") != nullptr) ||
+        (strstr(body, "\"providers_configured\"") != nullptr) ||
+        (strstr(body, "\"mqtt_port\"") != nullptr) ||
+        (strstr(body, "dmd-media-showcase") != nullptr);
+    if (!hasShowcaseSignature) {
+        return false;
+    }
+
+    if (outVer && verCap > 0) {
+        extractJsonVersionField(body, outVer, verCap);
+        if (outVer[0] == '\0') {
+            copySafe(outVer, verCap, "1.1.4");
+        }
+    }
+    return true;
+}
+
+void ShowcaseDiscovery::invalidateCache() {
+    // Preserve last known IP in `s_candidates` before invalidating `s_cache` so a forced test
+    // still probes the previously verified host first (`< 15 ms`) before mDNS or `/24` sweep.
+    char prevIp[24] = "";
+    char prevVer[24] = "";
+    for (int i = 0; i < 4; ++i) {
+        uint32_t s1 = s_cache.seq.load(std::memory_order_acquire);
+        if ((s1 & 1U) != 0U) continue;
+        bool valid = s_cache.valid;
+        copySafe(prevIp, sizeof(prevIp), s_cache.ip);
+        uint32_t s2 = s_cache.seq.load(std::memory_order_acquire);
+        if (s1 == s2) {
+            if (!valid) prevIp[0] = '\0';
+            break;
+        }
+    }
+    (void)prevVer;
+    if (prevIp[0] != '\0') {
+        recordCandidateIpStr(prevIp);
+    }
+
+    s_cache.seq.fetch_add(1U, std::memory_order_acq_rel);
+    s_cache.valid = false;
+    s_cache.resolvedAtMs = 0;
+    s_cache.seq.fetch_add(1U, std::memory_order_release);
+
+#if defined(ESP32) && !defined(UNIT_TEST)
+    s_lastSubnetScanMs.store(0U, std::memory_order_release);
 #endif
 }
 

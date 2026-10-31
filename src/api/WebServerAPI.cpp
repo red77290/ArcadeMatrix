@@ -2954,6 +2954,7 @@ void WebServerAPI::setupRoutes() {
     // API: DMD Media Showcase Live Connection Status & mDNS Resolver (GET /api/showcase/status)
     server.on("/api/showcase/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
         if (!checkAuth(request)) return;
+        recordPeerCandidateFromRequest(request);
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const auto& snap = guard.get();
@@ -3007,6 +3008,9 @@ void WebServerAPI::setupRoutes() {
         // 100% zero-blocking inspection on `async_tcp`: never run `ESPmDNS` or synchronous TCP probes
         // inside an AsyncWebServer handler. Active Showcase engines continuously renew the cache lease,
         // and cold cache misses / `force=1` trigger a single-flight Core 0 background probe.
+        if (forceProbe) {
+            net::ShowcaseDiscovery::invalidateCache();
+        }
         if (!net::ShowcaseDiscovery::peekCachedUrlStatus(
                 rawUrl.c_str(),
                 resolvedUrlBuf,

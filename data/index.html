@@ -10359,6 +10359,7 @@ function initNetworkSettings() {
     const enEl = document.getElementById('hw-showcase-enabled');
     const urlEl = document.getElementById('hw-showcase-server-url');
     if (!badge) return;
+    const seq = (window.__showcaseCheckSeq = (window.__showcaseCheckSeq || 0) + 1);
     const enabled = enEl ? enEl.value === '1' : !!(window.__sysConfig?.showcase?.enabled);
     const url = normalizeShowcaseMdnsUrl(urlEl ? urlEl.value : (window.__sysConfig?.showcase?.server_url || 'http://dmdmediashowcase.local:8890'));
     if (urlEl && urlEl.value.trim() && urlEl.value.trim() !== url) {
@@ -10378,10 +10379,12 @@ function initNetworkSettings() {
     try {
       const baseQs = `?url=${encodeURIComponent(url)}&enabled=${enabled ? '1' : '0'}`;
       let res = await API.get(`/api/showcase/status${baseQs}${forceProbe ? '&force=1' : ''}`);
-      for (let retry = 0; retry < 2 && res && !res.online && res.probing; retry++) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
+      for (let retry = 0; retry < 8 && res && !res.online && res.probing; retry++) {
+        await new Promise((resolve) => setTimeout(resolve, retry === 0 ? 450 : 550));
+        if (seq !== window.__showcaseCheckSeq) return;
         res = await API.get(`/api/showcase/status${baseQs}`);
       }
+      if (seq !== window.__showcaseCheckSeq) return;
       if (res && res.online) {
         if (res.resolved_url) {
           window.__showcaseResolvedUrl = res.resolved_url;
@@ -10398,6 +10401,7 @@ function initNetworkSettings() {
         badge.style.borderColor = 'rgba(255, 82, 82, 0.4)';
       }
     } catch (_) {
+      if (seq !== window.__showcaseCheckSeq) return;
       badge.textContent = t('showcase_status_offline', '🔴 Unreachable');
       badge.style.background = 'rgba(255, 82, 82, 0.15)';
       badge.style.color = '#ff5252';
@@ -10443,7 +10447,7 @@ function initNetworkSettings() {
         await API.post('/api/system', { showcase });
         if (window.__sysConfig) window.__sysConfig.showcase = showcase;
         window.showToast(t('showcase_saved', 'Showcase settings saved successfully!'), 'success');
-        await checkShowcaseStatus(false);
+        await checkShowcaseStatus(enabled);
       } catch (e) {
         window.showToast(t('showcase_save_failed', 'Failed to save Showcase settings'), 'error');
       }

@@ -3,6 +3,9 @@
 #if defined(SPIRAM_DMA_BUFFER)
 #include "rom/cache.h"   // the DMA engine reads PSRAM directly: every write below must be written back
 #endif
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
 #include <esp_task_wdt.h>
 
 RenderStats g_renderStats;
@@ -82,10 +85,21 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
 
+    MemoryBudgetConstraints liveMem;
+#if defined(ESP32)
+    liveMem.freeInternalHeap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    liveMem.largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    liveMem.freeDmaHeap = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    if (hasPsram) {
+        liveMem.freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        liveMem.largestPsramBlock = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    }
+#endif
+
     uint8_t depth = effectiveColorDepth;
     if (depth == 0) {
         auto pipeRes = PipelineSelectionPolicy::evaluate(
-            totalWidth, config.height, config.colorDepth, config.render_pipeline, hasPsram
+            totalWidth, config.height, config.colorDepth, config.render_pipeline, hasPsram, liveMem
         );
         depth = pipeRes.effectiveColorDepth;
     }
@@ -95,7 +109,7 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
-    mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 8;
+    mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 4;
     mxconfig.clkphase = config.clkPhase;
 
     String chip = config.driverChip;
@@ -116,7 +130,7 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
 
     // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
     auto pipeRes = PipelineSelectionPolicy::evaluate(
-        totalWidth, config.height, depth, config.render_pipeline, hasPsram
+        totalWidth, config.height, depth, config.render_pipeline, hasPsram, liveMem
     );
     mxconfig.double_buff = pipeRes.descriptor.dmaDoubleBuffered;
 
@@ -154,6 +168,8 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     m_cachedConfig = config;
     m_activeColorDepth = depth;
     m_oePin = _pins.oe;
+    m_flipCount = 0;
+    m_lastFlipUs = 0;
     m_panel->initLuts(depth);
 
     // Initialize Presentation Backend FIRST, purely constructive with zero frame presentation
@@ -334,8 +350,18 @@ void MatrixEngine::present() {
     if (m_panel) m_panel->flushDirtyRows();
     display->flipDMABuffer();
     if (m_panel) m_panel->noteFlip();
+    m_lastFlipUs = micros();
     m_flipCount++;
     g_renderStats.presents++;
+}
+
+uint32_t MatrixEngine::minFlipGuardUs() const {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    if (m_doubleBuffered && m_panel) {
+        return m_panel->getScanPeriodUs();
+    }
+#endif
+    return 0U;
 }
 
 void MatrixEngine::clear() {
@@ -385,6 +411,16 @@ void MatrixEngine::blitCanvas565(const uint16_t* src, int canvasWidth, int canva
 
 size_t FastMatrixPanel::getDmaAllocatedBytes() const {
     return Hub75DmaLayout::calculateBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
+}
+
+uint32_t FastMatrixPanel::getScanPeriodUs() const {
+    if (calculated_refresh_rate > 0) {
+        uint32_t periodUs = (1000000U / static_cast<uint32_t>(calculated_refresh_rate)) + 450U;
+        if (periodUs < 2500U) periodUs = 2500U;
+        if (periodUs > 12000U) periodUs = 12000U;
+        return periodUs;
+    }
+    return 9500U;
 }
 
 

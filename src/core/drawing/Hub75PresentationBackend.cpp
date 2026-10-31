@@ -213,29 +213,36 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
     if (!isSingle) {
         // =========================================================================
         // DOUBLE BUFFER PIPELINE:
-        // 1. Encode into inactive back-buffer (tear-free)
-        // 2. Cache writeback (SPIRAM)
-        // 3. Safe-window synchronization (instantaneous swap)
-        // 4. Swap buffers
+        // 1. Ensure any prior asynchronous S3 GDMA descriptor flip has completed at
+        //    least 1 HUB75 scan cycle before modifying `m_back` (prevents center-row
+        //    `y = 31/32` tearing when `Bus_Parallel16::flip_dma_output_buffer` swaps at EOF).
+        // 2. Encode into inactive back-buffer (tear-free)
+        // 3. Safe-window synchronization
+        // 4. Swap buffers (`MatrixPanel_I2S_DMA::flipDMABuffer` flushes SPIRAM DCache)
         // =========================================================================
-        uint32_t t_enc = micros();
-        Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
-        timing.encodeUs = micros() - t_enc;
-
-#if defined(SPIRAM_DMA_BUFFER)
-        FastMatrixPanel* panel = _engine->getFastPanel();
-        if (panel) {
-            uint16_t rpf = _height / 2;
-            for (uint8_t y = 0; y < rpf; y++) {
-                for (uint8_t p = 0; p < _colorDepth; p++) {
-                    uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
-                    if (dmaRow) {
-                        Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        if (_engine->flipCount() > 0U) {
+            const uint32_t guardUs = _engine->minFlipGuardUs();
+            if (guardUs > 0U) {
+                const uint32_t waitStartUs = micros();
+                while ((uint32_t)(micros() - _engine->lastFlipMicros()) < guardUs) {
+                    const uint32_t remUs = guardUs - (uint32_t)(micros() - _engine->lastFlipMicros());
+                    if (remUs >= 1500U) {
+                        delay(1);
+                    } else {
+                        delayMicroseconds(40);
+                    }
+                    if ((uint32_t)(micros() - waitStartUs) > guardUs) {
+                        break;
                     }
                 }
+                timing.waitForSafeWindowUs += (micros() - waitStartUs);
             }
         }
 #endif
+        uint32_t t_enc = micros();
+        Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
+        timing.encodeUs = micros() - t_enc;
 
         uint32_t estimatedTransferUs = PresentationTimingModel::estimateTransferUs(_width, _height, _colorDepth, false);
         if (_synchronizer) {

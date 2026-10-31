@@ -442,21 +442,6 @@ size_t ShowcaseCardRenderer::countUtf8Glyphs(const char* utf8) {
     return count;
 }
 
-uint32_t ShowcaseCardRenderer::synopsisPxPerSec(const char* speedStr) {
-    if (!speedStr || speedStr[0] == '\0') return 30U;
-    if (strcmp(speedStr, "1") == 0) return 15U;
-    if (strcmp(speedStr, "2") == 0 || strcasecmp(speedStr, "slow") == 0) return 20U;
-    if (strcmp(speedStr, "3") == 0) return 24U;
-    if (strcmp(speedStr, "4") == 0 || strcasecmp(speedStr, "normal") == 0) return 30U;
-    if (strcmp(speedStr, "5") == 0) return 40U;
-    if (strcmp(speedStr, "6") == 0 || strcasecmp(speedStr, "fast") == 0) return 60U;
-    if (strcmp(speedStr, "7") == 0) return 75U;
-    if (strcmp(speedStr, "8") == 0) return 90U;
-    if (strcmp(speedStr, "9") == 0) return 120U;
-    if (strcmp(speedStr, "10") == 0) return 150U;
-    return 30U;
-}
-
 void ShowcaseCardRenderer::computeCardPosterDims(
     uint16_t panelW,
     uint16_t panelH,
@@ -599,7 +584,7 @@ void ShowcaseCardRenderer::drawScrollingLine(
     }
 
     int totalScroll = textW - availW + 12;
-    int holdSteps = 22;
+    int holdSteps = std::min(64, std::max(22, (availW * 22 + 45) / 91));
     int cycleSteps = totalScroll + holdSteps * 2;
     int step = static_cast<int>(stepPx % static_cast<uint32_t>(cycleSteps));
     int offset = std::min(totalScroll, std::max(0, step - holdSteps));

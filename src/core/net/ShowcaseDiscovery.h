@@ -148,6 +148,19 @@ public:
     static bool triggerBackgroundProbe(const char* rawUrl, bool forceRefresh = false);
 
     /**
+     * @brief Parses a raw HTTP response from `GET /api/v1/health` and returns true if it is a
+     *        valid HTTP 200 DMD Media Showcase health payload (`"status":"ok"` plus a Showcase
+     *        schema signature key), extracting `"version"` into `outVer` when present.
+     */
+    static bool parseHealthHttpResponse(const char* rawResp, char* outVer, size_t verCap);
+
+    /**
+     * @brief Invalidates the positive discovery cache and resets the negative `/24` scan backoff
+     *        so an explicit user connectivity test (`force=1`) always performs a fresh live probe.
+     */
+    static void invalidateCache();
+
+    /**
      * @brief Clears cached discovery and candidate peer state (intended for deterministic unit tests).
      */
     static void resetCacheForTests();

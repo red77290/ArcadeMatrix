@@ -87,6 +87,11 @@ uint32_t Hub75BulkEncoder::encode(
     const bool rot180 = (params.rotation == 2);
     const size_t stride = (canvasStridePixels > 0) ? canvasStridePixels : w;
 
+    const uint8_t effDepth = (depth > 8U) ? 8U : depth;
+    const uint8_t* const lutR = params.lutR;
+    const uint8_t* const lutG = params.lutG;
+    const uint8_t* const lutB = params.lutB;
+
     for (int y = 0; y < rpf; y++) {
         const uint16_t* src1;
         const uint16_t* src2;
@@ -99,30 +104,40 @@ uint32_t Hub75BulkEncoder::encode(
             src2 = canvas + (size_t)(params.height - 1 - (y + rpf)) * stride;
         }
 
-        for (uint8_t p = 0; p < depth; p++) {
-            uint16_t* dmaRow = rowAccessor(accessorCtx, y, p);
-            if (!dmaRow) continue;
+        uint16_t* dmaRows[8] = {nullptr};
+        bool anyPlane = false;
+        for (uint8_t p = 0; p < effDepth; p++) {
+            dmaRows[p] = rowAccessor(accessorCtx, static_cast<uint8_t>(y), p);
+            if (dmaRows[p]) {
+                anyPlane = true;
+            }
+        }
+        if (!anyPlane) continue;
 
-            for (int x = 0; x < w; x++) {
-                uint16_t c1, c2;
-                if (!rot180) {
-                    c1 = src1[x];
-                    c2 = src2[x];
-                } else {
-                    c1 = src1[w - 1 - x];
-                    c2 = src2[w - 1 - x];
-                }
+        for (int x = 0; x < w; x++) {
+            const int sx = rot180 ? (w - 1 - x) : x;
+            const uint16_t c1 = src1[sx];
+            const uint16_t c2 = src2[sx];
 
-                uint8_t r1 = (params.lutR[(c1 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g1 = (params.lutG[(c1 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b1 = (params.lutB[c1 & 0x1F] >> p) & 1;
+            const uint8_t r1 = lutR[(c1 >> 11) & 0x1F];
+            const uint8_t g1 = lutG[(c1 >> 5) & 0x3F];
+            const uint8_t b1 = lutB[c1 & 0x1F];
 
-                uint8_t r2 = (params.lutR[(c2 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g2 = (params.lutG[(c2 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b2 = (params.lutB[c2 & 0x1F] >> p) & 1;
+            const uint8_t r2 = lutR[(c2 >> 11) & 0x1F];
+            const uint8_t g2 = lutG[(c2 >> 5) & 0x3F];
+            const uint8_t b2 = lutB[c2 & 0x1F];
 
-                uint16_t rgb = r1 | (g1 << 1) | (b1 << 2) | (r2 << 3) | (g2 << 4) | (b2 << 5);
-                int ax = MATRIX_TX_ADJUST(x);
+            const int ax = MATRIX_TX_ADJUST(x);
+            for (uint8_t p = 0; p < effDepth; p++) {
+                uint16_t* dmaRow = dmaRows[p];
+                if (!dmaRow) continue;
+                const uint16_t rgb =
+                    static_cast<uint16_t>((r1 >> p) & 1U) |
+                    (static_cast<uint16_t>((g1 >> p) & 1U) << 1) |
+                    (static_cast<uint16_t>((b1 >> p) & 1U) << 2) |
+                    (static_cast<uint16_t>((r2 >> p) & 1U) << 3) |
+                    (static_cast<uint16_t>((g2 >> p) & 1U) << 4) |
+                    (static_cast<uint16_t>((b2 >> p) & 1U) << 5);
                 dmaRow[ax] = (dmaRow[ax] & HUB75_BITMASK_RGB12_CLEAR) | rgb;
             }
         }
