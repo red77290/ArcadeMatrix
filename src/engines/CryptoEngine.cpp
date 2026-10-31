@@ -71,6 +71,8 @@ void CryptoEngine::setActiveSymbol(const String& sym) {
 
 void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
+    currentSymbolIndex = 0;
+    currentPage = DisplayPage::Info;
     symbolsShownThisCycle = 0;
     m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
@@ -280,6 +282,7 @@ bool CryptoEngine::fetchCombined(const String& symbol) {
 
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    if (symbolsShownThisCycle >= symbolList.size()) return;
     
     // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
     if (!m_renderedFirstFrame) return;
@@ -335,6 +338,7 @@ void CryptoEngine::update(EngineContext* context) {
         if (mH >= 64 || !config_show_chart) {
             currentPage = DisplayPage::Info;
             symbolsShownThisCycle++;
+            if (symbolsShownThisCycle >= symbolList.size()) return;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             setActiveSymbol(symbolList[currentSymbolIndex]);
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -379,6 +383,7 @@ void CryptoEngine::update(EngineContext* context) {
                 } else {
                     // No chart data: advance directly to next symbol's Info page
                     symbolsShownThisCycle++;
+                    if (symbolsShownThisCycle >= symbolList.size()) return;
                     currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                     setActiveSymbol(symbolList[currentSymbolIndex]);
                     AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -419,6 +424,7 @@ void CryptoEngine::update(EngineContext* context) {
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
+                if (symbolsShownThisCycle >= symbolList.size()) return;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 setActiveSymbol(symbolList[currentSymbolIndex]);
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -1250,7 +1256,7 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     desc_crypto.requirements.internalPersistentBytes = 2048;
     desc_crypto.requirements.internalContiguousBytes = 8192;
     desc_crypto.requirements.psramBytes = 0;
-    desc_crypto.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols (e.g. BTC, ETH) or CoinGecko IDs (e.g. zelcash, ergo)", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1261,6 +1267,7 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
         ConfigField("crypto_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("crypto_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc_crypto.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc_crypto.factory = []() { return std::unique_ptr<IEngine>(new CryptoEngine()); };
     return desc_crypto;
 }

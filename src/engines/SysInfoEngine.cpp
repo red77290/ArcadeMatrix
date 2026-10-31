@@ -667,7 +667,7 @@ EngineDescriptor SysInfoEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.supportsSingleBuffer = true;
     desc.requirements.internalPersistentBytes = 3000;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("theme", ConfigType::ENUM, "Layout Style", "Visual style layout (HUD Bars, Cyberpunk Neon, Compact Grid)", "0", false, "", "", "", "0:HUD Bars,1:Cyberpunk Neon,2:Compact Grid", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_cpu", ConfigType::BOOLEAN, "Show CPU", "Display processor load percentage & gauge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_ram", ConfigType::BOOLEAN, "Show RAM", "Display memory usage percentage & gauge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -677,6 +677,7 @@ EngineDescriptor SysInfoEngineDescriptorHandler::getDescriptor() const {
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
 
     desc.factory = []() { return std::unique_ptr<IEngine>(new SysInfoEngine()); };
     return desc;

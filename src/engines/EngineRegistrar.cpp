@@ -21,6 +21,7 @@
 #include "GNewsEngine.h"
 #include "MarqueeEngine.h"
 #include "MqttDataEngine.h"
+#include "MediaShowcaseEngines.h"
 
 CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* targetPipeline, EvaluationMode mode) {
     auto ctx = CompatibilityEvaluator::buildCurrentContext(mode);
@@ -74,6 +75,10 @@ void EngineRegistrar::registerAll() {
     static const GNewsEngineDescriptorHandler gnewsHandler;
     static const MarqueeEngineDescriptorHandler marqueeHandler;
     static const MqttDataEngineDescriptorHandler mqttDataHandler;
+    static const RetroGamesEngineDescriptorHandler retroGamesHandler;
+    static const MovieShowcaseEngineDescriptorHandler movieShowcaseHandler;
+    static const SeriesShowcaseEngineDescriptorHandler seriesShowcaseHandler;
+    static const AnimeShowcaseEngineDescriptorHandler animeShowcaseHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -93,7 +98,11 @@ void EngineRegistrar::registerAll() {
         &dashboardHandler,
         &gnewsHandler,
         &marqueeHandler,
-        &mqttDataHandler
+        &mqttDataHandler,
+        &retroGamesHandler,
+        &movieShowcaseHandler,
+        &seriesShowcaseHandler,
+        &animeShowcaseHandler
     };
 
     for (const auto* handler : handlers) {

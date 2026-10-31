@@ -8,6 +8,9 @@ DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
     if (name.equalsIgnoreCase("MESSAGE") || name.equalsIgnoreCase("MQTT")) {
         return DisplaySourceId::MQTT;
     }
+    if (name.equalsIgnoreCase("INGAME_SHOWCASE") || name.equalsIgnoreCase("FRONTEND_SYNC")) {
+        return DisplaySourceId::INGAME_SHOWCASE;
+    }
     if (name.equalsIgnoreCase("MARQUEE")) {
         return DisplaySourceId::MARQUEE;
     }
@@ -16,6 +19,9 @@ DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
     }
     if (name.equalsIgnoreCase("ALERT")) {
         return DisplaySourceId::ALERT;
+    }
+    if (name.equalsIgnoreCase("WEBUI_SYNC")) {
+        return DisplaySourceId::WEBUI_SYNC;
     }
     return DisplaySourceId::ROTATION;
 }

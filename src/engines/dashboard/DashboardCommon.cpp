@@ -1,7 +1,7 @@
 #include "DashboardCommon.h"
 #include "../../core/drawing/IDrawingSurface.h"
 #include "../icons/CryptoStockIcons.h"
-#include <glcdfont.c>
+#include "../fonts/ArcadeFonts.h"
 
 int measureText(int len) {
     return (len > 0) ? (len * 6 - 1) : 0;
@@ -21,7 +21,7 @@ void drawClippedChar(IDrawingSurface* matrix, int x, int y, unsigned char c, int
     for (int8_t i = 0; i < 5; i++) {
         int px = x + i;
         if (px >= minX && px < maxX) {
-            uint8_t line = pgm_read_byte(&font[c * 5 + i]);
+            uint8_t line = pgm_read_byte(&g_glcdFont5x7[c * 5 + i]);
             for (int8_t j = 0; j < 8; j++, line >>= 1) {
                 if (line & 1) {
                     int py = y + j;

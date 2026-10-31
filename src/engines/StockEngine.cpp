@@ -88,6 +88,8 @@ void StockEngine::parseSymbols(const String& syms) {
 
 void StockEngine::activate() {
     lastItemSwitchTime = millis();
+    currentSymbolIndex = 0;
+    currentPage = DisplayPage::Info;
     symbolsShownThisCycle = 0;
     m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
@@ -394,6 +396,7 @@ bool StockEngine::fetchCombined(const String& symbol) {
 
 void StockEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    if (symbolsShownThisCycle >= symbolList.size()) return;
     
     // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
     if (!m_renderedFirstFrame) return;
@@ -448,6 +451,7 @@ void StockEngine::update(EngineContext* context) {
             // Unified display mode: Advance directly to next symbol with quote + chart
             currentPage = DisplayPage::Info;
             symbolsShownThisCycle++;
+            if (symbolsShownThisCycle >= symbolList.size()) return;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             setActiveSymbol(symbolList[currentSymbolIndex]);
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -494,6 +498,7 @@ void StockEngine::update(EngineContext* context) {
                 } else {
                     // No chart data in cache: advance directly to next symbol's Info page
                     symbolsShownThisCycle++;
+                    if (symbolsShownThisCycle >= symbolList.size()) return;
                     currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                     setActiveSymbol(symbolList[currentSymbolIndex]);
                     AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -534,6 +539,7 @@ void StockEngine::update(EngineContext* context) {
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
+                if (symbolsShownThisCycle >= symbolList.size()) return;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 setActiveSymbol(symbolList[currentSymbolIndex]);
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -1189,7 +1195,7 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     desc_stock.requirements.internalPersistentBytes = 2048;
     desc_stock.requirements.internalContiguousBytes = 8192;
     desc_stock.requirements.psramBytes = 0;
-    desc_stock.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated stock symbols", "AAPL,TSLA,NVDA", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1199,6 +1205,7 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
         ConfigField("stock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("stock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
+    desc_stock.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
     desc_stock.factory = []() { return std::unique_ptr<IEngine>(new StockEngine()); };
     return desc_stock;
 }

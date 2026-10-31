@@ -55,6 +55,10 @@ Every engine in ArcadeMatrix is engineered with **zero dynamic allocations and z
 | **Animated GIF Player**<br>`gifs` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="GIF Engine"> | Smooth 60 FPS playback of retro animations and SD card playlists with zero-copy DMA canvas acceleration. |
 | **Scrolling Text Banner**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Message Engine"> | Customizable dot-matrix marquee signs with glowing amber typography, multiple scroll directions, and REST API triggers. |
 | **Arcade Cabinet Marquee**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Marquee Engine"> | Displays official illuminated arcade marquees via Pixelcade integration for Batocera, Recalbox, and RetroPie gaming setups. |
+| **Retro Games Showcase**<br>`retro_games` | <img src="docs/assets/engines/engine_retrogames.png" width="240" alt="Retro Games Showcase Engine"> | Streams authentic retro console & arcade box art, metadata badges, localized synopses, and 30 FPS RGB565 gameplay videos.<br>⚠️ **Requires [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installed on another machine on the same local network. |
+| **Movie Showcase**<br>`movie_showcase` | <img src="docs/assets/engines/engine_movieshowcase.png" width="240" alt="Movie Showcase Engine"> | Cinema poster & trailer showcase streaming TMDB/TVDB movie posters, ratings, localized synopses, and 30 FPS RGB565 trailers.<br>⚠️ **Requires [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installed on another machine on the same local network. |
+| **Series Showcase**<br>`series_showcase` | <img src="docs/assets/engines/engine_seriesshowcase.png" width="240" alt="Series Showcase Engine"> | TV series showcase displaying show posters, release year, star ratings, localized synopses, and 30 FPS RGB565 trailer streams.<br>⚠️ **Requires [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installed on another machine on the same local network. |
+| **Anime Showcase**<br>`anime_showcase` | <img src="docs/assets/engines/engine_animeshowcase.png" width="240" alt="Anime Showcase Engine"> | Anime & manga showcase powered by AniList/Jikan/Kitsu metadata with cover art, localized synopses, and 30 FPS RGB565 video previews.<br>⚠️ **Requires [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installed on another machine on the same local network. |
 | **Calendar & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Date Engine"> | Large arcade-styled date with 3D Capcom/Nintendo drop shadows, multi-language support (EN, FR, ES), and NTP/RTC DS3231 synchronization. |
 
 > [!NOTE]
@@ -117,7 +121,7 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 
 ## 🚀 Universal Engine Compatibility: Auto Depth & Auto Buffer
 
-ArcadeMatrix features an advanced, memory-aware execution pipeline that allows all 18 engines (including heavy engines like `AnimatedGIF`, `Stock`, `Crypto`, and `MUGEN`) to run on **classic ESP32 DevKit boards with 0 KB PSRAM** as well as flagship **ESP32-S3 boards with 16 MB PSRAM**:
+ArcadeMatrix features an advanced, memory-aware execution pipeline that allows all 22 engines (including heavy engines like `AnimatedGIF`, `Stock`, `Crypto`, `MUGEN`, and the 4 `Media Showcase` video streaming engines) to run on **classic ESP32 DevKit boards with 0 KB PSRAM** as well as flagship **ESP32-S3 boards with 16 MB PSRAM**:
 
 - **🎨 Auto Color Depth (`dynamic_color_depth`)**:
   - **Rich 8-Bit Visuals by Default**: Clocks, fighting game animations, visualizers, messages, and marquees render at maximum 8-bit color depth (up to 256 brightness levels per RGB channel).
@@ -204,6 +208,47 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 
 For full details, check `tools/bdf_to_amfont/README.md`.
 
+## 🎬 DMD Media Showcase Server ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)) Integration
+The 4 Showcase engines (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **only work with the companion [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) application installed on another machine on the same local network** (Raspberry Pi, NAS, Docker host, or PC) to stream pre-rendered RGB565 posters, panoramas, multilingual metadata (automatically matching your DMD's configured language: `en`, `fr`, `es`, `de`, `it`), and RGB565 video trailers/gameplay clips:
+1. Install and start **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** on another machine on your local network (it automatically advertises itself on your LAN as `http://dmdmediashowcase.local:8890`).
+2. In the ArcadeMatrix Web UI **Settings** tab (`MQTT & API` -> **🎬 DMD Media Showcase**), the Server URL is **already pre-filled** as `http://dmdmediashowcase.local:8890` and **Disabled by default** (`showcase.enabled = false`) so zero network requests are made if you haven't installed Showcase. Simply toggle **Enable DMD Media Showcase** ON, click **Save Showcase Settings**, and verify that the live status badge turns **`🟢 Communication OK (v3.0.0)`**.
+3. Add any combination of `retro_games`, `movie_showcase`, `series_showcase`, or `anime_showcase` to your idle rotation. Each Showcase engine is self-paced (`selfPaced = true`), completing its full Poster + Synopsis + Panorama + Video Clip sequence cleanly before advancing to the next rotation slot.
+
+## 🕹️ Recalbox, Batocera & RetroPie Sync + In-Game Showcase (Marquees, Cards & Gameplay Videos)
+
+ArcadeMatrix synchronizes in real time with **Recalbox**, **Batocera** (`v33+` for menu browsing), and **RetroPie** consoles to bring your arcade cabinet or gameroom to life:
+
+### ✨ How It Works in Practice
+1. **Menu Browsing (`0 ms` Instant Marquee)**: While scrolling through systems and games on your console, ArcadeMatrix immediately displays the corresponding Pixelcade marquee artwork from local storage with zero delay.
+2. **Launching a Game (Seamless In-Game Showcase)**:
+   - The moment you launch a game, the **classic marquee appears immediately** (no black screen or `"Waiting for content"` message).
+   - If **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** is enabled on your network and **In-Game Showcase** is turned on, Showcase prepares the launched game's full presentation in the background (**Animated Info Card** + **Boxart/Marquee/Screenshot Panoramas** + **Gameplay Video**) and smoothly takes over the DMD as soon as the first frame is ready.
+   - Choose how the display behaves while you keep playing:
+     - **Play Once then Keep Marquee**: Plays the Showcase presentation once, then leaves the game's static marquee on screen.
+     - **Alternate Marquee & Showcase**: Alternates between the Showcase sequence and a configurable pause on the classic marquee (e.g. `45s`).
+     - **Loop Showcase Continuously**: Repeats the Showcase presentation while the game is running.
+3. **Exiting a Game**: Returning to the console menu immediately stops any in-game video and switches back to live menu marquees (or normal idle rotation).
+4. **Automatic Shared MQTT Broker (Zero Re-install & Extra Free RAM)**:
+   - Console sync scripts store **only your DMD's IP address** (`DMD_HOST`) and ask the DMD dynamically which MQTT broker to use.
+   - When **Share Showcase MQTT Broker** is enabled and Showcase is running, ArcadeMatrix automatically switches to Showcase's MQTT broker and turns off its internal ESP32 MQTT broker to free precious RAM — and falls back to its built-in broker automatically if Showcase is turned off. **You never need to re-install the script on Recalbox/Batocera!**
+5. **Instant Replay Cache & 1-Click Cache Eviction**:
+   - Enabling **Persistent On-Demand Conversion Cache** in Showcase saves converted game sequences on disk by `(System + Game + Resolution + Card Style)` so relaunching a previously played game starts **instantly** without re-scraping or re-converting.
+   - Changed your mind on a card theme or layout? Click **🗑️ Evict Showcase Cache** directly in ArcadeMatrix (`Settings -> MQTT & API -> 🎮 FrontendSync`) to clear cached conversions in one click.
+
+### 🚀 Step-by-Step Activation Tutorial
+1. **Install the Console Sync Script (One-Time Setup)**:
+   - From your PC/Mac, run `tools/recalbox_daemon/install.sh` (Linux/macOS) or `tools/recalbox_daemon/install.ps1` (Windows) — or install via SSH from `tools/rpi_emulationstation_base_os_setup.sh` — and enter **only your ArcadeMatrix IP** (see [`tools/recalbox_daemon/README.md`](tools/recalbox_daemon/README.md)).
+2. **Enable FrontendSync on ArcadeMatrix**:
+   - Open the ArcadeMatrix Web UI -> **System** -> **MQTT & API** -> **🎮 FrontendSync**.
+   - Set **Enable MQTT** to **Enabled** (keep `127.0.0.1` to use the built-in broker when standalone).
+3. **Enable In-Game Showcase (Optional — Requires DMD Media Showcase)**:
+   - In **🎬 DMD Media Showcase**, toggle **Enable DMD Media Showcase** ON and verify **`🟢 Communication OK`**.
+   - Back in **🎮 FrontendSync**, enable **Share Showcase MQTT Broker (Free Local RAM)** and **In-Game Showcase (Card + Gameplay Video)**.
+4. **Customize Your Playback Cycle & Card Style**:
+   - Pick your **Playback Cycle** (`Play Once`, `Alternate Marquee & Showcase` + marquee pause seconds, or `Loop`).
+   - Under **Card Style Source**, choose **Inherit DMD Profile from Showcase Studio** (to use the visual design configured in Showcase's Card Studio) or **Custom Override on DMD** to pick your Card Layout (`Classic Split`, `Badge Header`, `Full Art`, `Minimal`), Theme (`Tinted`, `Neon Border`, `Poster Wash`), Synopsis Scroll Speed, Panoramas, Gameplay Video duration/FPS/framing, and Color Boost right from the DMD UI.
+   - Click **Save MQTT Settings** — launch a game on your console and enjoy!
+
 ## ⚡ Hardware Compatibility & Engine Matrix
 
 | Engine / Feature | Category | ESP32-S3 (Waveshare Board) | ESP32 Classic (DevKit / `esp32dev`) | Hardware / Network Requirement |
@@ -220,6 +265,10 @@ For full details, check `tools/bdf_to_amfont/README.md`.
 | **Scrolling Text Ticker (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Sub-pixel 60 FPS text scroller |
 | **System Telemetry (`system_info`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Real-time CPU, RAM, Temp & Uptime gauges |
 | **Retro Gameroom Marquee (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
+| **Retro Games Showcase (`retro_games`)** | `arcade` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requires **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** on a LAN machine |
+| **Movie Showcase (`movie_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requires **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** on a LAN machine |
+| **Series Showcase (`series_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requires **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** on a LAN machine |
+| **Anime Showcase (`anime_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requires **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** on a LAN machine |
 | **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, Spotify Web API |
 | **Google Cast Display (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, mDNS local discovery |
 | **Autonomous WebRadio (`music_player`)** | `media` | 🟢 30 FPS (I2S DAC) | ❌ Incompatible | Built-in ES8311 DAC & PSRAM required |
@@ -255,7 +304,7 @@ pio run -e esp32s3_waveshare
 
 ## 📚 Further Documentation
 - [Getting Started (PlatformIO setup, build, flash, logs)](docs/GETTING_STARTED.md)
-- [Web Installer (flash from your browser, no CLI needed)](webinstaller/README.md) - *goes live once this repo is public (GitHub Pages requires a public repo on the free plan); until then, use the pre-built firmware above.*
+- [Web Installer (flash from your browser, no CLI needed)](https://red77290.github.io/ArcadeMatrix/) ([offline guide](webinstaller/README.md))
 - [Hardware Guide](docs/HARDWARE.md)
 - [Wiring Guide](docs/WIRING.md)
 - [Configuration Guide](docs/CONFIGURATION.md)

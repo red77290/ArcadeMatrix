@@ -8,8 +8,9 @@
 #ifndef GNEWS_ARTICLE_H
 #define GNEWS_ARTICLE_H
 struct GNewsArticle {
-    char title[256];
-    char description[384];
+    char title[192];
+    char description[256];
+    char content[320];
     char source[48];
     char category[24];
     uint32_t publishedEpoch;

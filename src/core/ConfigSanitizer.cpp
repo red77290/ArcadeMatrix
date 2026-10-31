@@ -278,26 +278,46 @@ void ConfigSanitizer::sanitizeField(DictionaryEngineConfig& conf, const ConfigFi
 
             // 2. Validate against field.options if provided
             if (strlen(field.options) > 0) {
-                bool found = false;
-                String optsStr(field.options);
-                int start = 0;
-                while (start < optsStr.length()) {
-                    int comma = optsStr.indexOf(',', start);
-                    String item = (comma == -1) ? optsStr.substring(start) : optsStr.substring(start, comma);
-                    item.trim();
-                    if (!item.isEmpty()) {
-                        String optVal = item;
-                        if (!item.startsWith("%") && item.indexOf(':') != -1) {
-                            optVal = item.substring(0, item.indexOf(':'));
-                            optVal.trim();
+                auto isAllowedToken = [&](const String& tok) -> bool {
+                    String optsStr(field.options);
+                    int start = 0;
+                    while (start < optsStr.length()) {
+                        int comma = optsStr.indexOf(',', start);
+                        String item = (comma == -1) ? optsStr.substring(start) : optsStr.substring(start, comma);
+                        item.trim();
+                        if (!item.isEmpty()) {
+                            String optVal = item;
+                            if (!item.startsWith("%") && item.indexOf(':') != -1) {
+                                optVal = item.substring(0, item.indexOf(':'));
+                                optVal.trim();
+                            }
+                            if (tok.equalsIgnoreCase(optVal)) {
+                                return true;
+                            }
                         }
-                        if (val_str.equalsIgnoreCase(optVal)) {
-                            found = true;
+                        if (comma == -1) break;
+                        start = comma + 1;
+                    }
+                    return false;
+                };
+
+                bool found = false;
+                if (field.multiple) {
+                    found = true;
+                    int tStart = 0;
+                    while (tStart < val_str.length()) {
+                        int tComma = val_str.indexOf(',', tStart);
+                        String tok = (tComma == -1) ? val_str.substring(tStart) : val_str.substring(tStart, tComma);
+                        tok.trim();
+                        if (!tok.isEmpty() && !isAllowedToken(tok)) {
+                            found = false;
                             break;
                         }
+                        if (tComma == -1) break;
+                        tStart = tComma + 1;
                     }
-                    if (comma == -1) break;
-                    start = comma + 1;
+                } else {
+                    found = isAllowedToken(val_str);
                 }
                 if (!found && (field.validation_policy == ValidationPolicy::FallbackDefault ||
                                field.validation_policy == ValidationPolicy::Reject)) {
@@ -322,6 +342,62 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
     if (mqtt.port == 0) {
         mqtt.port = 1883;
         result.defaults_injected++;
+        result.modified = true;
+    }
+    if (mqtt.ingame_cycle_mode != "once" && mqtt.ingame_cycle_mode != "loop" && mqtt.ingame_cycle_mode != "alternating") {
+        mqtt.ingame_cycle_mode = "once";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.ingame_marquee_interval_sec < 5 || mqtt.ingame_marquee_interval_sec > 600) {
+        mqtt.ingame_marquee_interval_sec = constrain(mqtt.ingame_marquee_interval_sec, 5, 600);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.card_style_source != "showcase_profile" && mqtt.card_style_source != "custom") {
+        mqtt.card_style_source = "showcase_profile";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.card_layout != "classic_split" && mqtt.card_layout != "full_bleed" &&
+        mqtt.card_layout != "minimal_banner" && mqtt.card_layout != "arcade_cabinet") {
+        mqtt.card_layout = "classic_split";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.card_theme != "tinted" && mqtt.card_theme != "dark_oled" && mqtt.card_theme != "neon_border") {
+        mqtt.card_theme = "tinted";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.text_scroll_speed.length() == 0) {
+        mqtt.text_scroll_speed = "4";
+        result.defaults_injected++;
+        result.modified = true;
+    }
+    if (mqtt.snapshot_panorama_count < 0 || mqtt.snapshot_panorama_count > 5) {
+        mqtt.snapshot_panorama_count = constrain(mqtt.snapshot_panorama_count, 0, 5);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_max_duration_s < 2 || mqtt.video_max_duration_s > 120) {
+        mqtt.video_max_duration_s = constrain(mqtt.video_max_duration_s, 2, 120);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_fps < 8 || mqtt.video_fps > 60) {
+        mqtt.video_fps = constrain(mqtt.video_fps, 8, 60);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_mode != "auto_action" && mqtt.video_mode != "panorama" && mqtt.video_mode != "center_crop") {
+        mqtt.video_mode = "auto_action";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.color_boost != "auto" && mqtt.color_boost != "pixel_art" && mqtt.color_boost != "anime" && mqtt.color_boost != "cinema") {
+        mqtt.color_boost = "auto";
+        result.values_fallback++;
         result.modified = true;
     }
 }

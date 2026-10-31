@@ -11,6 +11,39 @@
     "user": "",
     "pass": "",
     "deviceName": "arcadematrix",
-    "allow_overlay": false
+    "allow_overlay": false,
+    "use_showcase_broker": true,
+    "ingame_showcase_enabled": true,
+    "ingame_cycle_mode": "once",
+    "ingame_marquee_interval_sec": 45,
+    "card_style_source": "showcase_profile",
+    "include_card_intro": true,
+    "card_layout": "classic_split",
+    "card_theme": "tinted",
+    "show_poster": true,
+    "show_synopsis": true,
+    "text_scroll_speed": "4",
+    "jacket_panorama": true,
+    "marquee_panorama": false,
+    "snapshot_panorama_count": 0,
+    "show_video": true,
+    "video_max_duration_s": 12,
+    "video_fps": 15,
+    "video_mode": "auto_action",
+    "color_boost": "auto"
+  },
+  "data_mqtt": {
+    "broker": "",
+    "port": 1883,
+    "user": "",
+    "pass": ""
+  },
+  "showcase": {
+    "enabled": false,
+    "server_url": "http://dmdmediashowcase.local:8890",
+    "transport_mode": "mqtt_udp",
+    "use_showcase_broker": true,
+    "mqtt_broker_source": "global",
+    "mqtt_custom_url": ""
   }
 }

@@ -23,7 +23,7 @@ enum class FighterOverride : uint8_t {
 struct OverlayConfig {
     FighterOverride fighter;
 
-    OverlayConfig() : fighter(FighterOverride::Unspecified) {}
+    OverlayConfig() : fighter(FighterOverride::Disabled) {}
     explicit OverlayConfig(FighterOverride f) : fighter(f) {}
     explicit OverlayConfig(bool f) : fighter(f ? FighterOverride::Enabled : FighterOverride::Disabled) {}
 };
@@ -69,13 +69,32 @@ struct WifiConfig {
 };
 
 struct MqttConfig {
-    bool enabled;
-    String broker;
-    int port;
-    String user;
-    String pass;
-    String deviceName;
+    bool enabled = false;
+    String broker = "";
+    int port = 1883;
+    String user = "";
+    String pass = "";
+    String deviceName = "ArcadeMatrix";
     bool allow_overlay = false;
+    bool use_showcase_broker = true;
+    bool ingame_showcase_enabled = true;
+    String ingame_cycle_mode = "once";
+    int ingame_marquee_interval_sec = 45;
+    String card_style_source = "showcase_profile";
+    bool include_card_intro = true;
+    String card_layout = "classic_split";
+    String card_theme = "tinted";
+    bool show_poster = true;
+    bool show_synopsis = true;
+    String text_scroll_speed = "4";
+    bool jacket_panorama = true;
+    bool marquee_panorama = false;
+    int snapshot_panorama_count = 0;
+    bool show_video = true;
+    int video_max_duration_s = 12;
+    int video_fps = 15;
+    String video_mode = "auto_action";
+    String color_boost = "auto";
 };
 
 /// Broker the MQTT Data engine connects to while it is on screen (credentials only: nothing runs
@@ -87,6 +106,80 @@ struct DataMqttConfig {
     String pass = "";
 };
 
+struct ShowcaseConfig {
+    bool enabled = false;
+    String server_url = "http://dmdmediashowcase.local:8890";
+    String transport_mode = "mqtt_tcp";
+    bool use_showcase_broker = true;
+    String mqtt_broker_source = "global";
+    String mqtt_custom_url = "";
+};
+
+inline String normalizeShowcaseTransportMode(const String& rawMode) {
+    String m = rawMode;
+    m.trim();
+    m.toLowerCase();
+    if (m == "http_poll") {
+        return "http_poll";
+    }
+    return "mqtt_tcp";
+}
+
+inline String normalizeMdnsEndpointUrl(const String& rawInput, bool migrateShowcaseLegacy = false) {
+    String s = rawInput;
+    s.trim();
+    while (s.length() > 1 && s.endsWith("/")) {
+        s = s.substring(0, s.length() - 1);
+    }
+    if (s.length() == 0) {
+        return s;
+    }
+    if (migrateShowcaseLegacy && (
+        s.equalsIgnoreCase("http://192.168.1.50:8000") ||
+        s.equalsIgnoreCase("http://127.0.0.1:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase.local:8080") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase:8890") ||
+        s.equalsIgnoreCase("http://dmdmediashowcase"))) {
+        return String("http://dmdmediashowcase.local:8890");
+    }
+
+    String schemePrefix = "";
+    String rest = s;
+    int schemeIdx = s.indexOf("://");
+    if (schemeIdx > 0) {
+        schemePrefix = s.substring(0, schemeIdx + 3);
+        rest = s.substring(schemeIdx + 3);
+    }
+
+    String auth = rest;
+    String pathSuffix = "";
+    int slashIdx = rest.indexOf('/');
+    if (slashIdx >= 0) {
+        auth = rest.substring(0, slashIdx);
+        pathSuffix = rest.substring(slashIdx);
+    }
+
+    String host = auth;
+    String portSuffix = "";
+    int colonIdx = auth.lastIndexOf(':');
+    int closeBracket = auth.lastIndexOf(']');
+    if (colonIdx > 0 && colonIdx > closeBracket) {
+        host = auth.substring(0, colonIdx);
+        portSuffix = auth.substring(colonIdx);
+    }
+
+    if (host.length() > 0 &&
+        host.indexOf('.') < 0 &&
+        host.indexOf(':') < 0 &&
+        !host.equalsIgnoreCase("localhost") &&
+        !host.equalsIgnoreCase("auto")) {
+        host += ".local";
+        return schemePrefix + host + portSuffix + pathSuffix;
+    }
+    return s;
+}
+
 struct SystemConfig {
     String timezone;
     bool format24h;
@@ -97,7 +190,7 @@ struct SystemConfig {
     String turn_off_at;
     String wake_up_at;
     int night_brightness;
-    bool idle_fighter_enabled = true;
+    bool idle_fighter_enabled = false;
     int idle_fighter_interval = 60;
     int idle_fighter_speed = 100;
     bool api_auth_enabled = false;
@@ -123,6 +216,7 @@ struct ConfigSnapshot {
     WifiConfig wifi;
     MqttConfig mqtt;
     DataMqttConfig dataMqtt;
+    ShowcaseConfig showcase;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
@@ -171,7 +265,18 @@ enum class SlotState : uint8_t {
     READING = 3      // Active pinned read by Core 1 SnapshotGuard
 };
 
+enum ConfigSaveDomain : uint8_t {
+    CONFIG_DOMAIN_HARDWARE  = 1 << 0,
+    CONFIG_DOMAIN_SYSTEM    = 1 << 1,
+    CONFIG_DOMAIN_NETWORK   = 1 << 2,
+    CONFIG_DOMAIN_PLAYLIST  = 1 << 3,
+    CONFIG_DOMAIN_INSTANCES = 1 << 4,
+    CONFIG_DOMAIN_ALL       = 0x1F
+};
+
 class ConfigLoader;
+class IConfigStorage;
+class ModularConfigManager;
 
 /**
  * @brief Move-only RAII Guard for borrowing immutable ConfigSnapshot.
@@ -215,6 +320,25 @@ public:
     
     bool loadFromSD(const char* filepath);
     bool saveToSD(const char* filepath);
+    bool saveDomainsToSD(uint8_t domainMask, const char* filepath = "/config.json");
+    bool autoHealNetworkFromBackups(
+        IConfigStorage& storage,
+        ModularConfigManager& mgr,
+        const char* filepath = "/config.json"
+    );
+    bool tryLoadFallbackMatrixFromStorage(
+        IConfigStorage& storage,
+        MatrixConfig& outMatrix,
+        uint16_t maxTotalW,
+        uint16_t maxTotalH,
+        const char* filepath = "/config.json"
+    ) const;
+    bool tryLoadFallbackMatrixFromBackups(
+        MatrixConfig& outMatrix,
+        uint16_t maxTotalW,
+        uint16_t maxTotalH,
+        const char* filepath = "/config.json"
+    ) const;
     
     std::vector<EngineInstance> instances;
     std::vector<RotationEntry> rotation;
@@ -223,6 +347,7 @@ public:
     WifiConfig wifi;
     MqttConfig mqtt;
     DataMqttConfig dataMqtt;
+    ShowcaseConfig showcase;
     SystemConfig system;
     uint32_t schema_version = ConfigSnapshot::CURRENT_CONFIG_SCHEMA_VERSION;
 

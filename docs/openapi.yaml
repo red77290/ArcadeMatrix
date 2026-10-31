@@ -167,7 +167,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system, matrix, mqtt, wifi, hardware]
+            enum: [system, matrix, mqtt, wifi, hardware, showcase]
           description: Optional filter to retrieve only a specific configuration block
       responses:
         '200':
@@ -208,12 +208,17 @@ paths:
                       pwm_bits: { type: integer, example: 0, description: "Alias for color_depth" }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
                       clk_phase: { type: boolean, example: false }
-                      latch_blanking: { type: integer, example: 4 }
+                      latch_blanking: { type: integer, example: 4, minimum: 1, maximum: 8 }
                       render_pipeline: { type: string, example: "auto", enum: [auto, canvas_single, canvas_double, direct_double, direct_single] }
                       rotation_offset: { type: integer, example: 0 }
                       auto_rotate: { type: boolean, example: true }
                       rotation_transition: { type: string, example: "vortex" }
                       rotation_transition_duration_ms: { type: integer, example: 400 }
+                      max_width: { type: integer, example: 128, description: "Maximum total panel width supported by the active hardware profile" }
+                      max_height: { type: integer, example: 64, description: "Maximum panel height supported by the active hardware profile" }
+                      safe_mode: { type: boolean, example: false, description: "True when boot-time HUB75 DMA recovery downgraded or recovered geometry/depth in RAM" }
+                      headless_mode: { type: boolean, example: false, description: "True when all HUB75 DMA allocations failed and WebUI is running in headless recovery mode" }
+                      safe_mode_reason: { type: string, example: "", description: "Diagnostic code explaining why boot-time matrix safe fallback triggered" }
                   mqtt:
                     type: object
                     properties:
@@ -225,6 +230,25 @@ paths:
                       pass_configured: { type: boolean, example: false }
                       device_name: { type: string, example: "ArcadeMatrix" }
                       allow_overlay: { type: boolean, example: false }
+                      use_showcase_broker: { type: boolean, example: true }
+                      ingame_showcase_enabled: { type: boolean, example: true }
+                      ingame_cycle_mode: { type: string, example: "once", enum: [once, loop, alternating] }
+                      ingame_marquee_interval_sec: { type: integer, example: 45 }
+                      card_style_source: { type: string, example: "showcase_profile", enum: [showcase_profile, custom] }
+                      include_card_intro: { type: boolean, example: true }
+                      card_layout: { type: string, example: "classic_split", enum: [classic_split, full_bleed, minimal_banner, arcade_cabinet] }
+                      card_theme: { type: string, example: "tinted", enum: [tinted, dark_oled, neon_border] }
+                      show_poster: { type: boolean, example: true }
+                      show_synopsis: { type: boolean, example: true }
+                      text_scroll_speed: { type: string, example: "4" }
+                      jacket_panorama: { type: boolean, example: true }
+                      marquee_panorama: { type: boolean, example: false }
+                      snapshot_panorama_count: { type: integer, example: 0 }
+                      show_video: { type: boolean, example: true }
+                      video_max_duration_s: { type: integer, example: 12 }
+                      video_fps: { type: integer, example: 15 }
+                      video_mode: { type: string, example: "auto_action", enum: [auto_action, panorama, center_crop] }
+                      color_boost: { type: string, example: "auto", enum: [auto, pixel_art, anime, cinema] }
                   data_mqtt:
                     type: object
                     description: Broker the mqttdata engine connects to while it is on screen (credentials only; nothing runs in the background). Applied on its next connection, no reboot.
@@ -239,11 +263,21 @@ paths:
                     properties:
                       ssid: { type: string, example: "HomeWiFi" }
                       hostname: { type: string, example: "ArcadeMatrix" }
+                  showcase:
+                    type: object
+                    description: Unified network and MQTT broker configuration for DMD Media Showcase engines (Games, Movies, Series, Anime)
+                    properties:
+                      enabled: { type: boolean, example: false }
+                      server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
+                      transport_mode: { type: string, example: "mqtt_tcp", enum: [mqtt_tcp, http_poll] }
+                      use_showcase_broker: { type: boolean, example: true }
+                      mqtt_broker_source: { type: string, example: "global", enum: [global, custom] }
+                      mqtt_custom_url: { type: string, example: "mqtt://192.168.1.200:1883" }
     post:
       tags:
         - Configuration
       summary: Update system, matrix, or mqtt settings
-      description: Partial update. Saves to SD card. Triggers automatic reboot if matrix or MQTT state changed.
+      description: Partial domain-scoped update. Saves only modified configuration domains to SD card. Rejects geometries exceeding hardware profile limits with HTTP 400. Triggers automatic reboot if matrix or MQTT state changed.
       requestBody:
         required: true
         content:
@@ -260,6 +294,8 @@ paths:
                 properties:
                   status: { type: string, example: "success" }
                   lang: { type: string, example: "fr" }
+        '400':
+          description: Requested matrix geometry exceeds hardware profile limits
 
   /api/stats:
     get:
@@ -1162,6 +1198,10 @@ paths:
                     type: string
                   duration_sec:
                     type: integer
+                    description: >-
+                      Slot dwell duration in seconds (or GIF count for gifs). Self-paced engines
+                      (such as crypto, stock, gnews, and gifs) govern their own cycle completion via
+                      selfPaced() and isFinished() before rotation advances.
                   overlays:
                     type: object
                     properties:
@@ -1811,6 +1851,85 @@ paths:
           description: Missing download_url or invalid URL scheme.
         '409':
           description: OTA update already in progress.
+
+  /api/showcase/status:
+    get:
+      tags:
+        - Configuration
+      summary: Inspect cached DMD Media Showcase connectivity and schedule background Core 0 probe
+      description: Non-blockingly inspects the Showcase discovery lease cache on `async_tcp` and, on cold cache miss or `force=1`, schedules a single-flight Core 0 background discovery probe (`probing: true`).
+      parameters:
+        - in: query
+          name: url
+          schema:
+            type: string
+          description: Optional override URL to probe
+        - in: query
+          name: enabled
+          schema:
+            type: boolean
+          description: Optional override for Showcase enabled state
+        - in: query
+          name: force
+          schema:
+            type: boolean
+          description: Force connectivity probe even when Showcase is currently disabled
+      responses:
+        '200':
+          description: Live Showcase connection status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean, example: true }
+                  online: { type: boolean, example: true }
+                  probing: { type: boolean, example: false }
+                  server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
+                  resolved_url: { type: string, example: "http://192.168.1.42:8890" }
+                  version: { type: string, example: "1.1.4" }
+
+  /api/mqtt/broker-target:
+    get:
+      tags:
+        - Configuration
+      summary: Resolve active MQTT broker endpoint for Recalbox, Batocera, and RetroPie daemons
+      description: Returns the dynamically resolved MQTT broker IP and port (Showcase broker when active and use_showcase_broker is enabled, external broker if configured, or the DMD's own LAN IP for the embedded PicoMQTT broker).
+      responses:
+        '200':
+          description: Active MQTT broker target
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  host: { type: string, example: "192.168.1.42" }
+                  port: { type: integer, example: 1883 }
+                  source: { type: string, example: "showcase", enum: [showcase, external, local] }
+                  mqtt_enabled: { type: boolean, example: true }
+                  showcase_broker_active: { type: boolean, example: true }
+
+  /api/showcase/cache/evict:
+    post:
+      tags:
+        - Configuration
+      summary: Evict persistent on-demand conversion cache on DMD Media Showcase
+      description: Proxies an eviction request to `POST /api/v1/cache/on-demand/evict` on the configured DMD Media Showcase server so updated Card or video presentation preferences regenerate cleanly.
+      responses:
+        '200':
+          description: Cache evicted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "evicted" }
+                  removed_entries: { type: integer, example: 12 }
+                  freed_bytes: { type: integer, example: 8421376 }
+        '400':
+          description: Showcase server URL is empty
+        '502':
+          description: Showcase server unreachable or returned an error
 
 components:
   securitySchemes:

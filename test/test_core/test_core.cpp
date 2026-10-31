@@ -24,6 +24,10 @@
 #include "core/storage/WorkingSetCache.h"
 #include "core/storage/ModularConfigManager.h"
 #include "core/CompatibilityEvaluator.h"
+#include "core/drawing/DmdzStreamDecoder.h"
+#include "core/net/DmdzStreamClient.h"
+#include "engines/MediaShowcaseEngines.h"
+#include "engines/FrontendSyncEngine.h"
 
 // Mock Engine implementation for testing
 class MockTestEngine : public IEngine {
@@ -2968,9 +2972,16 @@ void test_hub75_bulk_encoder_multi_depth_and_edge_colors(void) {
         TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
         TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
 
-        TEST_ASSERT_TRUE(lutR[31] <= maxAllowed);
-        TEST_ASSERT_TRUE(lutG[63] <= maxAllowed);
-        TEST_ASSERT_TRUE(lutB[31] <= maxAllowed);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutG[63]);
+        TEST_ASSERT_EQUAL_UINT8(maxAllowed, lutB[31]);
+
+        if (d <= 5U) {
+            for (int k = 0; k < 32; ++k) {
+                TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k]);
+                TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k + 1]);
+            }
+        }
 
         // Monotonic check
         for (int i = 1; i < 32; ++i) {
@@ -3216,6 +3227,40 @@ void test_modular_config_migration_and_partitioning(void) {
     TEST_ASSERT_EQUAL_STRING("canvas_single", dualHw.render_pipeline.c_str());
 }
 
+void test_config_loader_heap_backup_auto_heal_and_matrix_fallback(void) {
+    MemoryConfigStorage storage;
+    ModularConfigManager mgr(storage);
+
+    const char* legacyBakJson = "{"
+        "\"display\":{\"width\":64,\"height\":64,\"chain_length\":2,\"driver_chip\":\"FM6126A\"},"
+        "\"wifi\":{\"ssid\":\"ArcadeNet\",\"password\":\"secret42\",\"hostname\":\"dmd-cab\"},"
+        "\"mqtt\":{\"enabled\":true,\"broker\":\"192.168.1.50\",\"port\":1883}"
+    "}";
+    storage.writeStringAtomic("/config.json.bak", legacyBakJson);
+
+    std::unique_ptr<ConfigLoader> cfg(new ConfigLoader());
+    TEST_ASSERT_TRUE(cfg->wifi.ssid.isEmpty());
+    TEST_ASSERT_TRUE(cfg->autoHealNetworkFromBackups(storage, mgr, "/config.json"));
+    TEST_ASSERT_EQUAL_STRING("ArcadeNet", cfg->wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING("secret42", cfg->wifi.password.c_str());
+    TEST_ASSERT_EQUAL_STRING("dmd-cab", cfg->wifi.hostname.c_str());
+    TEST_ASSERT_TRUE(cfg->mqtt.enabled);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.50", cfg->mqtt.broker.c_str());
+    TEST_ASSERT_TRUE(storage.exists("/config/network.json"));
+
+    // Subsequent call when SSID is already populated must be a fast no-op
+    TEST_ASSERT_FALSE(cfg->autoHealNetworkFromBackups(storage, mgr, "/config.json"));
+
+    // Matrix fallback respects maxTotalW / maxTotalH bounds and reads .bak on heap
+    MatrixConfig recovered;
+    TEST_ASSERT_FALSE(cfg->tryLoadFallbackMatrixFromStorage(storage, recovered, 64, 32, "/config.json"));
+    TEST_ASSERT_TRUE(cfg->tryLoadFallbackMatrixFromStorage(storage, recovered, 128, 64, "/config.json"));
+    TEST_ASSERT_EQUAL(64, recovered.width);
+    TEST_ASSERT_EQUAL(64, recovered.height);
+    TEST_ASSERT_EQUAL(2, recovered.chainLength);
+    TEST_ASSERT_EQUAL_STRING("FM6126A", recovered.driverChip.c_str());
+}
+
 // =========================================================================
 // 11. Runtime Engine Capability & Compatibility System Tests
 // =========================================================================
@@ -3445,6 +3490,411 @@ void test_sanitizer_rotation_preserves_unavailable_engines(void) {
     (void)res;
 }
 
+namespace {
+
+class HeapStreamSurface128x32 : public IDrawingSurface {
+public:
+    std::unique_ptr<uint16_t[]> pixels;
+    bool dirty = false;
+
+    HeapStreamSurface128x32()
+        : IDrawingSurface(128, 32, 128, 32),
+          pixels(new uint16_t[128 * 32]()) {}
+
+    void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+        if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+            pixels[static_cast<size_t>(y) * 128U + static_cast<size_t>(x)] = color;
+            dirty = true;
+        }
+    }
+    void clear(uint16_t color = 0) override {
+        for (size_t i = 0; i < 128U * 32U; ++i) {
+            pixels[i] = color;
+        }
+        dirty = true;
+    }
+    bool isDirty() const override { return dirty; }
+    void markDirty() override { dirty = true; }
+    PresentationTiming present() override {
+        dirty = false;
+        return PresentationTiming{};
+    }
+    void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+        int16_t st = stride > 0 ? stride : w;
+        for (int16_t ry = 0; ry < h; ++ry) {
+            for (int16_t rx = 0; rx < w; ++rx) {
+                drawPixel(x + rx, y + ry, src[ry * st + rx]);
+            }
+        }
+    }
+    CanvasView acquireCanvas() override { return CanvasView{}; }
+    void releaseCanvas() override {}
+    bool hasCanvas() const override { return true; }
+    CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+    PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+    size_t memoryUsageBytes() const override { return 128U * 32U * sizeof(uint16_t); }
+};
+
+class CoreStreamTestContext : public EngineContext {
+public:
+    IDrawingSurface* surf = nullptr;
+    explicit CoreStreamTestContext(IDrawingSurface* s) : surf(s) {}
+    IDrawingSurface* getSurface() override { return surf; }
+    FrontendSyncEngine* getEventBus() override { return nullptr; }
+    void getSystemTime(struct tm* t) override {
+        if (t) memset(t, 0, sizeof(*t));
+    }
+    DisplayGeometry getGeometry() const override {
+        DisplayGeometry g;
+        g.width = 128;
+        g.height = 32;
+        g.nativeWidth = 128;
+        g.nativeHeight = 32;
+        return g;
+    }
+};
+
+class CoreTestableShowcaseEngine : public RetroGamesEngine {
+public:
+    void publishTestVideoFrame(uint16_t color, uint32_t evenSeq) {
+        if (!m_frame565) {
+            TEST_ASSERT_TRUE(acquireStepCFrameBuffer());
+        }
+        TEST_ASSERT_NOT_NULL(m_frame565);
+        for (size_t i = 0; i < m_framePixels; ++i) {
+            m_frame565[i] = color;
+        }
+        m_publishedFramePtr.store(m_frame565, std::memory_order_release);
+        m_seq.fetch_add(1U, std::memory_order_acq_rel);
+        m_liveCard.hasVideoFrame = true;
+        m_seq.fetch_add(1U, std::memory_order_release);
+        m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+        m_frameSeq.store(evenSeq, std::memory_order_release);
+    }
+
+    void setRawFrameSeq(uint32_t seq) {
+        m_frameSeq.store(seq, std::memory_order_release);
+    }
+
+    void setNextDueMs(uint32_t dueMs) {
+        m_nextStreamFrameDueMs.store(dueMs, std::memory_order_relaxed);
+    }
+
+    void triggerBlankCardBeforeStream() {
+        m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+        blankCardBeforeStream();
+    }
+
+    uint32_t blankPresentedSeqVal() const { return m_blankPresentedSeq.load(std::memory_order_acquire); }
+    bool isDirtyFlag() const { return m_dirty; }
+    uint32_t blitSeqVal() const { return m_renderBlitSeq.load(std::memory_order_acquire); }
+    uint32_t consumedSeqVal() const { return m_consumedFrameSeq.load(std::memory_order_acquire); }
+};
+
+} // namespace
+
+void test_showcase_and_ingame_next_frame_due_ms_pacing(void) {
+    HeapStreamSurface128x32 surf;
+    CoreStreamTestContext ctx(&surf);
+
+    // 1. `MediaShowcaseBase::nextFrameDueInMs()` & `Phase::StreamBlank` pre-stream wipe
+    {
+        CoreTestableShowcaseEngine eng;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(eng.initialize(&ctx, nullptr)));
+        eng.activate();
+
+        // Idle (`Card` phase / `!hasVideoFrame`): must return `0xFFFFFFFFU` (never spin at 2 ms / 500 Hz!)
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, eng.nextFrameDueInMs());
+
+        // `Phase::StreamBlank` wakes Core 1 in `1 ms`, wipes surface to `0x0000` once, then sleeps (`0xFFFFFFFFU`)
+        surf.clear(0x7BEFU);
+        surf.present();
+        const uint32_t blankBefore = eng.blankPresentedSeqVal();
+        eng.triggerBlankCardBeforeStream();
+        TEST_ASSERT_EQUAL_UINT32(1U, eng.nextFrameDueInMs());
+        eng.update(&ctx);
+        eng.render(&ctx);
+        TEST_ASSERT_TRUE(eng.hasNewFrame());
+        TEST_ASSERT_EQUAL_UINT32(blankBefore + 1U, eng.blankPresentedSeqVal());
+        TEST_ASSERT_EQUAL_HEX16(0x0000U, surf.pixels[0]);
+        TEST_ASSERT_EQUAL_HEX16(0x0000U, surf.pixels[128 * 32 - 1]);
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, eng.nextFrameDueInMs());
+
+        // Publish Frame 1 (`EVEN` seq = 2) -> unrendered frame ready -> wake in `1 ms`!
+        eng.publishTestVideoFrame(0xF800U, 2U);
+        eng.update(&ctx);
+        TEST_ASSERT_EQUAL_UINT32(1U, eng.nextFrameDueInMs());
+
+        // Render Frame 1 (`fSeq == m_lastRenderedFrameSeq`) with `dueMs == 0` -> fallback `8 ms`
+        eng.setNextDueMs(0U);
+        eng.render(&ctx);
+        TEST_ASSERT_EQUAL_UINT32(8U, eng.nextFrameDueInMs());
+
+        // Next frame due far ahead (`+36 ms`) -> clamp to `16 ms` (~62 Hz loop cadence!)
+        eng.setNextDueMs(millis() + 36U);
+        TEST_ASSERT_EQUAL_UINT32(16U, eng.nextFrameDueInMs());
+
+        // Next frame due in `[2..15] ms` -> exact remaining ms wakeup!
+        eng.setNextDueMs(millis() + 9U);
+        const uint32_t exactDue = eng.nextFrameDueInMs();
+        TEST_ASSERT_TRUE(exactDue >= 2U && exactDue <= 10U);
+
+        // Next frame due <= 1 ms or slightly past (`[-4..1] ms`) -> `2 ms` tight catchup
+        eng.setNextDueMs(millis());
+        TEST_ASSERT_EQUAL_UINT32(2U, eng.nextFrameDueInMs());
+
+        // Late network frame (`rem < -4 ms`) -> back off to `8 ms` (`125 Hz`) instead of spinning at `500 Hz`!
+        eng.setNextDueMs(millis() - 25U);
+        TEST_ASSERT_EQUAL_UINT32(8U, eng.nextFrameDueInMs());
+
+        eng.deactivate();
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, eng.nextFrameDueInMs());
+    }
+
+    // 2. `InGameShowcaseEngine::nextFrameDueInMs()`
+    {
+        InGameShowcaseEngine inGame;
+        std::unique_ptr<uint16_t[]> frameBuf(new uint16_t[128 * 32]());
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(inGame.initialize(&ctx, nullptr)));
+        TEST_ASSERT_TRUE(inGame.selfPaced());
+
+        // Inactive or null frame -> `0xFFFFFFFFU`
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, inGame.nextFrameDueInMs());
+        inGame.activate();
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, inGame.nextFrameDueInMs());
+
+        // Publish Frame 1 -> unrendered `EVEN` frame waiting -> `1 ms`
+        inGame.publishFrame(frameBuf.get(), 128U, 32U);
+        inGame.update(&ctx);
+        TEST_ASSERT_EQUAL_UINT32(1U, inGame.nextFrameDueInMs());
+
+        // Render Frame 1 -> `dueMs == 0` -> `8 ms`
+        inGame.setNextStreamFrameDueMs(0U);
+        inGame.render(&ctx);
+        TEST_ASSERT_EQUAL_UINT32(8U, inGame.nextFrameDueInMs());
+
+        // `dueMs = now + 35` -> `16 ms`
+        inGame.setNextStreamFrameDueMs(millis() + 35U);
+        TEST_ASSERT_EQUAL_UINT32(16U, inGame.nextFrameDueInMs());
+
+        // `dueMs = now + 7` -> exact `[2..8]` ms
+        inGame.setNextStreamFrameDueMs(millis() + 7U);
+        const uint32_t igDue = inGame.nextFrameDueInMs();
+        TEST_ASSERT_TRUE(igDue >= 2U && igDue <= 8U);
+
+        // `dueMs <= now + 1` -> `2 ms`
+        inGame.setNextStreamFrameDueMs(millis());
+        TEST_ASSERT_EQUAL_UINT32(2U, inGame.nextFrameDueInMs());
+
+        // Late network frame (`rem < -4 ms`) -> back off to `8 ms` (`125 Hz`)
+        inGame.setNextStreamFrameDueMs(millis() - 25U);
+        TEST_ASSERT_EQUAL_UINT32(8U, inGame.nextFrameDueInMs());
+
+        inGame.clearFrame();
+        TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFU, inGame.nextFrameDueInMs());
+        inGame.deactivate();
+    }
+}
+
+void test_showcase_and_ingame_odd_seqlock_skip_and_rearm(void) {
+    HeapStreamSurface128x32 surf;
+    CoreStreamTestContext ctx(&surf);
+
+    // 1. `MediaShowcaseBase` double-checked `BlitSeqGuard` & ODD seqlock skip
+    {
+        CoreTestableShowcaseEngine eng;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(eng.initialize(&ctx, nullptr)));
+        eng.activate();
+        surf.clear(0x001FU);
+        surf.present();
+
+        eng.publishTestVideoFrame(0xF800U, 2U);
+        eng.update(&ctx);
+        TEST_ASSERT_TRUE(eng.isDirtyFlag());
+
+        // Flip to ODD (`3U`) before `render()` -> must skip BEFORE `BlitSeqGuard` and clear `m_dirty`
+        const uint32_t blitBefore = eng.blitSeqVal();
+        eng.setRawFrameSeq(3U);
+        eng.render(&ctx);
+        TEST_ASSERT_FALSE(eng.hasNewFrame());
+        TEST_ASSERT_FALSE(eng.isDirtyFlag());
+        TEST_ASSERT_EQUAL_UINT32(blitBefore, eng.blitSeqVal());
+        TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[0]);
+
+        // Publish EVEN (`4U`) -> `update()` re-arms `m_dirty` -> `render()` blits cleanly!
+        eng.publishTestVideoFrame(0x07E0U, 4U);
+        eng.update(&ctx);
+        TEST_ASSERT_TRUE(eng.isDirtyFlag());
+        eng.render(&ctx);
+        TEST_ASSERT_TRUE(eng.hasNewFrame());
+        TEST_ASSERT_FALSE(eng.isDirtyFlag());
+        TEST_ASSERT_EQUAL_UINT32(blitBefore + 2U, eng.blitSeqVal());
+        TEST_ASSERT_EQUAL_UINT32(4U, eng.consumedSeqVal());
+        TEST_ASSERT_EQUAL_HEX16(0x07E0U, surf.pixels[0]);
+        eng.deactivate();
+    }
+
+    // 2. `InGameShowcaseEngine` double-checked `BlitSeqGuard` & ODD seqlock skip
+    {
+        InGameShowcaseEngine inGame;
+        std::unique_ptr<uint16_t[]> frameBuf(new uint16_t[128 * 32]());
+        for (size_t i = 0; i < 128U * 32U; ++i) {
+            frameBuf[i] = 0xFFE0U;
+        }
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(EngineError::OK), static_cast<int>(inGame.initialize(&ctx, nullptr)));
+        inGame.activate();
+        surf.clear(0x001FU);
+        surf.present();
+
+        inGame.publishFrame(frameBuf.get(), 128U, 32U); // EVEN seq = 2
+        inGame.update(&ctx);
+
+        // Core 0 begins in-place decode (`ODD` seq = 3) before Core 1 `render()`
+        const uint32_t blitBefore = inGame.renderBlitSeq();
+        inGame.beginFrameUpdate();
+        TEST_ASSERT_EQUAL_UINT32(3U, inGame.currentFrameSeq());
+        inGame.render(&ctx);
+        TEST_ASSERT_FALSE(inGame.hasNewFrame());
+        TEST_ASSERT_EQUAL_UINT32(blitBefore, inGame.renderBlitSeq());
+        TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[0]);
+
+        // Subsequent `render()` while still ODD is a no-op (`!m_dirty`)
+        inGame.render(&ctx);
+        TEST_ASSERT_EQUAL_UINT32(blitBefore, inGame.renderBlitSeq());
+
+        // Core 0 publishes completed frame (`EVEN` seq = 4) -> `update()` re-arms `m_dirty`!
+        inGame.publishFrame(frameBuf.get(), 128U, 32U);
+        TEST_ASSERT_EQUAL_UINT32(4U, inGame.currentFrameSeq());
+        inGame.update(&ctx);
+        inGame.render(&ctx);
+        TEST_ASSERT_TRUE(inGame.hasNewFrame());
+        TEST_ASSERT_EQUAL_UINT32(blitBefore + 2U, inGame.renderBlitSeq());
+        TEST_ASSERT_EQUAL_UINT32(4U, inGame.consumedFrameSeq());
+        TEST_ASSERT_EQUAL_HEX16(0xFFE0U, surf.pixels[0]);
+        inGame.deactivate();
+    }
+}
+
+void test_dmdz_http_stream_paths_ring_buffer_and_esp32dev_8bit_admission(void) {
+    // 1. Plain HTTP/1.1 `DMDZ` v2 stream & `DELETE` purge path builders
+    char streamPath[288] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "http://192.168.1.40:8890/api/v1/games/stream/pkg_games_test.rgb565.stream?api_key=tok42&purge=true",
+        "esp32_dev_games",
+        false,
+        streamPath,
+        sizeof(streamPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=false&codec=dmdz2&client_id=esp32_dev_games&api_key=tok42",
+        streamPath
+    );
+
+    char deletePath[288] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?purge=false&api_key=tok42",
+        "esp32_dev_games",
+        deletePath,
+        sizeof(deletePath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/pkg_games_test.rgb565.stream?client_id=esp32_dev_games&api_key=tok42",
+        deletePath
+    );
+
+    size_t contentLen = 0U;
+    TEST_ASSERT_TRUE(net::parseContentLengthHeader(
+        "HTTP/1.1 200 OK\r\ncontent-length: 147472\r\nContent-Type: application/octet-stream\r\n\r\n",
+        contentLen
+    ));
+    TEST_ASSERT_EQUAL_UINT32(147472U, static_cast<uint32_t>(contentLen));
+
+    // 2. `StreamByteRing` circular wraparound & peek invariants on heap-backed 4096 B buffer
+    std::unique_ptr<uint8_t[]> scratch(new uint8_t[4096]());
+    net::StreamByteRing ring;
+    ring.init(scratch.get(), 4096U);
+    uint8_t chunkA[380];
+    for (size_t i = 0; i < sizeof(chunkA); ++i) {
+        chunkA[i] = static_cast<uint8_t>((i * 29U + 3U) & 0xFFU);
+    }
+    for (int round = 0; round < 20; ++round) {
+        TEST_ASSERT_EQUAL_UINT32(sizeof(chunkA), static_cast<uint32_t>(ring.push(chunkA, sizeof(chunkA))));
+        uint8_t peekBuf[8] = {0};
+        TEST_ASSERT_EQUAL_UINT32(8U, static_cast<uint32_t>(ring.peek(peekBuf, sizeof(peekBuf), 10U)));
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(chunkA + 10U, peekBuf, sizeof(peekBuf));
+        uint8_t outBuf[380] = {0};
+        TEST_ASSERT_EQUAL_UINT32(sizeof(outBuf), static_cast<uint32_t>(ring.pop(outBuf, sizeof(outBuf))));
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(chunkA, outBuf, sizeof(chunkA));
+    }
+    TEST_ASSERT_TRUE(ring.empty());
+
+    // 3. Verify `retro_games` descriptor remains 100% admitted at 8-bit color depth on `ESP32_DEV` (`128x32`)
+    EngineRegistry::clear();
+    EngineRegistrar::registerAll();
+    const EngineDescriptor* retroDesc = EngineRegistry::getDescriptor("retro_games");
+    TEST_ASSERT_NOT_NULL(retroDesc);
+
+    CompatibilityContext stdCtx;
+    stdCtx.hardware.profile = HwProfile::ESP32_STD;
+    stdCtx.hardware.hasPsram = false;
+    stdCtx.width = 128U;
+    stdCtx.height = 32U;
+    stdCtx.colorDepth = 8U;
+    stdCtx.isConnectedWifi = true;
+    stdCtx.memory.freeInternalHeap = ESP32_STD_REFERENCE.freeInternalHeap;
+    stdCtx.memory.largestInternalBlock = ESP32_STD_REFERENCE.largestInternalBlock;
+    stdCtx.memory.freePsram = ESP32_STD_REFERENCE.freePsram;
+
+    const CompatibilityVerdict verdict = CompatibilityEvaluator::evaluate(*retroDesc, stdCtx);
+    TEST_ASSERT_TRUE(verdict.compatible());
+}
+
+void test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts(void) {
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        static_cast<uint32_t>(engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES),
+        static_cast<uint32_t>(sizeof(net::DmdzHttpStreamSession))
+    );
+    // Default `8,448 B` SRAM SPSC ring fits a full `128x32` `kFrameRaw` (`2 + 1 + 8192 = 8195 B`) atomically
+    TEST_ASSERT_TRUE(engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES >= 8195U);
+
+    uint16_t fb[16] = {0};
+    core::drawing::DmdzStreamDecoder dec;
+    dec.init(4U, 4U, 2U);
+    const uint8_t keyFrame[] = {
+        core::drawing::DmdzStreamDecoder::kFrameKey,
+        0xE0U, 0x1FU, 0x00U,             // LIT 1: 0x001F
+        static_cast<uint8_t>(0x40U | 6U), // RUN 7 -> 8 pixels of 0x001F
+        0xE0U, 0x00U, 0xF8U,             // LIT 1: 0xF800
+        static_cast<uint8_t>(0x40U | 6U)  // RUN 7 -> 8 pixels of 0xF800
+    };
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(keyFrame)));
+    for (size_t i = 0U; i < sizeof(keyFrame); ++i) {
+        TEST_ASSERT_TRUE(dec.feed(keyFrame + i, 1U, fb));
+    }
+    TEST_ASSERT_TRUE(dec.finishFrame());
+    for (size_t i = 0U; i < 8U; ++i) TEST_ASSERT_EQUAL_HEX16(0x001FU, fb[i]);
+    for (size_t i = 8U; i < 16U; ++i) TEST_ASSERT_EQUAL_HEX16(0xF800U, fb[i]);
+
+    // Reject unknown/obsolete frame type `0x05` cleanly
+    const uint8_t unknownTypeFrame[] = {0x05U, 0x00U};
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(unknownTypeFrame)));
+    TEST_ASSERT_FALSE(dec.feed(unknownTypeFrame, sizeof(unknownTypeFrame), fb));
+    TEST_ASSERT_TRUE(dec.hasError());
+
+    uint8_t ringMem[96] = {0};
+    net::DmdzSpscByteRing spsc;
+    spsc.init(ringMem, sizeof(ringMem));
+    for (int r = 0; r < 25; ++r) {
+        const uint8_t msg[19] = {17, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
+        TEST_ASSERT_EQUAL_UINT32(19U, static_cast<uint32_t>(spsc.push(msg, sizeof(msg))));
+        uint16_t pLen = 0U;
+        TEST_ASSERT_TRUE(spsc.hasCompleteFrame(pLen));
+        TEST_ASSERT_EQUAL_UINT16(17U, pLen);
+        spsc.consumeRead(19U);
+        TEST_ASSERT_TRUE(spsc.empty());
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -3565,6 +4015,7 @@ void setup() {
     RUN_TEST(test_memory_config_storage_crud);
     RUN_TEST(test_working_set_cache_synchronization_and_eviction);
     RUN_TEST(test_modular_config_migration_and_partitioning);
+    RUN_TEST(test_config_loader_heap_backup_auto_heal_and_matrix_fallback);
     RUN_TEST(test_modular_playlist_long_rotation_round_trip);
     RUN_TEST(test_modular_network_keeps_data_mqtt);
 
@@ -3576,6 +4027,10 @@ void setup() {
     RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
     RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
     RUN_TEST(test_compatibility_evaluator_chained_width_no_multiplication);
+    RUN_TEST(test_showcase_and_ingame_next_frame_due_ms_pacing);
+    RUN_TEST(test_showcase_and_ingame_odd_seqlock_skip_and_rearm);
+    RUN_TEST(test_dmdz_http_stream_paths_ring_buffer_and_esp32dev_8bit_admission);
+    RUN_TEST(test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts);
 
     UNITY_END();
 }

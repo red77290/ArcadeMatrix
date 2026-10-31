@@ -11,8 +11,10 @@ enum class DisplaySourceId : uint16_t {
     GIF = 20,
     MARQUEE = 30,
     MQTT = 40,
+    INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
-    ALERT = 100
+    ALERT = 100,
+    WEBUI_SYNC = 110
 };
 
 enum class DisplayPriority : uint8_t {
@@ -20,8 +22,10 @@ enum class DisplayPriority : uint8_t {
     GIF = 20,
     MARQUEE = 30,
     MQTT = 40,
+    INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
-    ALERT = 100
+    ALERT = 100,
+    WEBUI_SYNC = 110
 };
 
 enum class RequestLifecycle : uint8_t {

@@ -68,6 +68,15 @@ public:
     static const char* getGNewsStatusLabel(uint8_t status, Lang l);
     static const char* getGNewsCategoryShort(const char* category);
     static const char* getGNewsCategoryShort(const char* category, Lang l);
+
+    // Media Showcase Status
+    static const char* getShowcaseWarmingLabel(Lang l);
+    static const char* getShowcaseOfflineLabel(Lang l);
+    static const char* getShowcaseUnconfiguredLabel(Lang l);
+
+    // WebUI Priority Load Sync Notice (ESP32_STD without PSRAM)
+    static const char* getWebUiLoadingTitleLabel(Lang l);
+    static const char* getWebUiLoadingSubLabel(Lang l);
 };
 
 #endif // I18N_H

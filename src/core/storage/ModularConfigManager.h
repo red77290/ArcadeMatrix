@@ -30,6 +30,11 @@ public:
      */
     bool saveAll(const ConfigLoader& config);
 
+    /**
+     * @brief Save only the specified ConfigSaveDomain bitmask to /config/ without touching unmodified domains.
+     */
+    bool saveDomains(const ConfigLoader& config, uint8_t domainMask);
+
     // Individual domain load/save methods
     bool loadHardware(MatrixConfig& outMatrix);
     bool saveHardware(const MatrixConfig& matrix);
@@ -37,8 +42,8 @@ public:
     bool loadSystem(SystemConfig& outSystem);
     bool saveSystem(const SystemConfig& system);
 
-    bool loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt);
-    bool saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt);
+    bool loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt, ShowcaseConfig* outShowcase = nullptr);
+    bool saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt, const ShowcaseConfig* showcase = nullptr);
 
     bool loadPlaylist(std::vector<RotationEntry>& outRotation);
     bool savePlaylist(const std::vector<RotationEntry>& rotation);

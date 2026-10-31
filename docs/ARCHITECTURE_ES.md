@@ -34,6 +34,7 @@ Este documento es la referencia **exhaustiva y profunda** de la arquitectura de 
 22. [Arquitectura de Validación y Framework de Pruebas](#22-arquitectura-de-validaci%C3%B3n-y-framework-de-pruebas)
 23. [Superficie de Dibujo, Seguimiento de Estado Dirty e Invariantes de Memoria](#23-superficie-de-dibujo-seguimiento-de-estado-dirty-e-invariantes-de-memoria)
 24. [Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria](#24-pipeline-de-presentaci%C3%B3n-din%C3%A1mico-y-arquitectura-de-optimizaci%C3%B3n-de-memoria)
+25. [Arquitectura de Streaming y Recuperación DMD Media Showcase V3.1](#25-arquitectura-de-streaming-y-recuperaci%C3%B3n-dmd-media-showcase-v31)
 
 ---
 
@@ -295,11 +296,12 @@ Soporte nativo de inglés, francés y español:
 ## 12. El Árbitro de Pantalla y Runtime de Pantalla (`DisplayArbiter`, `DisplayRuntime`)
 
 ArcadeMatrix separa estrictamente la decisión de arbitraje de la ejecución del ciclo de vida de los motores:
-1. **Alertas de Emergencia / OTA** (Prioridad 100).
-2. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
-3. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
-4. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
-5. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
+1. **Carga WebUI Cold-SPA en ESP32 sin PSRAM con SRAM Baja (`WEBUI_SYNC`)** (Prioridad 110, `TIMED` 2.4s).
+2. **Alertas de Emergencia / OTA** (Prioridad 100).
+3. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
+4. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
+5. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
+6. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
 
 - **Cola de Comandos SPSC Lock-Free:** El Núcleo 0 envía peticiones asíncronas mediante `submitRequest()` y `cancelRequest()` hacia un búfer circular sin bloqueos (`LockFreeSPSCQueue<ArbiterCommand, 16>`), serializadas entre productores mediante `producerMutex` en el Núcleo 0.
 - **Consumidor Único en Núcleo 1:** `DisplayArbiter::evaluate()` drena los comandos y resuelve prioridades en $O(1)$ con **CERO mutex** y **CERO asignaciones dinámicas**.
@@ -583,5 +585,30 @@ Para plataformas con limitaciones severas de memoria (como el ESP32 clásico con
 11. **Jerarquía de Caché de Iconos en 3 Niveles:** Mapas de bits RGB565 en RAM (L1), almacenamiento persistente en SD (L2) y proxy HTTP ligero `images.weserv.nl` + `JPEGDEC` (L3) consumiendo únicamente ~2,5 KB de RAM (ahorro de más del 92% respecto al decodificador PNG).
 
 El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).
+
+---
+
+## 25. Arquitectura de Streaming y Recuperación DMD Media Showcase V3.1
+
+Los cuatro motores DMD Media Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`, basados en `MediaShowcaseBase`) y la marquesina sincronizada en partida (`FrontendSyncEngine` + `InGameShowcaseEngine`) comparten sin duplicación de código un único orquestador y presentador de streaming — `engines::showcase::ShowcaseStreamPlayer` (`src/engines/showcase/ShowcaseStreamPlayer.{h,cpp}`) — combinando paridad de rotación 1:1 con Raspberry Pi y un pipeline de streaming Zero-Copy de doble núcleo adaptado tanto a SRAM interna (`esp32dev`) como a PSRAM octal (`esp32s3_waveshare`):
+
+1. **Compuerta `turn_evaluated` 1:1 con Raspberry Pi y Cesión Instantánea de Rotación:**
+   - `m_rotationSlotCount` se inicializa de inmediato mediante `ConfigSnapshotGuard` en `initialize()` y al inicio de `activate()` antes del primer ciclo de Core 1.
+   - Core 0 acota el sondeo inicial TCP/MQTT (`<= 800 ms` de conexión al broker + `250 ms` de margen para el mensaje retenido `arcadematrix/showcase/{domain}/ready`) y publica los atómicos `m_turnEvaluated`, `m_readyStateReceived` y `m_hasReadyItem`.
+   - Cuando un dominio informa `ready: false` u `Offline` en una rotación con múltiples motores (`m_rotationSlotCount > 1`), Core 1 cede el turno en `0 ms` (`m_finished = true`) sin mostrar pantallas fugaces `"Connecting"`/`"Offline"` (otorgando un margen acotado de `350 ms` solo cuando `m_consecutiveWarmSkips > 0 && m_itemsPlayedInTurn == 0`). Los turnos multi-ítem (`itemsPlayedInTurn < rotationBudget`) también ceden en `0 ms` si el ítem `N + 1` no está ya pregenerado.
+2. **Descubrimiento Resiliente ante NAT Docker / Rancher y Respaldo `MQTT -> HTTP` en el Mismo Turno:**
+   - `ShowcaseDiscovery` emplea un TTL positivo de `120 s` (`5 s` de espera negativa), conserva la última IP válida en la lista de candidatos tras expirar el TTL, sondea dichos candidatos **primero** antes de recurrir a mDNS o al escaneo `/24`, y reduce el umbral mínimo de `scanLocalSubnet24()` a `6.144 B` para que los motores activos de 8 bits en `128x32` se recuperen ante cambios de IP sin bloquearse.
+   - Si Mosquitto (`:1883`) falla al conectar o se corta durante el turno (p. ej. Docker/Rancher Desktop reenviando `:8095` con `:1883` cerrado), `runWorkerLoop()` conmuta de forma transparente **en el mismo turno** de `acquireItemViaMqtt()` a `acquireItemViaHttp()` (`GET /api/v1/{domain}/ready` + `POST /api/v1/{domain}/next`).
+3. **Análisis JSON Filtrado en Flujo Continuo (Cero Descartes `> 8 KB`) y Póster Binario:**
+   - `RawMqttJsonReader` y `RawHttpJsonReader` combinan `DeserializationOption::Filter` de `ArduinoJson` con `ScratchSingleBlockAllocator` para analizar los sobres directamente desde el socket TCP omitiendo `poster_rgb565_b64` y drenando cualquier resto no leído, eliminando descartes silenciosos por encima de `8 KB`.
+   - Los pósteres RGB565 sin comprimir se descargan por HTTP (`GET /api/v1/{domain}/poster/{item_id}.rgb565`), se mantienen vivos durante toda `Phase::Card` (`900 ms` iniciales + desplazamiento completo de sinopsis + `700 ms` finales) y se liberan en Core 0 estrictamente después de presentar un fotograma negro limpio en `Phase::StreamBlank` (`m_blankPresentedSeq`).
+4. **Decodificación Core 1 Zero-Copy Unificada (`ShowcaseStreamPlayer`) con `ScopedCanvasGuard`, `DMDZ` v2 `16-bit` Sin Pérdida y `Phase::StreamEndHold`:**
+   - `MediaShowcaseBase::allowsOverlay()` devuelve `false` durante `Phase::StreamBlank`, `Phase::LiveStream` y `Phase::StreamEndHold` (manteniéndose `true` en `Phase::Card`), e `InGameShowcaseEngine::allowsOverlay()` devuelve `false` durante toda la reproducción Showcase en partida, garantizando la invariancia entre cuadros del búfer lineal RGB565 `SRAM1` de `CanvasBufferedSurface`. Al concluir el flujo, `Phase::StreamEndHold` (`nextFrameDueInMs() == 0xFFFFFFFFU`, `0` redibujados) mantiene congelado el último fotograma de vídeo durante la purga HTTP `DELETE`, el cambio de rotación o la descarga del póster binario `N + 1`, evitando destellos de tarjeta vacía sin póster.
+   - `ShowcaseStreamPlayer::renderFrameCore1()` comprueba el vencimiento temporal y la disponibilidad de un fotograma completo SPSC/preload antes de construir `ScopedCanvasGuard` (preservando el Invariante 17 `_dirty` en ciclos inactivos y evitando desgarros parciales), activa sin bloqueos la señal de recarga del consumidor (`m_spscConsumerNeedsTopUp` + `shouldRefillSpscRing()`) cuando `availableToRead() < 2U + payloadLen` para que los cuadros `FRAME_RAW` `128x32` de `8.195 B` nunca se bloqueen frente al umbral del productor dentro de un anillo de `8.448 B` (protegido por un watchdog de progreso de `5.000 ms`), y decodifica en el sitio los opcodes `DMDZ` v2 `16-bit` True-RGB565 sin pérdida (`0x00..0x04`: `FRAME_DELTA`, `FRAME_SCROLL`, `FRAME_KEY`, `FRAME_SCROLL_2D`, `FRAME_RAW`) con `0 B` de búfer RGB565 privado en paneles sin rotación tanto en `MediaShowcaseBase` como en `FrontendSyncEngine` (usando `m_fallbackFrame565` asignado en Core 0 solo en geometrías rotadas). En `FrontendSyncEngine`, `waitFirstFrameBeforeLive = true` aplica **Late Preemption** (almacenando el cuadro 0 antes de sustituir la marquesina activa) y `purgeOnComplete = false` conserva el elemento en cola para los ciclos `once` / `loop` / `alternating` hasta `DELETE /api/v1/clients/{sync_id}/queue/{queue_id}`.
+5. **Transporte HTTP/1.1 Directo Adaptado al Hardware (Caché SD Autolimpiable en `esp32dev` vs 100% PSRAM en `ESP32-S3`):**
+   - **HTTP/1.1 Directo y Purga `DELETE` Explícita:** Todas las plataformas descargan el flujo sin pérdida `.rgb565.stream?purge=false&codec=dmdz2` mediante `DmdzHttpStreamSession` sin heap (`<= 1.472 B` placement-new en `ioScratch`, `SO_LINGER {1,0}`) y envían `DELETE /api/v1/{domain}/stream/{item_id}.rgb565.stream` (`DmdzStreamClient::notifyHttpStreamPurge`) al finalizar la reproducción local.
+   - **`esp32dev` (`!m_hasPsram` — Caché SD `25 MHz` Autolimpiable + Anillo SPSC Atómico `8.448–9.216 B`):** Abre `/cache/showcase_live.dmdz` (`MediaShowcaseBase`) o `/cache/showcase_sync.dmdz` (`FrontendSyncEngine`) mediante `ScopedSdCacheFile::openReadWrite()` (`O_RDWR | O_CREAT | O_TRUNC`), descarga el flujo `DMDZ` v2 en la tarjeta SD `25 MHz` en paralelo con `Phase::Card` (`0 B` de heap durante la descarga), cierra el socket TCP antes del cuadro 0 (**cero tráfico Wi-Fi y cero presión de `pbuf` `lwIP` durante la reproducción**), alimenta Core 1 desde SD mediante un `DmdzSpscByteRing` de `8.448–9.216 B` (`> 8.195 B`, máximo de `FRAME_RAW` `128x32`) para una decodificación atómica en 1 ciclo, y elimina de forma determinista (`sd.remove`) el archivo `.dmdz` vía `ScopedSdCacheFile::closeAndRemove()` al finalizar, fallar, ceder a `WebUiYield` o abortar la rotación (`0` archivos residuales en SD). Degrada limpiamente a presentación de solo tarjeta si no hay SD montada.
+   - **`ESP32-S3` (`m_hasPsram` — 100% PSRAM, Estrictamente `0` E/S en Tarjeta SD, Paridad Raspberry Pi):** Jamás toca la tarjeta microSD (funciona de forma idéntica incluso sin tarjeta SD insertada). Abre el socket HTTP `GET` **una sola vez** durante `Phase::Card` e inspecciona `Content-Length` frente a `maxPreloadPsram = min(4 MB, freePsram - 1,5 MB)`: los clips `<= maxPreloadPsram` se precargan en `MALLOC_CAP_SPIRAM` durante `Phase::Card` cerrando TCP antes del cuadro 0 (`PsramPreload`, **cero Wi-Fi en reproducción**, liberado al salir); los clips HD gigantes `> maxPreloadPsram` (p. ej. `256x64` hasta `16+ MB`) reutilizan el socket HTTP **ya abierto** y transmiten a través de un `DmdzSpscByteRing` de `1 MB` (`1.048.576 B`) en PSRAM.
+
 
 

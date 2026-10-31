@@ -14,6 +14,12 @@
 #include "CpuLoad.h"
 #include <time.h>
 #include <lwip/dns.h>
+#if defined(ESP32)
+#include <esp_log.h>
+#include <lwip/sockets.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
 #include "esp_sntp.h"
@@ -57,6 +63,31 @@ AppRuntime app;
 
 ConfigLoader& AppRuntime::getConfig() {
     return config;
+}
+
+void AppRuntime::requestWebUiSyncWindow(uint32_t durationMs) {
+    if (hardwareHAL.capabilities().hasPsram || !canEngageWebUiSync()) {
+        return;
+    }
+    const uint32_t nowMs = millis();
+    const uint32_t effectiveMs = WebUiSyncEngine::acquireOrExtendWindowMs(nowMs, durationMs);
+    if (effectiveMs == 0U) {
+        return;
+    }
+    DisplayRequest req(
+        DisplaySourceId::WEBUI_SYNC,
+        DisplayPriority::WEBUI_SYNC,
+        RequestLifecycle::TIMED,
+        /*pre=*/false,
+        0,
+        EngineHandle("webui_sync", "webui_sync_main"),
+        effectiveMs,
+        nowMs,
+        /*allowOv=*/false,
+        /*clear=*/true,
+        /*realtime=*/false
+    );
+    m_displayArbiter.submitRequest(req, /*restartTimer=*/true);
 }
 
 String getPosixTimezone(String tz) {
@@ -121,6 +152,8 @@ AppRuntime::~AppRuntime() {
     delete gifEngine;
     delete m_webServer;
     delete m_frontendListener;
+    delete m_inGameShowcaseEngine;
+    delete m_webUiSyncEngine;
     if (m_preallocatedCanvasBuffer) {
         free(m_preallocatedCanvasBuffer);
         m_preallocatedCanvasBuffer = nullptr;
@@ -230,8 +263,56 @@ void AppRuntime::initialize() {
          postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
     MemTrace::mark("after config load");
 
-    ConfigSnapshotGuard guard = config.acquireSnapshot();
-    const ConfigSnapshot& snapshot = guard.get();
+    // Pre-validate matrix geometry against board profile limits BEFORE allocating the SRAM1 canvas
+    // so an invalid/corrupted geometry (e.g. 256x64 on ESP32_STD) never starves heap or bootloops.
+    {
+        const DisplayCapabilities& dispCaps = BoardProfile::current().display();
+        uint32_t cfgChain = (config.matrix.chainLength > 0) ? static_cast<uint32_t>(config.matrix.chainLength) : 1U;
+        uint32_t reqTotalW = static_cast<uint32_t>(config.matrix.width > 0 ? config.matrix.width : 0) * cfgChain;
+        uint32_t reqTotalH = static_cast<uint32_t>(config.matrix.height > 0 ? config.matrix.height : 0);
+        if (reqTotalW == 0 || reqTotalH == 0 || reqTotalW > dispCaps.maxWidth || reqTotalH > dispCaps.maxHeight) {
+            m_matrixRecovery.safeModeActive = true;
+            m_matrixRecovery.rejectedWidth = config.matrix.width;
+            m_matrixRecovery.rejectedHeight = config.matrix.height;
+            m_matrixRecovery.rejectedChain = config.matrix.chainLength;
+            m_matrixRecovery.rejectedColorDepth = config.matrix.colorDepth;
+            m_matrixRecovery.rejectedLatchBlanking = config.matrix.latchBlanking;
+            snprintf(
+                m_matrixRecovery.reason,
+                sizeof(m_matrixRecovery.reason),
+                "Requested geometry %ux%u (%dx%d Chain %d) exceeds board limit (%ux%u)",
+                (unsigned)reqTotalW,
+                (unsigned)reqTotalH,
+                config.matrix.width,
+                config.matrix.height,
+                config.matrix.chainLength,
+                (unsigned)dispCaps.maxWidth,
+                (unsigned)dispCaps.maxHeight
+            );
+            LOGE("Matrix", "SAFE FALLBACK: %s. Recovering safe matrix geometry...", m_matrixRecovery.reason);
+
+            MatrixConfig recovered = config.matrix;
+            if (!config.tryLoadFallbackMatrixFromBackups(recovered, dispCaps.maxWidth, dispCaps.maxHeight)) {
+                recovered.width = 64;
+                recovered.height = 32;
+                recovered.chainLength = 1;
+            }
+            recovered.colorDepth = 0;
+            recovered.dynamicColorDepth = true;
+            if (recovered.latchBlanking < 1 || recovered.latchBlanking > 4) {
+                recovered.latchBlanking = 4;
+            }
+            recovered.render_pipeline = "auto";
+            recovered.matrix_power = true;
+            config.mutate([&](ConfigLoader& c) {
+                c.matrix = recovered;
+            });
+        }
+    }
+
+    std::unique_ptr<ConfigSnapshotGuard> guardHolder(new ConfigSnapshotGuard(config.acquireSnapshot()));
+    const ConfigSnapshot* snapPtr = &guardHolder->get();
+    #define snapshot (*snapPtr)
 
     LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d, Power: %s, Brightness: %d%%",
          snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
@@ -321,6 +402,7 @@ void AppRuntime::initialize() {
         if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
             LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+            WiFi.setSleep(false);
             LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
             const ip_addr_t* dhcpDns = dns_getserver(0);
             ip_addr_t routerDns;
@@ -393,6 +475,49 @@ void AppRuntime::initialize() {
     LOGI("System", "Step 3c: Starting WebServer and async_tcp task at heap baseline...");
     m_webServer = new WebServerAPI(80, nullptr);
     m_webServer->begin();
+#if defined(ESP32)
+    // Eagerly initialize ESP-IDF lazy per-subsystem locks (`s_uart_lock` in VFS UART and
+    // `async_tcp`'s thread-local LwIP `sys_thread_sem_get()` semaphore) while ~78 KB of 8-bit
+    // internal DRAM is free, guaranteeing they can never fail with `abort()` under peak runtime load.
+    ESP_LOGI("System", "Pre-warming VFS UART and AsyncTCP LwIP thread semaphores");
+    fflush(stdout);
+    {
+        int warmFd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (warmFd >= 0) {
+            int fl = lwip_fcntl(warmFd, F_GETFL, 0);
+            lwip_fcntl(warmFd, F_SETFL, fl | O_NONBLOCK);
+            struct sockaddr_in warmAddr{};
+            warmAddr.sin_family = AF_INET;
+            warmAddr.sin_port = htons(80);
+            IPAddress lip = WiFi.localIP();
+            warmAddr.sin_addr.s_addr = (lip[0] != 0)
+                ? static_cast<uint32_t>(lip)
+                : htonl(INADDR_LOOPBACK);
+            int crc = lwip_connect(warmFd, reinterpret_cast<struct sockaddr*>(&warmAddr), sizeof(warmAddr));
+            if (crc == 0 || errno == EINPROGRESS) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(warmFd, &wfds);
+                struct timeval wtv = {0, 40000};
+                if (lwip_select(warmFd + 1, nullptr, &wfds, nullptr, &wtv) > 0) {
+                    static const char kWarmReq[] = "GET /__warmup HTTP/1.0\r\nConnection: close\r\n\r\n";
+                    (void)lwip_send(warmFd, kWarmReq, sizeof(kWarmReq) - 1U, 0);
+                    fd_set rfds;
+                    FD_ZERO(&rfds);
+                    FD_SET(warmFd, &rfds);
+                    struct timeval rtv = {0, 50000};
+                    if (lwip_select(warmFd + 1, &rfds, nullptr, nullptr, &rtv) > 0) {
+                        char sink[32];
+                        (void)lwip_recv(warmFd, sink, sizeof(sink), 0);
+                    }
+                }
+            }
+            struct linger lin = {1, 0};
+            lwip_setsockopt(warmFd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+            lwip_close(warmFd);
+        }
+    }
+#endif
     MemTrace::mark("after early web server begin");
 
     // Step 3d: AudioHub & Core0 lifecycle dispatcher before HUB75 DMA allocations
@@ -402,6 +527,9 @@ void AppRuntime::initialize() {
     // =========================================================================
     // STEP 4: INITIALIZE MATRIX DISPLAY
     // =========================================================================
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
     // Aggregate requirements across all enabled engines in the active rotation
     EngineRequirements rotationReq;
     for (const auto& entry : snapshot.rotation) {
@@ -409,14 +537,11 @@ void AppRuntime::initialize() {
             if (inst.instance_id == entry.instance_id) {
                 const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
                 if (desc) {
-                    rotationReq.mergeWith(desc->requirements);
+                    rotationReq.mergeWith(desc->requirements.scaledForGeometry(totalWidth, snapshot.matrix.height, hasPsram));
                 }
             }
         }
     }
-
-    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
-    bool hasPsram = hardwareHAL.capabilities().hasPsram;
 
     auto sel = PipelineSelectionPolicy::evaluate(
         totalWidth,
@@ -442,10 +567,99 @@ void AppRuntime::initialize() {
     LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
          snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
          snapshot.matrix.panelType.c_str(), snapshot.matrix.colorDepth, sel.effectiveColorDepth, sel.reasonText);
-    if (!matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
-        LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
-        while (1) { delay(100); }
+
+    bool matrixReady = false;
+    if (sel.valid && matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
+        matrixReady = true;
+    } else {
+        if (!m_matrixRecovery.safeModeActive) {
+            m_matrixRecovery.safeModeActive = true;
+            m_matrixRecovery.rejectedWidth = snapshot.matrix.width;
+            m_matrixRecovery.rejectedHeight = snapshot.matrix.height;
+            m_matrixRecovery.rejectedChain = snapshot.matrix.chainLength;
+            m_matrixRecovery.rejectedColorDepth = snapshot.matrix.colorDepth;
+            m_matrixRecovery.rejectedLatchBlanking = snapshot.matrix.latchBlanking;
+            snprintf(
+                m_matrixRecovery.reason,
+                sizeof(m_matrixRecovery.reason),
+                "HUB75 DMA allocation failed for %dx%d Chain %d (Depth %d, LatchBlanking %d): %s",
+                snapshot.matrix.width,
+                snapshot.matrix.height,
+                snapshot.matrix.chainLength,
+                snapshot.matrix.colorDepth,
+                snapshot.matrix.latchBlanking,
+                sel.reasonText ? sel.reasonText : "OOM"
+            );
+        }
+        LOGE("Matrix", "Primary matrix init failed (%s). Engaging progressive Safe Fallback ladder (Zero-Bootloop)...",
+             m_matrixRecovery.reason);
+
+        MatrixConfig workingMat = snapshot.matrix;
+        workingMat.colorDepth = 0;
+        workingMat.dynamicColorDepth = true;
+        workingMat.latchBlanking = 4;
+        workingMat.render_pipeline = "auto";
+        workingMat.matrix_power = true;
+
+        const uint8_t safeDepths[2] = { 4, 2 };
+        const DisplayCapabilities& dispCaps = BoardProfile::current().display();
+        uint32_t curTotalW = static_cast<uint32_t>(workingMat.width) *
+                             static_cast<uint32_t>(workingMat.chainLength > 0 ? workingMat.chainLength : 1);
+        if (curTotalW <= dispCaps.maxWidth && static_cast<uint32_t>(workingMat.height) <= dispCaps.maxHeight) {
+            for (uint8_t d : safeDepths) {
+                esp_task_wdt_reset();
+                if (matrixEngine.begin(workingMat, d)) {
+                    matrixReady = true;
+                    LOGW("Matrix", "SAFE FALLBACK TIER 2 SUCCEEDED: %dx%d Chain %d @ %u-bit, latchBlanking=4",
+                         workingMat.width, workingMat.height, workingMat.chainLength, (unsigned)d);
+                    break;
+                }
+            }
+        }
+
+        if (!matrixReady) {
+            if (m_preallocatedCanvasBuffer && (curTotalW != 64U || workingMat.height != 32)) {
+                heap_caps_free(m_preallocatedCanvasBuffer);
+                m_preallocatedCanvasBuffer = nullptr;
+            }
+            workingMat.width = 64;
+            workingMat.height = 32;
+            workingMat.chainLength = 1;
+            for (uint8_t d : safeDepths) {
+                esp_task_wdt_reset();
+                if (matrixEngine.begin(workingMat, d)) {
+                    matrixReady = true;
+                    LOGW("Matrix", "SAFE FALLBACK TIER 3 SUCCEEDED: minimal 64x32 Chain 1 @ %u-bit", (unsigned)d);
+                    break;
+                }
+            }
+        }
+
+        if (matrixReady) {
+            guardHolder.reset();
+            config.mutate([&](ConfigLoader& c) {
+                c.matrix = workingMat;
+            });
+            guardHolder.reset(new ConfigSnapshotGuard(config.acquireSnapshot()));
+            snapPtr = &guardHolder->get();
+        } else {
+            m_matrixRecovery.headlessMode = true;
+            if (m_preallocatedCanvasBuffer) {
+                heap_caps_free(m_preallocatedCanvasBuffer);
+                m_preallocatedCanvasBuffer = nullptr;
+            }
+            LOGE("Matrix", "HEADLESS SAFE RECOVERY MODE ENGAGED: All HUB75 DMA allocations failed. WebUI & HTTP API remain online for recovery!");
+        }
     }
+
+    if (m_matrixRecovery.headlessMode) {
+        m_lastReconciledVersion = snapshot.version;
+        MemTrace::mark("boot complete (headless safe mode)");
+        MemTrace::arm();
+        LOGW("System", "Setup complete in Headless Safe Recovery Mode. Open WebUI Hardware tab to revert settings.");
+        return;
+    }
+
     // Commit Frame 0 (deterministic black frame) via backend as sole presentation authority
     matrixEngine.commitFirstFrame();
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
@@ -501,7 +715,7 @@ void AppRuntime::initialize() {
     MemTrace::mark("after display runtime");
 
     auto desc = EngineRegistry::getDescriptor("audiovisualizer");
-    if (desc && desc->factory) {
+    if (desc && desc->available && desc->factory) {
         auto visPtr = desc->factory();
         visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
         visualizerEngine->initialize(m_appCtx, nullptr);
@@ -547,6 +761,22 @@ void AppRuntime::initialize() {
     }
     MemTrace::mark("after marquee engine");
 
+    m_inGameShowcaseEngine = new InGameShowcaseEngine();
+    m_inGameShowcaseEngine->initialize(m_appCtx, nullptr);
+    m_displayRuntime.registerSourceEngine(
+        DisplaySourceId::INGAME_SHOWCASE,
+        m_inGameShowcaseEngine,
+        EngineHandle("ingame_showcase", "ingame_showcase_main")
+    );
+
+    m_webUiSyncEngine = new WebUiSyncEngine();
+    m_webUiSyncEngine->initialize(m_appCtx, nullptr);
+    m_displayRuntime.registerSourceEngine(
+        DisplaySourceId::WEBUI_SYNC,
+        m_webUiSyncEngine,
+        EngineHandle("webui_sync", "webui_sync_main")
+    );
+
     m_webServer->setMessageEngine(m_messageEngine);
     m_webServer->setVisualizerEngine(visualizerEngine);
     m_webServer->setMarqueeEngine(m_marqueeEngine);
@@ -557,14 +787,17 @@ void AppRuntime::initialize() {
     m_lastMqttUser = snapshot.mqtt.user;
     m_lastMqttPass = snapshot.mqtt.pass;
     if (snapshot.mqtt.enabled) {
-        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
         m_frontendListener->begin();
         if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
     }
 
     if (wifiConnected) {
         String ipMsg = "IP: " + WiFi.localIP().toString();
-        MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 35, 1};
+        if (m_matrixRecovery.safeModeActive) {
+            ipMsg += " [SAFE MODE]";
+        }
+        MessageConfig ipConfig = {ipMsg, m_matrixRecovery.safeModeActive ? (uint16_t)0xFD20 : (uint16_t)0x07E0, 1, "rtl", 35, 1};
         m_messageEngine->displayMessage(ipConfig);
     } else {
         String apMsg = "Offline Mode (AP: ArcadeMatrix)";
@@ -575,17 +808,21 @@ void AppRuntime::initialize() {
     // Allow message to finish scrolling before main loop
     LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
-    while (m_messageEngine->isActive()) {
+    while (m_messageEngine && m_messageEngine->isActive()) {
+        esp_task_wdt_reset();
         if (m_drawingSurface) {
             m_drawingSurface->clear(0);
             m_messageEngine->update(m_appCtx);
             m_messageEngine->render(m_appCtx);
             m_drawingSurface->present();
-        } else {
+        } else if (matrixEngine.getDisplay()) {
             matrixEngine.getDisplay()->fillScreen(0);
             m_messageEngine->update(m_appCtx);
             m_messageEngine->render(m_appCtx);
             matrixEngine.present();
+        } else {
+            m_messageEngine->deactivate();
+            break;
         }
         delay(10);
         if (millis() - startWait > 15000) {
@@ -608,6 +845,7 @@ void AppRuntime::initialize() {
     audioSessionManager.update(snapshot);
 
     m_lastReconciledVersion = snapshot.version;
+    #undef snapshot
 
     MemTrace::mark("boot complete (webserver up)");
     MemTrace::arm();
@@ -669,7 +907,7 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 delete m_frontendListener;
                 m_frontendListener = nullptr;
             }
-            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
             m_frontendListener->begin();
             if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
         } else {
@@ -685,6 +923,10 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 gifEngine->stop();
             }
         }
+    } else if (m_frontendListener && snapshot.mqtt.enabled) {
+        uint16_t curW = m_drawingSurface ? static_cast<uint16_t>(m_drawingSurface->width()) : 128;
+        uint16_t curH = m_drawingSurface ? static_cast<uint16_t>(m_drawingSurface->height()) : 32;
+        m_frontendListener->updateRuntimeConfig(snapshot.mqtt, snapshot.showcase, snapshot.system.lang, curW, curH);
     }
 
     if (m_frontendListener) {
@@ -796,6 +1038,29 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
             }
         }
     }
+
+    if (m_inGameShowcaseEngine) {
+        bool inGameActive = (m_frontendListener != nullptr) && m_frontendListener->wantsInGameShowcaseDisplay();
+        EngineHandle handle("ingame_showcase", "ingame_showcase_main");
+        if (inGameActive) {
+            if (!m_syncInGameShowcase.active || m_syncInGameShowcase.handle != handle) {
+                m_syncInGameShowcase.active = true;
+                m_syncInGameShowcase.handle = handle;
+                DisplayRequest req{DisplaySourceId::INGAME_SHOWCASE, DisplayPriority::INGAME_SHOWCASE, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                req.allowsOverlay = snapshot.mqtt.allow_overlay;
+                req.needsClear = false;
+                req.isRealtime = true;
+                m_displayArbiter.submitRequest(req);
+            }
+        } else {
+            if (m_syncInGameShowcase.active) {
+                m_syncInGameShowcase.active = false;
+                m_syncInGameShowcase.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
+            }
+        }
+    }
 }
 
 void AppRuntime::update() {
@@ -803,6 +1068,18 @@ void AppRuntime::update() {
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
+
+    if (m_matrixRecovery.headlessMode) {
+        static unsigned long lastHeadlessWifiCheck = millis();
+        if (snapshot.wifi.ssid.length() > 0 && millis() - lastHeadlessWifiCheck > 60000) {
+            lastHeadlessWifiCheck = millis();
+            if (WiFi.status() != WL_CONNECTED) {
+                WiFi.reconnect();
+            }
+        }
+        delay(25);
+        return;
+    }
 
     if (snapshot.version != m_lastReconciledVersion || (snapshot.mqtt.enabled && !m_frontendListener)) {
         m_lastReconciledVersion = snapshot.version;
@@ -865,6 +1142,10 @@ void AppRuntime::update() {
             matrixEngine.markExternalDraw();
             m_wasPoweredOn = false;
             m_lastAppliedBrightness = 0;
+        }
+        if (!hardwareHAL.capabilities().hasPsram &&
+            (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+            m_displayRuntime.update(snapshot);
         }
         delay(100);
         return;

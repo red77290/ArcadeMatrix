@@ -1,51 +1,677 @@
 #include "FrontendSyncEngine.h"
+#include "WebUiSyncEngine.h"
 #include <ArduinoJson.h>
+#include <cstring>
+#include <cstdlib>
+#include "../core/drawing/IDrawingSurface.h"
+#include "../core/drawing/DmdzStreamDecoder.h"
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/DmdzStreamClient.h"
+#include "../core/net/RawMqttSocket.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/net/ShowcaseDiscovery.h"
+#include "../hal/HardwareHAL.h"
 #include <esp_task_wdt.h>
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#if !defined(UNIT_TEST)
+#include <ESPmDNS.h>
+#endif
+#endif
+
+extern ConfigLoader config;
+
+namespace {
+
+void copySafeCStr(char* dst, size_t cap, const char* src) {
+    if (!dst || cap == 0U) return;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    size_t i = 0U;
+    while (i + 1U < cap && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
+}
+
+bool isLoopbackOrEmptyHost(const char* h) {
+    if (!h || h[0] == '\0') return true;
+    return (strcmp(h, "127.0.0.1") == 0 ||
+            strcasecmp(h, "localhost") == 0 ||
+            strcmp(h, "0.0.0.0") == 0 ||
+            strcmp(h, "::1") == 0);
+}
+
+bool resolveBaseServerUrl(const char* rawUrl, char* outBaseUrl, size_t outCap, char* outResolvedHost, size_t hostCap) {
+    uint16_t port = 8890;
+    bool online = false;
+    return net::ShowcaseDiscovery::resolveUrl(
+        rawUrl,
+        outBaseUrl,
+        outCap,
+        outResolvedHost,
+        hostCap,
+        port,
+        online,
+        nullptr,
+        0,
+        true,
+        false
+    );
+}
+
+struct SharedBrokerTargetState {
+    std::atomic<uint32_t> seq{0};
+    char host[96] = "";
+    uint16_t port = 1883;
+    bool fromShowcase = false;
+    bool probedOnce = false;
+};
+
+SharedBrokerTargetState s_brokerState;
+
+void writeSharedBrokerState(bool fromShowcase, const char* host, uint16_t port, bool probedOnce) {
+    s_brokerState.seq.fetch_add(1, std::memory_order_acq_rel);
+    copySafeCStr(s_brokerState.host, sizeof(s_brokerState.host), host);
+    s_brokerState.port = (port > 0) ? port : 1883;
+    s_brokerState.fromShowcase = fromShowcase;
+    s_brokerState.probedOnce = probedOnce;
+    s_brokerState.seq.fetch_add(1, std::memory_order_release);
+}
+
+void readSharedBrokerState(bool& outFromShowcase, char* outHost, size_t hostCap, uint16_t& outPort, bool& outProbedOnce) {
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint32_t s1 = s_brokerState.seq.load(std::memory_order_acquire);
+        if ((s1 & 1U) != 0U) continue;
+        bool fs = s_brokerState.fromShowcase;
+        uint16_t p = s_brokerState.port;
+        bool po = s_brokerState.probedOnce;
+        char localH[96];
+        copySafeCStr(localH, sizeof(localH), s_brokerState.host);
+        uint32_t s2 = s_brokerState.seq.load(std::memory_order_acquire);
+        if (s1 == s2) {
+            outFromShowcase = fs;
+            copySafeCStr(outHost, hostCap, localH);
+            outPort = p;
+            outProbedOnce = po;
+            return;
+        }
+    }
+    outFromShowcase = false;
+    if (outHost && hostCap > 0) outHost[0] = '\0';
+    outPort = 1883;
+    outProbedOnce = false;
+}
+
+} // namespace
+
+// ============================================================================
+// InGameShowcaseEngine (Core 1 lock-free RGB565 presenter)
+// ============================================================================
+
+EngineError InGameShowcaseEngine::initialize(EngineContext* context, const EngineConfig* cfg) {
+    (void)cfg;
+    if (!context || !context->getSurface()) {
+        return EngineError::InitializationFailed;
+    }
+    m_surface = context->getSurface();
+    DisplayGeometry geom = context->getGeometry();
+    m_width = geom.width > 0 ? geom.width : 128;
+    m_height = geom.height > 0 ? geom.height : 32;
+    (void)m_streamPlayer.probeZeroCopyOnCore1(m_surface, m_width, m_height);
+    m_dirty = false;
+    m_renderedNewFrame = false;
+    return EngineError::OK;
+}
+
+void InGameShowcaseEngine::activate() {
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
+    m_displayEngaged.store(true, std::memory_order_release);
+    m_lastRenderedSeq = 0;
+    m_dirty = true;
+    m_renderedNewFrame = false;
+}
+
+uint32_t InGameShowcaseEngine::nextFrameDueInMs() const {
+    if (!m_displayEngaged.load(std::memory_order_acquire)) {
+        return 0xFFFFFFFFU;
+    }
+    if (m_streamPlayer.isCore1Streaming()) {
+        return m_streamPlayer.computeCore1NextFrameDueInMs(millis());
+    }
+    if (m_activeFramePtr.load(std::memory_order_acquire) == nullptr) {
+        return 0xFFFFFFFFU;
+    }
+    const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+    if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedSeq) {
+        return 1U;
+    }
+    return engines::showcase::ShowcaseStreamPlayer::computeSelfPacedWakeupMs(
+        m_nextStreamFrameDueMs.load(std::memory_order_relaxed),
+        millis()
+    );
+}
+
+void InGameShowcaseEngine::update(EngineContext* context) {
+    (void)context;
+    if (m_streamPlayer.isCore1Streaming()) {
+        if (m_streamPlayer.shouldMarkCore1Dirty(millis())) {
+            m_dirty = true;
+        }
+        return;
+    }
+    uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
+    if ((seq & 1U) == 0U && seq != m_lastRenderedSeq && m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
+        m_dirty = true;
+    }
+}
+
+void InGameShowcaseEngine::waitRenderBlitQuiescent() const {
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#if defined(ESP32) && !defined(UNIT_TEST)
+    uint32_t t0 = millis();
+    while ((m_renderBlitSeq.load(std::memory_order_seq_cst) & 1U) != 0U &&
+           (millis() - t0) < 50U) {
+        vTaskDelay(1);
+    }
+#endif
+}
+
+void InGameShowcaseEngine::render(EngineContext* context) {
+    if (!m_dirty) {
+        m_renderedNewFrame = false;
+        return;
+    }
+    IDrawingSurface* s = (context && context->getSurface()) ? context->getSurface() : m_surface;
+    if (!s) {
+        m_renderedNewFrame = false;
+        return;
+    }
+
+    struct BlitSeqGuard {
+        std::atomic<uint32_t>& seq;
+        explicit BlitSeqGuard(std::atomic<uint32_t>& sRef) : seq(sRef) {
+            seq.fetch_add(1U, std::memory_order_seq_cst);
+        }
+        ~BlitSeqGuard() {
+            seq.fetch_add(1U, std::memory_order_release);
+        }
+    };
+
+    if (m_streamPlayer.isCore1Streaming()) {
+        BlitSeqGuard blitGuard{m_renderBlitSeq};
+        const bool drew = m_streamPlayer.renderFrameCore1(s, m_width, m_height);
+        m_dirty = false;
+        m_renderedNewFrame = drew;
+        return;
+    }
+
+    const uint32_t seq1 = m_frameSeq.load(std::memory_order_acquire);
+    if ((seq1 & 1U) != 0U) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
+    }
+
+    BlitSeqGuard blitGuard{m_renderBlitSeq};
+
+    const uint32_t seq2 = m_frameSeq.load(std::memory_order_acquire);
+    if ((seq2 & 1U) != 0U) {
+        m_dirty = false;
+        m_renderedNewFrame = false;
+        return;
+    }
+    const uint16_t* ptr = m_activeFramePtr.load(std::memory_order_acquire);
+    uint16_t fw = m_frameW.load(std::memory_order_relaxed);
+    uint16_t fh = m_frameH.load(std::memory_order_relaxed);
+
+    if (s->width() != static_cast<int>(fw) || s->height() != static_cast<int>(fh)) {
+        s->clear(0);
+    }
+    if (ptr && fw > 0 && fh > 0) {
+        s->blit565(ptr, 0, 0, fw, fh);
+        m_lastRenderedSeq = seq2;
+        m_consumedFrameSeq.store(seq2, std::memory_order_release);
+        m_presentedFrames.fetch_add(1U, std::memory_order_relaxed);
+    }
+    m_dirty = false;
+    m_renderedNewFrame = true;
+}
+
+void InGameShowcaseEngine::deactivate() {
+    // Invariant 15: 100% allocation-free and wait-free on Core 1
+    m_displayEngaged.store(false, std::memory_order_release);
+    m_nextStreamFrameDueMs.store(0U, std::memory_order_relaxed);
+    m_dirty = false;
+    m_renderedNewFrame = false;
+}
+
+void InGameShowcaseEngine::pause() {
+    m_displayEngaged.store(false, std::memory_order_release);
+    m_renderedNewFrame = false;
+}
+
+void InGameShowcaseEngine::resume() {
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
+    m_displayEngaged.store(true, std::memory_order_release);
+    m_lastRenderedSeq = 0;
+    m_dirty = true;
+    m_renderedNewFrame = false;
+}
+
+void InGameShowcaseEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    m_width = geometry.width > 0 ? geometry.width : 128;
+    m_height = geometry.height > 0 ? geometry.height : 32;
+    m_streamPlayer.onGeometryChanged(geometry.rotation);
+    (void)m_streamPlayer.refreshZeroCopyFromSurfaceReadOnly(m_surface, m_width, m_height);
+    m_lastRenderedSeq = 0;
+    m_dirty = true;
+}
+
+// ============================================================================
+// FrontendSyncEngine
+// ============================================================================
 
 FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
 
-FrontendSyncEngine::FrontendSyncEngine(const MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine)
-    : mqttConfig(config), gif(gifEngine), message(messageEngine), mqttClient(espClient) {
+FrontendSyncEngine::FrontendSyncEngine(
+    const MqttConfig& cfg,
+    GifEngine* gifEngine,
+    MessageEngine* messageEngine,
+    InGameShowcaseEngine* inGameEngine
+)
+    : mqttConfig(cfg),
+      gif(gifEngine),
+      message(messageEngine),
+      m_inGameEngine(inGameEngine),
+      mqttClient(espClient) {
     instance = this;
     lastReconnectAttempt = 0;
+    syncWorkerConfigSlot();
+}
+
+FrontendSyncEngine::~FrontendSyncEngine() {
+    stop();
+    if (instance == this) {
+        instance = nullptr;
+    }
+}
+
+void FrontendSyncEngine::syncWorkerConfigSlot() {
+    m_cfgSeq.fetch_add(1, std::memory_order_acq_rel);
+    copySafeCStr(m_workerCfg.showcaseUrl, sizeof(m_workerCfg.showcaseUrl), showcaseConfig.server_url.c_str());
+    copySafeCStr(m_workerCfg.localBroker, sizeof(m_workerCfg.localBroker), mqttConfig.broker.c_str());
+    copySafeCStr(m_workerCfg.lang, sizeof(m_workerCfg.lang), m_systemLang.length() > 0 ? m_systemLang.c_str() : "en");
+    copySafeCStr(m_workerCfg.cycleMode, sizeof(m_workerCfg.cycleMode), mqttConfig.ingame_cycle_mode.c_str());
+    copySafeCStr(m_workerCfg.cardStyleSource, sizeof(m_workerCfg.cardStyleSource), mqttConfig.card_style_source.c_str());
+    copySafeCStr(m_workerCfg.cardLayout, sizeof(m_workerCfg.cardLayout), mqttConfig.card_layout.c_str());
+    copySafeCStr(m_workerCfg.cardTheme, sizeof(m_workerCfg.cardTheme), mqttConfig.card_theme.c_str());
+    copySafeCStr(m_workerCfg.textScrollSpeed, sizeof(m_workerCfg.textScrollSpeed), mqttConfig.text_scroll_speed.c_str());
+    copySafeCStr(m_workerCfg.videoMode, sizeof(m_workerCfg.videoMode), mqttConfig.video_mode.c_str());
+    copySafeCStr(m_workerCfg.colorBoost, sizeof(m_workerCfg.colorBoost), mqttConfig.color_boost.c_str());
+    m_workerCfg.localPort = (mqttConfig.port > 0 && mqttConfig.port <= 65535) ? static_cast<uint16_t>(mqttConfig.port) : 1883;
+    m_workerCfg.panelW = (m_panelW >= 32) ? m_panelW : 128;
+    m_workerCfg.panelH = (m_panelH >= 16) ? m_panelH : 32;
+    m_workerCfg.marqueeIntervalSec = static_cast<uint16_t>(constrain(mqttConfig.ingame_marquee_interval_sec, 5, 600));
+    m_workerCfg.snapshotPanoramaCount = static_cast<uint8_t>(constrain(mqttConfig.snapshot_panorama_count, 0, 5));
+    m_workerCfg.videoMaxDurationS = static_cast<uint8_t>(constrain(mqttConfig.video_max_duration_s, 2, 120));
+    m_workerCfg.videoFps = static_cast<uint8_t>(constrain(mqttConfig.video_fps, 8, 60));
+    m_workerCfg.mqttEnabled = mqttConfig.enabled;
+    m_workerCfg.showcaseEnabled = showcaseConfig.enabled;
+    m_workerCfg.useShowcaseBroker = mqttConfig.use_showcase_broker;
+    m_workerCfg.ingameShowcaseEnabled = mqttConfig.ingame_showcase_enabled;
+    m_workerCfg.includeCardIntro = mqttConfig.include_card_intro;
+    m_workerCfg.showPoster = mqttConfig.show_poster;
+    m_workerCfg.showSynopsis = mqttConfig.show_synopsis;
+    m_workerCfg.jacketPanorama = mqttConfig.jacket_panorama;
+    m_workerCfg.marqueePanorama = mqttConfig.marquee_panorama;
+    m_workerCfg.showVideo = mqttConfig.show_video;
+    m_cfgSeq.fetch_add(1, std::memory_order_release);
+    m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void FrontendSyncEngine::updateRuntimeConfig(
+    const MqttConfig& mqttCfg,
+    const ShowcaseConfig& showcaseCfg,
+    const String& systemLang,
+    uint16_t panelW,
+    uint16_t panelH
+) {
+    const bool brokerCfgChanged =
+        (mqttCfg.enabled != mqttConfig.enabled) ||
+        (mqttCfg.use_showcase_broker != mqttConfig.use_showcase_broker) ||
+        (showcaseCfg.enabled != showcaseConfig.enabled) ||
+        (showcaseCfg.server_url != showcaseConfig.server_url);
+
+    mqttConfig = mqttCfg;
+    showcaseConfig = showcaseCfg;
+    m_systemLang = systemLang.length() > 0 ? systemLang : "en";
+    m_panelW = panelW > 0 ? panelW : 128;
+    m_panelH = panelH > 0 ? panelH : 32;
+    syncWorkerConfigSlot();
+
+    if (brokerCfgChanged && mqttConfig.enabled && showcaseConfig.enabled && mqttConfig.use_showcase_broker) {
+        m_workerWakeLatch.store(true, std::memory_order_release);
+        ensureShowcaseWorkerRunning();
+    }
+
+    if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled) {
+        cancelInGameShowcaseSession();
+    }
+}
+
+void FrontendSyncEngine::getResolvedBrokerTarget(
+    String& outHost,
+    uint16_t& outPort,
+    String& outSource,
+    bool& outShowcaseActive
+) {
+    bool fromShowcase = false;
+    char brokerHost[96] = "";
+    uint16_t brokerPort = 1883;
+    bool probedOnce = false;
+    readSharedBrokerState(fromShowcase, brokerHost, sizeof(brokerHost), brokerPort, probedOnce);
+
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const auto& snap = guard.get();
+
+    if (fromShowcase && snap.showcase.enabled && snap.mqtt.use_showcase_broker && brokerHost[0] != '\0') {
+        outHost = String(brokerHost);
+        outPort = brokerPort > 0 ? brokerPort : 1883;
+        outSource = "showcase";
+        outShowcaseActive = true;
+        return;
+    }
+
+    uint16_t cfgPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
+        ? static_cast<uint16_t>(snap.mqtt.port)
+        : 1883;
+    if (!isLoopbackOrEmptyHost(snap.mqtt.broker.c_str())) {
+        outHost = snap.mqtt.broker;
+        outPort = cfgPort;
+        outSource = "external";
+        outShowcaseActive = false;
+        return;
+    }
+
+    outHost = "";
+    outPort = cfgPort;
+    outSource = "local";
+    outShowcaseActive = false;
+}
+
+bool FrontendSyncEngine::parseShowcaseHealthBroker(
+    const char* healthJson,
+    const char* fallbackHost,
+    String& outHost,
+    uint16_t& outPort
+) {
+    if (!healthJson || healthJson[0] == '\0') return false;
+    StaticJsonDocument<1024> filter;
+    filter["status"] = true;
+    filter["mqtt_mode"] = true;
+    filter["mqtt_host"] = true;
+    filter["mqtt_port"] = true;
+    filter["mqtt"]["mode"] = true;
+    filter["mqtt"]["broker_host"] = true;
+    filter["mqtt"]["broker_port"] = true;
+
+    StaticJsonDocument<1024> doc;
+    DeserializationError err = deserializeJson(doc, healthJson, DeserializationOption::Filter(filter));
+    if (err) return false;
+
+    const char* status = doc["status"] | "";
+    if (strcmp(status, "ok") != 0 && !doc.containsKey("mqtt_port") && !doc.containsKey("mqtt")) {
+        return false;
+    }
+
+    const char* rawHost = doc["mqtt_host"] | "";
+    if (rawHost[0] == '\0' && doc["mqtt"].is<JsonObjectConst>()) {
+        rawHost = doc["mqtt"]["broker_host"] | "";
+    }
+
+    int rawPort = doc["mqtt_port"] | 0;
+    if (rawPort <= 0 && doc["mqtt"].is<JsonObjectConst>()) {
+        rawPort = doc["mqtt"]["broker_port"] | 0;
+    }
+    outPort = (rawPort > 0 && rawPort <= 65535) ? static_cast<uint16_t>(rawPort) : 1883;
+
+    char hostBuf[96] = "";
+    if (!isLoopbackOrEmptyHost(rawHost)) {
+        copySafeCStr(hostBuf, sizeof(hostBuf), rawHost);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890)) {
+            return false;
+        }
+    } else if (fallbackHost && !isLoopbackOrEmptyHost(fallbackHost)) {
+        copySafeCStr(hostBuf, sizeof(hostBuf), fallbackHost);
+        if (!net::ShowcaseDiscovery::resolveHostInPlace(hostBuf, sizeof(hostBuf), 8890)) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    outHost = String(hostBuf);
+    return outHost.length() > 0;
+}
+
+String FrontendSyncEngine::buildShowcaseQueueRequestJson(
+    const MqttConfig& mqttCfg,
+    const String& systemId,
+    const String& gameQuery,
+    uint16_t width,
+    uint16_t height,
+    const String& lang
+) {
+    StaticJsonDocument<1024> doc;
+    doc["domain"] = "games";
+    JsonArray sysArr = doc.createNestedArray("systems");
+    String cleanSys = systemId;
+    cleanSys.trim();
+    if (cleanSys.length() > 0) {
+        sysArr.add(cleanSys);
+    }
+    String trimmedGame = gameQuery;
+    trimmedGame.trim();
+    doc["query"] = trimmedGame;
+    doc["mode"] = "play_now";
+    doc["mark_seen"] = false;
+    doc["async_prepare"] = true;
+    doc["render_card_in_stream"] = true;
+    doc["width"] = (width >= 32) ? width : 128;
+    doc["height"] = (height >= 16) ? height : 32;
+    doc["lang"] = (lang.length() > 0) ? lang : "en";
+
+    if (mqttCfg.card_style_source.equalsIgnoreCase("custom")) {
+        doc["include_card_intro"] = mqttCfg.include_card_intro;
+        doc["card_layout"] = mqttCfg.card_layout.length() > 0 ? mqttCfg.card_layout : "classic_split";
+        doc["card_theme"] = mqttCfg.card_theme.length() > 0 ? mqttCfg.card_theme : "tinted";
+        doc["include_poster"] = mqttCfg.show_poster;
+        doc["include_synopsis"] = mqttCfg.show_synopsis;
+        doc["text_scroll_speed"] = mqttCfg.text_scroll_speed.length() > 0 ? mqttCfg.text_scroll_speed : "4";
+        doc["jacket_panorama"] = mqttCfg.jacket_panorama;
+        doc["marquee_panorama"] = mqttCfg.marquee_panorama;
+        doc["snapshot_panorama_count"] = constrain(mqttCfg.snapshot_panorama_count, 0, 5);
+        doc["include_video"] = mqttCfg.show_video;
+        doc["video_max_duration_s"] = constrain(mqttCfg.video_max_duration_s, 2, 120);
+        doc["video_fps"] = constrain(mqttCfg.video_fps, 8, 60);
+        doc["video_mode"] = mqttCfg.video_mode.length() > 0 ? mqttCfg.video_mode : "auto_action";
+        doc["color_boost"] = mqttCfg.color_boost.length() > 0 ? mqttCfg.color_boost : "auto";
+    }
+
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+void FrontendSyncEngine::stopReconnectTask() {
+    stopReconnectRequested.store(true, std::memory_order_release);
+    if (reconnectTaskHandle || !reconnectTaskExited.load(std::memory_order_acquire)) {
+        espClient.stop();
+        for (int i = 0; i < 120 && !reconnectTaskExited.load(std::memory_order_acquire); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        reconnectTaskHandle = nullptr;
+    }
+    isReconnecting.store(false, std::memory_order_release);
+}
+
+void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* host, uint16_t port) {
+    stopReconnectTask();
+    if (mqttClient.connected()) {
+        mqttClient.disconnect();
+    }
+    espClient.stop();
+
+    m_transportConfigured = true;
+    m_activeFromShowcase = fromShowcase;
+    copySafeCStr(m_activeBrokerHost, sizeof(m_activeBrokerHost), host);
+    m_activeBrokerPort = (port > 0) ? port : 1883;
+    lastReconnectAttempt = 0;
+
+    const uint16_t rxBufBytes = hardwareHAL.capabilities().hasPsram ? 1024U : 512U;
+
+    if (fromShowcase && m_activeBrokerHost[0] != '\0') {
+        if (internalBroker) {
+            delete internalBroker;
+            internalBroker = nullptr;
+            LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker to free SRAM (sharing Showcase broker %s:%u)", m_activeBrokerHost, m_activeBrokerPort);
+        } else {
+            LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u", m_activeBrokerHost, m_activeBrokerPort);
+        }
+        espClient.setTimeout(1);
+        mqttClient.setClient(espClient);
+        mqttClient.setBufferSize(rxBufBytes);
+        mqttClient.setServer(m_activeBrokerHost, m_activeBrokerPort);
+        mqttClient.setCallback(FrontendSyncEngine::callback);
+        mqttClient.setSocketTimeout(1);
+        return;
+    }
+
+    if (isLoopbackOrEmptyHost(mqttConfig.broker.c_str())) {
+        if (!internalBroker) {
+            LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
+            internalBroker = new PicoMQTT::Server(mqttConfig.port, 5, 2);
+            internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
+                if (instance) instance->handleMessage(String(topic), String(payload));
+            });
+            internalBroker->begin();
+            LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
+        }
+    } else {
+        if (internalBroker) {
+            delete internalBroker;
+            internalBroker = nullptr;
+        }
+        LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%u", m_activeBrokerHost, m_activeBrokerPort);
+        espClient.setTimeout(1);
+        mqttClient.setClient(espClient);
+        mqttClient.setBufferSize(rxBufBytes);
+        mqttClient.setServer(m_activeBrokerHost, m_activeBrokerPort);
+        mqttClient.setCallback(FrontendSyncEngine::callback);
+        mqttClient.setSocketTimeout(1);
+    }
+}
+
+void FrontendSyncEngine::ensureShowcaseWorkerRunning() {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (m_showcaseWorkerHandle != nullptr || !m_workerExited.load(std::memory_order_acquire)) {
+        return;
+    }
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const uint32_t stackBytes = hasPsram ? 6144U : 5120U;
+    m_workerStopRequested.store(false, std::memory_order_release);
+    m_workerExited.store(false, std::memory_order_release);
+    if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 2, &m_showcaseWorkerHandle, 0) != pdPASS) {
+        m_showcaseWorkerHandle = nullptr;
+        m_workerExited.store(true, std::memory_order_release);
+    }
+#endif
 }
 
 void FrontendSyncEngine::begin() {
     stop();
     if (!mqttConfig.enabled) return;
-    
+
     hasReceivedAnyEvent = false;
     hasPendingEvent = false;
     isGamePlaying = false;
     waitingDisplayed = false;
+    m_transportConfigured = false;
+    m_activeFromShowcase = false;
+    m_activeBrokerHost[0] = '\0';
+    m_activeMarqueePath[0] = '\0';
+    m_wasShowingInGame = false;
     lastReconnectAttempt = 0;
-    
-    if (mqttConfig.broker.isEmpty() || mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
-        LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
-        internalBroker = new PicoMQTT::Server(mqttConfig.port, 5, 2);
-        
-        // Subscribe strictly to canonical wildcard topic
-        internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
-            if (instance) instance->handleMessage(String(topic), String(payload));
-        });
-        
-        internalBroker->begin();
-        LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
-    } else {
-        LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%d", mqttConfig.broker.c_str(), mqttConfig.port);
-        espClient.setTimeout(1); // 1s max timeout
-        mqttClient.setClient(espClient);
-        mqttClient.setServer(mqttConfig.broker.c_str(), mqttConfig.port);
-        mqttClient.setCallback(FrontendSyncEngine::callback);
-        mqttClient.setSocketTimeout(1);
+    m_lastBrokerCacheCheckMs = 0;
+    m_beginMs = millis();
+
+    {
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const auto& snap = guard.get();
+        showcaseConfig = snap.showcase;
+        m_systemLang = snap.system.lang.length() > 0 ? snap.system.lang : "en";
+        if (m_inGameEngine) {
+            m_panelW = m_inGameEngine->surfaceWidth();
+            m_panelH = m_inGameEngine->surfaceHeight();
+        }
     }
-    systemMappings = loadMappingsFromSD();
+    syncWorkerConfigSlot();
+    writeSharedBrokerState(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port), false);
+
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const bool wantShowcaseBroker = (showcaseConfig.enabled && mqttConfig.use_showcase_broker);
+    bool adoptedCachedBroker = false;
+    if (wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
+        char cachedUrl[112] = "";
+        char cachedHost[64] = "";
+        uint16_t cachedPort = 8890;
+        bool cachedOnline = false;
+        if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                showcaseConfig.server_url.c_str(),
+                cachedUrl,
+                sizeof(cachedUrl),
+                cachedHost,
+                sizeof(cachedHost),
+                cachedPort,
+                cachedOnline,
+                nullptr,
+                0) &&
+            cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+            writeSharedBrokerState(true, cachedHost, 1883, true);
+            applyBrokerTransport(true, cachedHost, 1883);
+            adoptedCachedBroker = true;
+        }
+    }
+
+    if (hasPsram || (wantShowcaseBroker && !adoptedCachedBroker)) {
+        m_workerWakeLatch.store(true, std::memory_order_release);
+        ensureShowcaseWorkerRunning();
+    }
+
+    // If Showcase broker sharing is NOT enabled, start local/external broker immediately.
+    // Otherwise wait briefly (< 1.5s) in loop() for Core 0's initial Showcase health probe
+    // so we avoid allocating PicoMQTT::Server when Showcase is already online.
+    if (!wantShowcaseBroker) {
+        applyBrokerTransport(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port));
+    }
+
+    // On non-PSRAM boards, load `/pixelcade/console.csv` mappings lazily on first system event
+    // instead of pinning ~3 KB of `std::map<String, std::vector<String>>` RB-tree nodes at boot.
+    if (hasPsram) {
+        systemMappings = loadMappingsFromSD();
+        m_mappingsLoaded = true;
+    } else {
+        systemMappings.clear();
+        m_mappingsLoaded = false;
+    }
 }
 
 void FrontendSyncEngine::reconnectTaskFunc(void* param) {
@@ -62,19 +688,26 @@ void FrontendSyncEngine::reconnectTaskFunc(void* param) {
 }
 
 void FrontendSyncEngine::stop() {
+    cancelInGameShowcaseSession();
     isGamePlaying = false;
     waitingDisplayed = false;
     hasPendingEvent = false;
-    
-    stopReconnectRequested.store(true, std::memory_order_release);
-    if (reconnectTaskHandle || !reconnectTaskExited.load(std::memory_order_acquire)) {
-        espClient.stop();
-        for (int i = 0; i < 120 && !reconnectTaskExited.load(std::memory_order_acquire); ++i) {
+    m_activeMarqueePath[0] = '\0';
+    m_wasShowingInGame = false;
+
+#if defined(ESP32) && !defined(UNIT_TEST)
+    m_workerStopRequested.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_INGAME_SYNC);
+    if (m_showcaseWorkerHandle || !m_workerExited.load(std::memory_order_acquire)) {
+        for (int i = 0; i < 200 && !m_workerExited.load(std::memory_order_acquire); ++i) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        reconnectTaskHandle = nullptr;
+        m_showcaseWorkerHandle = nullptr;
     }
-    isReconnecting.store(false, std::memory_order_release);
+#endif
+    freeStreamBuffersSafely();
+
+    stopReconnectTask();
 
     if (internalBroker) {
         delete internalBroker;
@@ -83,7 +716,9 @@ void FrontendSyncEngine::stop() {
     if (mqttClient.connected()) {
         mqttClient.disconnect();
     }
-    
+    m_transportConfigured = false;
+    writeSharedBrokerState(false, "", 1883, false);
+
     if (gif) gif->stop();
     if (message) message->deactivate();
     LOGI("RetroFrontend", "MQTT Listener stopped.");
@@ -97,34 +732,134 @@ bool FrontendSyncEngine::loop() {
         }
         return true;
     }
-    
-    if (internalBroker) {
-        internalBroker->loop();
-    } else {
-        if (!mqttClient.connected()) {
-            long now = millis();
-            if (now - lastReconnectAttempt > 30000 &&
-                !isReconnecting.load(std::memory_order_acquire) &&
-                reconnectTaskExited.load(std::memory_order_acquire)) {
-                lastReconnectAttempt = now;
-                stopReconnectRequested.store(false, std::memory_order_release);
-                isReconnecting.store(true, std::memory_order_release);
-                reconnectTaskExited.store(false, std::memory_order_release);
-                if (xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", 4096, this, 1, &reconnectTaskHandle, 0) != pdPASS) {
-                    reconnectTaskHandle = nullptr;
-                    isReconnecting.store(false, std::memory_order_release);
-                    reconnectTaskExited.store(true, std::memory_order_release);
-                }
+
+    // Check lock-free broker resolution state from Core 0 worker
+    bool wantShowcaseBroker = (showcaseConfig.enabled && mqttConfig.use_showcase_broker);
+    bool resolvedFromShowcase = false;
+    char resolvedHost[96] = "";
+    uint16_t resolvedPort = 1883;
+    bool probedOnce = false;
+    readSharedBrokerState(resolvedFromShowcase, resolvedHost, sizeof(resolvedHost), resolvedPort, probedOnce);
+
+    if (!wantShowcaseBroker) {
+        resolvedFromShowcase = false;
+        copySafeCStr(resolvedHost, sizeof(resolvedHost), mqttConfig.broker.c_str());
+        resolvedPort = static_cast<uint16_t>(mqttConfig.port > 0 ? mqttConfig.port : 1883);
+        probedOnce = true;
+    } else if (!resolvedFromShowcase && showcaseConfig.server_url.length() >= 8) {
+        // Zero-socket passive adoption: if `MediaShowcaseBase` discovered/verified Showcase after boot,
+        // adopt its broker IP immediately without spawning `SyncShowcaseWkr` or opening an HTTP socket.
+        const unsigned long nowCheck = millis();
+        if (m_lastBrokerCacheCheckMs == 0 || (nowCheck - m_lastBrokerCacheCheckMs) >= 3000UL) {
+            m_lastBrokerCacheCheckMs = nowCheck == 0 ? 1UL : nowCheck;
+            char cachedUrl[112] = "";
+            char cachedHost[64] = "";
+            uint16_t cachedPort = 8890;
+            bool cachedOnline = false;
+            if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                    showcaseConfig.server_url.c_str(),
+                    cachedUrl,
+                    sizeof(cachedUrl),
+                    cachedHost,
+                    sizeof(cachedHost),
+                    cachedPort,
+                    cachedOnline,
+                    nullptr,
+                    0) &&
+                cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+                writeSharedBrokerState(true, cachedHost, 1883, true);
+                resolvedFromShowcase = true;
+                copySafeCStr(resolvedHost, sizeof(resolvedHost), cachedHost);
+                resolvedPort = 1883;
+                probedOnce = true;
             }
-        } else {
-            mqttClient.loop();
         }
     }
-    
+
+    if (probedOnce || (millis() - m_beginMs > 1500)) {
+        const char* desiredHost = resolvedFromShowcase ? resolvedHost : mqttConfig.broker.c_str();
+        uint16_t desiredPort = resolvedFromShowcase
+            ? resolvedPort
+            : static_cast<uint16_t>(mqttConfig.port > 0 ? mqttConfig.port : 1883);
+        if (!m_transportConfigured ||
+            m_activeFromShowcase != resolvedFromShowcase ||
+            m_activeBrokerPort != desiredPort ||
+            strcmp(m_activeBrokerHost, desiredHost) != 0) {
+            applyBrokerTransport(resolvedFromShowcase, desiredHost, desiredPort);
+        }
+    }
+
+    // Restore static PNG marquee cleanly onto shared surface when InGameShowcase yields back (`once` / `alternating`)
+    bool showingInGame = m_wantsInGameDisplay.load(std::memory_order_acquire);
+    if (m_wasShowingInGame && !showingInGame && isGamePlaying && gif && m_activeMarqueePath[0] != '\0') {
+        size_t pLen = strlen(m_activeMarqueePath);
+        if (pLen > 4 && strcasecmp(m_activeMarqueePath + pLen - 4, ".png") == 0) {
+            gif->playGif(m_activeMarqueePath);
+        }
+    }
+    m_wasShowingInGame = showingInGame;
+
+    if (m_transportConfigured) {
+        if (internalBroker) {
+            internalBroker->loop();
+        } else {
+#if defined(ESP32)
+            const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+            // Yield the idle FrontendSync MQTT socket ONLY during `WebUiSync` (browser SPA load).
+            // Never tear down an already-connected MQTT socket during `MediaShowcaseBase` turns: keeping
+            // the established socket avoids `FIN_WAIT` `pbuf` retention and prevents a 4 KB `MqttReconnect`
+            // task + TCP handshake from colliding with Showcase video streams 10s later!
+            if (!hasPsram && !isGamePlaying &&
+                (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+                if (mqttClient.connected()) {
+                    mqttClient.disconnect();
+                    espClient.stop();
+                    lastReconnectAttempt = millis() == 0 ? 1UL : millis();
+                }
+                return true;
+            }
+#endif
+            if (!mqttClient.connected()) {
+                unsigned long now = millis();
+                unsigned long retryInterval = (lastReconnectAttempt == 0) ? 0UL : 10000UL;
+                bool canSpawnReconnect = true;
+                uint32_t reconnectStack = 4096U;
+#if defined(ESP32)
+                if (!hasPsram) {
+                    const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                    const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                    canSpawnReconnect =
+                        !WebUiSyncEngine::isRequested() &&
+                        !WebUiSyncEngine::isReadyForServing() &&
+                        (NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::Idle) &&
+                        (free8 >= 14336U) &&
+                        (largest8 >= 6144U);
+                }
+#endif
+                if (canSpawnReconnect &&
+                    (lastReconnectAttempt == 0 || (now - lastReconnectAttempt > retryInterval)) &&
+                    !isReconnecting.load(std::memory_order_acquire) &&
+                    reconnectTaskExited.load(std::memory_order_acquire)) {
+                    lastReconnectAttempt = now == 0 ? 1 : now;
+                    stopReconnectRequested.store(false, std::memory_order_release);
+                    isReconnecting.store(true, std::memory_order_release);
+                    reconnectTaskExited.store(false, std::memory_order_release);
+                    if (xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", reconnectStack, this, 1, &reconnectTaskHandle, 0) != pdPASS) {
+                        reconnectTaskHandle = nullptr;
+                        isReconnecting.store(false, std::memory_order_release);
+                        reconnectTaskExited.store(true, std::memory_order_release);
+                    }
+                }
+            } else {
+                mqttClient.loop();
+            }
+        }
+    }
+
     if (hasPendingEvent) {
         // Debounce browsing events by 150ms of quiet time so rapid navigation doesn't hammer SD card or broker.
         // Non-browsing events (gameStart, gameStop, playing, stopped) are processed immediately.
-        bool isBrowsing = (pendingPayload.indexOf("\"status\":\"browsing\"") != -1 || 
+        bool isBrowsing = (pendingPayload.indexOf("\"status\":\"browsing\"") != -1 ||
                            pendingPayload.indexOf("\"status\": \"browsing\"") != -1);
         if (!isBrowsing || (millis() - pendingEventTime >= 150)) {
             hasPendingEvent = false;
@@ -137,52 +872,682 @@ bool FrontendSyncEngine::loop() {
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }
-    
+
     return true;
 }
 
 void FrontendSyncEngine::reconnect() {
     if (stopReconnectRequested.load(std::memory_order_acquire)) return;
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("Attempting MQTT connection...");
-        if (mqttClient.connect(mqttConfig.deviceName.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str())) {
-            Serial.println("connected");
-            if (!stopReconnectRequested.load(std::memory_order_acquire)) {
-                // Subscribe strictly to canonical wildcard topic
-                mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
-            }
+        String cid = mqttConfig.deviceName;
+        char hwId[8] = "";
+        net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
+        cid += "_";
+        cid += hwId;
+        bool connected = false;
+        if (!m_activeFromShowcase && mqttConfig.user.length() > 0) {
+            connected = mqttClient.connect(cid.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str());
         } else {
-            Serial.print("failed, rc=");
-            Serial.print(mqttClient.state());
+            connected = mqttClient.connect(cid.c_str());
+        }
+        if (connected) {
+            if (!stopReconnectRequested.load(std::memory_order_acquire)) {
+                mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
+                if (m_activeFromShowcase) {
+                    mqttClient.subscribe(MQTT_TOPIC_SHOWCASE_CMD);
+                }
+            }
         }
     }
 }
 
 void FrontendSyncEngine::callback(char* topic, byte* payload, unsigned int length) {
     if (!instance) return;
-    
+
     String payloadStr;
-    for (int i = 0; i < length; i++) {
+    payloadStr.reserve(length + 1);
+    for (unsigned int i = 0; i < length; i++) {
         payloadStr += (char)payload[i];
     }
-    
+
     instance->handleMessage(String(topic), payloadStr);
 }
 
-// Note: the "msg" parameter here intentionally avoids the name "message" - the class also has a
-// member `MessageEngine* message` (see header), and shadowing it with a String parameter here would
-// be a foot-gun for anyone adding code that needs the MessageEngine pointer inside this function.
 void FrontendSyncEngine::handleMessage(String topic, String msg) {
-    LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
-    
     if (topic.startsWith("system/playing/")) {
-        LOGI("RetroFrontend", "Matched game playing topic, queueing game event.");
+        LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
         pendingPayload = msg;
         hasPendingEvent = true;
         pendingEventTime = millis();
         currentRequestId++;
         return;
     }
+
+    if (topic.startsWith("dmd_showcase/clients/") && topic.endsWith("/command")) {
+        char hwPrefix[20] = "";
+        char hwId[8] = "";
+        net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
+        snprintf(hwPrefix, sizeof(hwPrefix), "esp32_%s_", hwId);
+        // Only wake up for commands targeting this board's hardware ID (or legacy broadcast slot)
+        if ((topic.indexOf(hwPrefix) != -1 || topic.indexOf("/esp32_games_") != -1) &&
+            msg.indexOf("\"play_now\"") != -1) {
+            m_readyWakeupHint.store(true, std::memory_order_release);
+        }
+        return;
+    }
+}
+
+void FrontendSyncEngine::startInGameShowcaseSession(const String& cleanSystem, const String& rawGame) {
+    uint32_t tok = m_playSessionToken.fetch_add(1, std::memory_order_acq_rel) + 1;
+    m_wantsInGameDisplay.store(false, std::memory_order_release);
+    m_readyWakeupHint.store(false, std::memory_order_release);
+    if (m_inGameEngine) {
+        m_inGameEngine->clearFrame();
+    }
+
+    if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled || rawGame.length() == 0) {
+        m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
+        m_jobSlot.token = tok;
+        m_jobSlot.active = false;
+        m_jobSlot.system[0] = '\0';
+        m_jobSlot.game[0] = '\0';
+        m_jobSeq.fetch_add(1, std::memory_order_release);
+        return;
+    }
+
+    m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
+    copySafeCStr(m_jobSlot.system, sizeof(m_jobSlot.system), cleanSystem.c_str());
+    copySafeCStr(m_jobSlot.game, sizeof(m_jobSlot.game), rawGame.c_str());
+    m_jobSlot.token = tok;
+    m_jobSlot.active = true;
+    m_jobSeq.fetch_add(1, std::memory_order_release);
+
+    m_workerWakeLatch.store(true, std::memory_order_release);
+    ensureShowcaseWorkerRunning();
+}
+
+void FrontendSyncEngine::cancelInGameShowcaseSession() {
+    uint32_t tok = m_playSessionToken.fetch_add(1, std::memory_order_acq_rel) + 1;
+    m_wantsInGameDisplay.store(false, std::memory_order_release);
+    m_readyWakeupHint.store(false, std::memory_order_release);
+    if (m_inGameEngine) {
+        m_inGameEngine->clearFrame();
+    }
+    m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
+    m_jobSlot.token = tok;
+    m_jobSlot.active = false;
+    m_jobSlot.system[0] = '\0';
+    m_jobSlot.game[0] = '\0';
+    m_jobSeq.fetch_add(1, std::memory_order_release);
+}
+
+bool FrontendSyncEngine::ensureStreamScratchAllocated() {
+    if (m_streamIoScratch != nullptr &&
+        m_streamIoScratchCap >= engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES) {
+        return true;
+    }
+    if (m_streamIoScratch) {
+        free(m_streamIoScratch);
+        m_streamIoScratch = nullptr;
+        m_streamIoScratchCap = 0U;
+    }
+#if defined(ESP32)
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+#if SHOWCASE_PLAYER_SUPPORT_PSRAM_PRELOAD
+    if (hasPsram) {
+        m_streamIoScratch = static_cast<char*>(
+            heap_caps_malloc(STREAM_SESSION_SCRATCH_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        );
+        if (m_streamIoScratch) {
+            m_streamIoScratchCap = STREAM_SESSION_SCRATCH_BYTES;
+            m_streamIoScratch[0] = '\0';
+            return true;
+        }
+    }
+#else
+    (void)hasPsram;
+#endif
+    if (!hasPsram) {
+        const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (free8 < (STREAM_SESSION_SCRATCH_BYTES + 8192U) || largest8 < STREAM_SESSION_SCRATCH_BYTES) {
+            return false;
+        }
+    }
+#endif
+    m_streamIoScratch = static_cast<char*>(malloc(STREAM_SESSION_SCRATCH_BYTES));
+    if (!m_streamIoScratch) {
+        return false;
+    }
+    m_streamIoScratchCap = STREAM_SESSION_SCRATCH_BYTES;
+    m_streamIoScratch[0] = '\0';
+    return true;
+}
+
+void FrontendSyncEngine::freeStreamBuffersSafely() {
+    m_wantsInGameDisplay.store(false, std::memory_order_release);
+    if (m_inGameEngine) {
+        m_inGameEngine->streamPlayer().resetCore1StreamState();
+        m_inGameEngine->clearFrame();
+        m_inGameEngine->waitRenderBlitQuiescent();
+#if defined(ESP32) && !defined(UNIT_TEST)
+        for (int i = 0; i < 50 && m_inGameEngine->isDisplayEngaged(); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        vTaskDelay(pdMS_TO_TICKS(18));
+#endif
+        m_inGameEngine->streamPlayer().releaseAll();
+    }
+    if (m_streamIoScratch) {
+        free(m_streamIoScratch);
+        m_streamIoScratch = nullptr;
+    }
+    m_streamIoScratchCap = 0U;
+}
+
+void FrontendSyncEngine::deleteShowcaseQueueItemHttp(
+    const char* resolvedServerUrl,
+    const char* syncClientId,
+    const char* queueId
+) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!resolvedServerUrl || !syncClientId || !queueId || queueId[0] == '\0') return;
+    char host[96] = "";
+    uint16_t port = 8890;
+    if (!net::parseEndpointHostAndPort(resolvedServerUrl, 8890, host, sizeof(host), port, nullptr)) return;
+    if (!net::ShowcaseDiscovery::resolveHostInPlace(host, sizeof(host), port)) return;
+
+    char deletePath[160];
+    const int n = snprintf(
+        deletePath,
+        sizeof(deletePath),
+        "/api/v1/clients/%s/queue/%s",
+        syncClientId,
+        queueId
+    );
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(deletePath)) return;
+    net::sendHttpDeleteOneShotAbort(host, port, deletePath, 800U, 300U);
+#else
+    (void)resolvedServerUrl;
+    (void)syncClientId;
+    (void)queueId;
+#endif
+}
+
+bool FrontendSyncEngine::streamReadyItemOnce(
+    const char* resolvedServerUrl,
+    const char* syncClientId,
+    const char* itemId,
+    uint32_t jobToken,
+    uint16_t expectedW,
+    uint16_t expectedH,
+    uint32_t configuredStreamMs
+) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!resolvedServerUrl || !itemId || itemId[0] == '\0' || !m_inGameEngine) return false;
+    if (!ensureStreamScratchAllocated()) {
+        LOGW("RetroFrontend", "Insufficient memory for %ux%u In-Game Showcase stream; keeping marquee.", expectedW, expectedH);
+        return false;
+    }
+
+    char streamPath[224];
+    const int pathLen = snprintf(
+        streamPath,
+        sizeof(streamPath),
+        "/api/v1/games/stream/%s.rgb565.stream?purge=false&codec=dmdz2",
+        itemId
+    );
+    if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(streamPath)) {
+        return false;
+    }
+
+    m_inGameEngine->resetStreamTelemetry();
+
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    struct StreamCallbackCtx {
+        FrontendSyncEngine* self;
+        uint32_t expectedToken;
+        bool hasPsram;
+    } cbCtx{this, jobToken, hasPsram};
+
+    auto checkStopFn = [](void* rawCtx) -> net::StreamStopReason {
+        const auto* c = static_cast<const StreamCallbackCtx*>(rawCtx);
+        if (c->self->m_workerStopRequested.load(std::memory_order_acquire) ||
+            c->self->m_playSessionToken.load(std::memory_order_acquire) != c->expectedToken) {
+            return net::StreamStopReason::Deactivated;
+        }
+        if (!c->hasPsram && WebUiSyncEngine::isRequested()) {
+            return net::StreamStopReason::WebUiYield;
+        }
+        return net::StreamStopReason::Continue;
+    };
+
+    engines::showcase::ShowcaseStreamRunOptions runOpts{};
+    runOpts.baseServerUrl = resolvedServerUrl;
+    runOpts.streamPath = streamPath;
+    runOpts.clientId = (syncClientId && syncClientId[0] != '\0') ? syncClientId : "esp32_games_sync";
+    runOpts.logTag = "RetroFrontend";
+    runOpts.surfaceForReadOnlyCheck = m_inGameEngine->surface();
+    runOpts.ioScratch = m_streamIoScratch;
+    runOpts.ioScratchCap = m_streamIoScratchCap;
+    runOpts.panelWidth = expectedW;
+    runOpts.panelHeight = expectedH;
+    runOpts.preStreamCardWaitMs = 0U;
+    runOpts.cardStartedAtMs = 0U;
+    runOpts.maxStreamMs = std::min<uint32_t>(300000U, std::max<uint32_t>(12000U, configuredStreamMs + 6000U));
+    runOpts.hasPsram = hasPsram;
+    runOpts.purgeOnComplete = false;
+    runOpts.waitFirstFrameBeforeLive = true; // Late Preemption: never interrupt marquee unless Frame 0 is buffered!
+    runOpts.userCtx = &cbCtx;
+    runOpts.checkStop = checkStopFn;
+    runOpts.onEnterLiveStream = [](void* rawCtx) {
+        auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
+        c->self->m_wantsInGameDisplay.store(true, std::memory_order_release);
+    };
+    runOpts.onExitLiveStream = [](void* rawCtx) {
+        auto* c = static_cast<StreamCallbackCtx*>(rawCtx);
+        if (c->self->m_inGameEngine) {
+            c->self->m_inGameEngine->waitRenderBlitQuiescent();
+        }
+    };
+
+    return m_inGameEngine->streamPlayer().runStreamSession(runOpts);
+#else
+    (void)resolvedServerUrl;
+    (void)syncClientId;
+    (void)itemId;
+    (void)jobToken;
+    (void)expectedW;
+    (void)expectedH;
+    (void)configuredStreamMs;
+    return false;
+#endif
+}
+
+void FrontendSyncEngine::showcaseWorkerTaskFunc(void* param) {
+    FrontendSyncEngine* self = static_cast<FrontendSyncEngine*>(param);
+    if (self) {
+        self->showcaseWorkerLoop();
+        self->m_showcaseWorkerHandle = nullptr;
+        self->m_workerExited.store(true, std::memory_order_release);
+    }
+    vTaskDelete(nullptr);
+}
+
+void FrontendSyncEngine::showcaseWorkerLoop() {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    uint32_t lastHealthProbeMs = 0;
+    uint32_t lastCheckedCfgGen = 0;
+    uint8_t consecutiveHealthFailures = 0;
+    bool currentShowcaseOnline = false;
+    uint32_t lastProcessedJobToken = 0;
+
+    char activeQueueServerUrl[112] = "";
+    char activeQueueClientId[48] = "";
+    char activeQueueId[48] = "";
+
+    auto cleanupActiveQueue = [&]() {
+        if (activeQueueId[0] != '\0') {
+            deleteShowcaseQueueItemHttp(activeQueueServerUrl, activeQueueClientId, activeQueueId);
+            activeQueueId[0] = '\0';
+        }
+    };
+
+    auto readWorkerCfg = [&](WorkerConfigSlot& out) {
+        for (int i = 0; i < 4; ++i) {
+            uint32_t s1 = m_cfgSeq.load(std::memory_order_acquire);
+            if ((s1 & 1U) != 0U) continue;
+            WorkerConfigSlot tmp = m_workerCfg;
+            uint32_t s2 = m_cfgSeq.load(std::memory_order_acquire);
+            if (s1 == s2) {
+                out = tmp;
+                return;
+            }
+        }
+        out = m_workerCfg;
+    };
+
+    auto readJobSlot = [&](InGameJobSlot& out) {
+        for (int i = 0; i < 4; ++i) {
+            uint32_t s1 = m_jobSeq.load(std::memory_order_acquire);
+            if ((s1 & 1U) != 0U) continue;
+            InGameJobSlot tmp = m_jobSlot;
+            uint32_t s2 = m_jobSeq.load(std::memory_order_acquire);
+            if (s1 == s2) {
+                out = tmp;
+                return;
+            }
+        }
+        out = m_jobSlot;
+    };
+
+    while (!m_workerStopRequested.load(std::memory_order_acquire)) {
+        WorkerConfigSlot wcfg;
+        readWorkerCfg(wcfg);
+        uint32_t curCfgGen = m_cfgGen.load(std::memory_order_acquire);
+
+        // 1. Periodic / config-triggered Showcase MQTT broker discovery
+        uint32_t nowMs = millis();
+        bool hasPsram = hardwareHAL.capabilities().hasPsram;
+        bool needProbe = (curCfgGen != lastCheckedCfgGen) ||
+                         (lastHealthProbeMs == 0) ||
+                         ((nowMs - lastHealthProbeMs) >= (currentShowcaseOnline ? (hasPsram ? 12000U : 30000U) : 5000U));
+        if (needProbe) {
+            if (!hasPsram &&
+                (WebUiSyncEngine::isRequested() ||
+                 WebUiSyncEngine::isReadyForServing() ||
+                 NetworkBudget::isBulkTransferActive() ||
+                 NetworkBudget::getDmdNetActivity() != NetworkBudget::DmdNetActivity::Idle)) {
+                // Fast zero-socket cache reuse when `MediaShowcaseBase` already verified the Showcase host
+                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker && strlen(wcfg.showcaseUrl) >= 8) {
+                    char cachedUrl[112] = "";
+                    char cachedHost[64] = "";
+                    uint16_t cachedPort = 8890;
+                    bool cachedOnline = false;
+                    if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                            wcfg.showcaseUrl,
+                            cachedUrl,
+                            sizeof(cachedUrl),
+                            cachedHost,
+                            sizeof(cachedHost),
+                            cachedPort,
+                            cachedOnline,
+                            nullptr,
+                            0) &&
+                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+                        consecutiveHealthFailures = 0;
+                        currentShowcaseOnline = true;
+                        lastCheckedCfgGen = curCfgGen;
+                        lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+                        writeSharedBrokerState(true, cachedHost, 1883, true);
+                    }
+                }
+            } else {
+                lastCheckedCfgGen = curCfgGen;
+                lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+
+                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
+                    WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8) {
+                    char baseServerUrl[112] = "";
+                    char resolvedShowcaseHost[96] = "";
+                    uint16_t cachedPort = 8890;
+                    bool cachedOnline = false;
+                    bool healthOk = false;
+                    String brokerHost;
+                    uint16_t brokerPort = 1883;
+
+                    // Zero-socket fast path when `MediaShowcaseBase` already holds a fresh verified lease
+                    if (!hasPsram &&
+                        net::ShowcaseDiscovery::peekCachedUrlStatus(
+                            wcfg.showcaseUrl,
+                            baseServerUrl,
+                            sizeof(baseServerUrl),
+                            resolvedShowcaseHost,
+                            sizeof(resolvedShowcaseHost),
+                            cachedPort,
+                            cachedOnline,
+                            nullptr,
+                            0,
+                            60000U) &&
+                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedShowcaseHost)) {
+                        brokerHost = String(resolvedShowcaseHost);
+                        brokerPort = 1883;
+                        healthOk = true;
+                    } else if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
+                        net::SecureHttpOptions hOpts;
+                        hOpts.ownerId = net::OWNER_INGAME_SYNC;
+                        hOpts.requestTimeoutMs = 1200;
+                        hOpts.keepAlive = false;
+                        auto hResp = net::SecureHttpClient::get(String(baseServerUrl) + "/api/v1/health", hOpts);
+                        if (hResp.ok()) {
+                            String body = hResp.body();
+                            healthOk = parseShowcaseHealthBroker(body.c_str(), resolvedShowcaseHost, brokerHost, brokerPort);
+                        }
+                    }
+
+                    if (healthOk) {
+                        consecutiveHealthFailures = 0;
+                        currentShowcaseOnline = true;
+                        writeSharedBrokerState(true, brokerHost.c_str(), brokerPort, true);
+                    } else {
+                        if (consecutiveHealthFailures < 10) consecutiveHealthFailures++;
+                        if (!currentShowcaseOnline || consecutiveHealthFailures >= 2) {
+                            currentShowcaseOnline = false;
+                            writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                        }
+                    }
+                } else {
+                    consecutiveHealthFailures = 0;
+                    currentShowcaseOnline = false;
+                    writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                }
+            }
+        }
+
+        // 2. Check for pending In-Game Showcase launch or cancellation
+        InGameJobSlot job;
+        readJobSlot(job);
+        if (job.token != lastProcessedJobToken) {
+            cleanupActiveQueue();
+            freeStreamBuffersSafely();
+            lastProcessedJobToken = job.token;
+
+            if (job.active && wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.ingameShowcaseEnabled &&
+                WiFi.status() == WL_CONNECTED && job.game[0] != '\0') {
+                uint16_t targetW = m_inGameEngine ? m_inGameEngine->surfaceWidth() : wcfg.panelW;
+                uint16_t targetH = m_inGameEngine ? m_inGameEngine->surfaceHeight() : wcfg.panelH;
+                if (targetW < 32) targetW = 128;
+                if (targetH < 16) targetH = 32;
+
+                char baseServerUrl[112] = "";
+                char resolvedShowcaseHost[96] = "";
+                if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
+                    char syncClientId[48];
+                    net::ShowcaseDiscovery::formatClientId("games", targetW, targetH, true, syncClientId, sizeof(syncClientId));
+
+                    MqttConfig reqMqttCfg;
+                    reqMqttCfg.card_style_source = wcfg.cardStyleSource;
+                    reqMqttCfg.include_card_intro = wcfg.includeCardIntro;
+                    reqMqttCfg.card_layout = wcfg.cardLayout;
+                    reqMqttCfg.card_theme = wcfg.cardTheme;
+                    reqMqttCfg.show_poster = wcfg.showPoster;
+                    reqMqttCfg.show_synopsis = wcfg.showSynopsis;
+                    reqMqttCfg.text_scroll_speed = wcfg.textScrollSpeed;
+                    reqMqttCfg.jacket_panorama = wcfg.jacketPanorama;
+                    reqMqttCfg.marquee_panorama = wcfg.marqueePanorama;
+                    reqMqttCfg.snapshot_panorama_count = wcfg.snapshotPanoramaCount;
+                    reqMqttCfg.show_video = wcfg.showVideo;
+                    reqMqttCfg.video_max_duration_s = wcfg.videoMaxDurationS;
+                    reqMqttCfg.video_fps = wcfg.videoFps;
+                    reqMqttCfg.video_mode = wcfg.videoMode;
+                    reqMqttCfg.color_boost = wcfg.colorBoost;
+
+                    String postBody = buildShowcaseQueueRequestJson(
+                        reqMqttCfg,
+                        String(job.system),
+                        String(job.game),
+                        targetW,
+                        targetH,
+                        String(wcfg.lang)
+                    );
+
+                    net::SecureHttpOptions qOpts;
+                    qOpts.ownerId = net::OWNER_INGAME_SYNC;
+                    qOpts.requestTimeoutMs = 3500;
+                    qOpts.keepAlive = false;
+
+                    char endpointUrl[192];
+                    snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue/async", baseServerUrl, syncClientId);
+
+                    char readyItemId[80] = "";
+                    bool enqueuedOk = false;
+                    {
+                        auto qResp = net::SecureHttpClient::post(endpointUrl, "application/json", postBody, qOpts);
+                        if (qResp.ok()) {
+                            StaticJsonDocument<192> qFilter;
+                            qFilter["queue_id"] = true;
+                            qFilter["status"] = true;
+                            qFilter["item_id"] = true;
+                            qFilter["item"]["queue_id"] = true;
+                            qFilter["item"]["status"] = true;
+                            qFilter["item"]["item_id"] = true;
+
+                            StaticJsonDocument<384> qDoc;
+                            if (deserializeJson(qDoc, qResp.stream(), DeserializationOption::Filter(qFilter)) == DeserializationError::Ok) {
+                                JsonVariantConst itemVar = qDoc.containsKey("item")
+                                    ? qDoc["item"].as<JsonVariantConst>()
+                                    : qDoc.as<JsonVariantConst>();
+                                const char* qId = itemVar["queue_id"] | "";
+                                const char* qStatus = itemVar["status"] | "";
+                                const char* qItemId = itemVar["item_id"] | "";
+
+                                if (qId[0] != '\0') {
+                                    copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
+                                    copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
+                                    copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
+                                    if ((strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0) && qItemId[0] != '\0') {
+                                        copySafeCStr(readyItemId, sizeof(readyItemId), qItemId);
+                                    }
+                                    enqueuedOk = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (enqueuedOk) {
+                        if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                            m_workerStopRequested.load(std::memory_order_acquire)) {
+                            cleanupActiveQueue();
+                        } else {
+                            // Wait for async preparation while marquee stays undisturbed on the DMD
+                            uint32_t waitStartMs = millis();
+                            snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue", baseServerUrl, syncClientId);
+                            while (readyItemId[0] == '\0' &&
+                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
+                                   m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                                   (millis() - waitStartMs) < 60000U) {
+                                for (int w = 0; w < 15; ++w) {
+                                    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                        m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                                        m_readyWakeupHint.exchange(false, std::memory_order_acq_rel)) {
+                                        break;
+                                    }
+                                    vTaskDelay(pdMS_TO_TICKS(50));
+                                }
+                                if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                    break;
+                                }
+
+                                bool keepPolling = true;
+                                {
+                                    auto pResp = net::SecureHttpClient::get(endpointUrl, qOpts);
+                                    if (pResp.ok()) {
+                                        StaticJsonDocument<128> pFilter;
+                                        pFilter["items"][0]["queue_id"] = true;
+                                        pFilter["items"][0]["status"] = true;
+                                        pFilter["items"][0]["item_id"] = true;
+
+                                        StaticJsonDocument<768> pDoc;
+                                        if (deserializeJson(pDoc, pResp.stream(), DeserializationOption::Filter(pFilter)) == DeserializationError::Ok) {
+                                            JsonArrayConst itemsArr = pDoc["items"].as<JsonArrayConst>();
+                                            bool foundInQueue = false;
+                                            for (JsonObjectConst it : itemsArr) {
+                                                const char* itQid = it["queue_id"] | "";
+                                                if (strcmp(itQid, activeQueueId) == 0) {
+                                                    foundInQueue = true;
+                                                    const char* st = it["status"] | "";
+                                                    const char* iid = it["item_id"] | "";
+                                                    if ((strcmp(st, "ready") == 0 || strcmp(st, "playing") == 0) && iid[0] != '\0') {
+                                                        copySafeCStr(readyItemId, sizeof(readyItemId), iid);
+                                                    } else if (strcmp(st, "error") == 0) {
+                                                        foundInQueue = false;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (!foundInQueue) keepPolling = false;
+                                        }
+                                    }
+                                }
+                                if (!keepPolling) break;
+                            }
+
+                            // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
+                            while (readyItemId[0] != '\0' &&
+                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
+                                   m_playSessionToken.load(std::memory_order_acquire) == job.token) {
+                                uint32_t estStreamMs =
+                                    (wcfg.includeCardIntro ? 8000U : 0U) +
+                                    (wcfg.jacketPanorama ? 5000U : 0U) +
+                                    (wcfg.marqueePanorama ? 5000U : 0U) +
+                                    (static_cast<uint32_t>(wcfg.snapshotPanoramaCount) * 5000U) +
+                                    (wcfg.showVideo ? (static_cast<uint32_t>(wcfg.videoMaxDurationS) * 1000U) : 0U);
+                                if (estStreamMs < 12000U) estStreamMs = 12000U;
+
+                                bool playedOk = streamReadyItemOnce(
+                                    baseServerUrl,
+                                    syncClientId,
+                                    readyItemId,
+                                    job.token,
+                                    targetW,
+                                    targetH,
+                                    estStreamMs
+                                );
+                                if (!playedOk ||
+                                    m_workerStopRequested.load(std::memory_order_acquire) ||
+                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                    break;
+                                }
+
+                                readWorkerCfg(wcfg);
+                                if (strcasecmp(wcfg.cycleMode, "loop") == 0) {
+                                    continue;
+                                } else if (strcasecmp(wcfg.cycleMode, "alternating") == 0) {
+                                    // Yield display back to Pixelcade marquee (TransitionMode::RESUME) for marqueeIntervalSec
+                                    m_wantsInGameDisplay.store(false, std::memory_order_release);
+                                    uint32_t pauseMs = static_cast<uint32_t>(wcfg.marqueeIntervalSec) * 1000U;
+                                    uint32_t pauseT0 = millis();
+                                    while (!m_workerStopRequested.load(std::memory_order_acquire) &&
+                                           m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                                           (millis() - pauseT0) < pauseMs) {
+                                        vTaskDelay(pdMS_TO_TICKS(50));
+                                    }
+                                    continue;
+                                } else {
+                                    // `once`: release display back to marquee and clean up queue item
+                                    break;
+                                }
+                            }
+                            cleanupActiveQueue();
+                            freeStreamBuffersSafely();
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!hasPsram) {
+            InGameJobSlot latestJob;
+            readJobSlot(latestJob);
+            const bool brokerCheckSettled =
+                !(wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker) ||
+                currentShowcaseOnline ||
+                (consecutiveHealthFailures >= 2);
+            if (!latestJob.active &&
+                brokerCheckSettled &&
+                lastCheckedCfgGen == m_cfgGen.load(std::memory_order_acquire) &&
+                !m_workerWakeLatch.exchange(false, std::memory_order_acq_rel)) {
+                break;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(40));
+    }
+
+    cleanupActiveQueue();
+    freeStreamBuffersSafely();
+#endif
 }
 
 void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t reqId) {
@@ -201,7 +1566,8 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     hasReceivedAnyEvent = true;
 
     if (strcmp(status, "stopped") == 0) {
-        LOGI("RetroFrontend", "Received stopped event, keeping last marquee displayed until next event.");
+        LOGI("RetroFrontend", "Received stopped event, releasing any In-Game Showcase and keeping last marquee.");
+        cancelInGameShowcaseSession();
         hasPendingEvent = false;
         return;
     }
@@ -210,6 +1576,11 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     String cleanGame = cleanSystemName(String(gameRaw));
 
     bool isPlaying = (strcmp(status, "playing") == 0);
+    if (!isPlaying) {
+        // Menu navigation ("browsing" or system selection) -> 100% local marquee, cancel any previous in-game Showcase
+        cancelInGameShowcaseSession();
+    }
+
     if (!isPlaying && (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem))) {
         handleSystemEvent(cleanSystem.length() > 0 ? cleanSystem : String(systemRaw), reqId);
         return;
@@ -217,7 +1588,12 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     isGamePlaying = true;
     waitingDisplayed = false;
+    m_activeMarqueePath[0] = '\0';
     if (message) message->deactivate();
+
+    if (isPlaying && gameRaw[0] != '\0') {
+        startInGameShowcaseSession(cleanSystem, String(gameRaw));
+    }
 
     String game = String(gameRaw);
     String folder = mapSystemToPixelcadeFolder(cleanSystem);
@@ -273,6 +1649,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     if (exists && foundArtPath.length() > 0) {
         LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath.c_str());
+        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), foundArtPath.c_str());
         gif->playGif(foundArtPath.c_str());
         if (message) {
             message->deactivate();
@@ -288,7 +1665,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
         message->displayMessage(cfg);
     }
-    
+
     String downloadedPath = "";
     bool downloaded = false;
     for (const String& nameVar : nameVariants) {
@@ -297,7 +1674,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
             break;
         }
         if (reqId != currentRequestId) return;
-        
+
         if (downloadPixelcadeArt(folder, nameVar + ".gif", downloadedPath, reqId)) {
             downloaded = true;
             break;
@@ -309,6 +1686,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     if (downloaded && downloadedPath.length() > 0) {
         LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", downloadedPath.c_str());
+        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), downloadedPath.c_str());
         gif->playGif(downloadedPath.c_str());
         if (message) {
             message->deactivate();
@@ -328,6 +1706,10 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
     waitingDisplayed = false;
     if (message) message->deactivate();
 
+    if (!m_mappingsLoaded) {
+        systemMappings = loadMappingsFromSD();
+        m_mappingsLoaded = true;
+    }
     std::vector<SystemVariant> variants = getSystemNameVariantsMapped(systemMappings, systemId);
 
     String foundArtPath = "";
@@ -364,6 +1746,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
 
     if (exists && foundArtPath.length() > 0) {
         LOGI("RetroFrontend", "Playing cached Pixelcade system art: %s", foundArtPath.c_str());
+        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), foundArtPath.c_str());
         gif->playGif(foundArtPath.c_str());
         if (message) {
             message->deactivate();
@@ -401,6 +1784,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
 
     if (downloaded && downloadedPath.length() > 0) {
         LOGI("RetroFrontend", "Playing downloaded Pixelcade system art: %s", downloadedPath.c_str());
+        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), downloadedPath.c_str());
         gif->playGif(downloadedPath.c_str());
         if (message) {
             message->deactivate();

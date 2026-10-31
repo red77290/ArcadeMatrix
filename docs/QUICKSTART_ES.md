@@ -3,27 +3,32 @@
 [English](QUICKSTART.md) | 🇫🇷 [Français](QUICKSTART_FR.md) | 🇪🇸 Español
 
 ## 1. Requisitos Previos
-- [VSCode](https://code.visualstudio.com/) + [Extensión PlatformIO IDE](https://platformio.org/).
-- Tarjeta microSD formateada en FAT32 (1 GB a 32 GB).
-- Cable USB conectado a su placa ESP32.
+- Tarjeta microSD formateada en **FAT32** o **exFAT**.
+- Cable USB conectado a su placa ESP32 / ESP32-S3.
+- Chrome / Edge / Opera para el **[Web Installer en un clic](https://red77290.github.io/ArcadeMatrix/)**, o bien [VSCode](https://code.visualstudio.com/) + [Extensión PlatformIO IDE](https://platformio.org/) para compilar desde el código fuente.
 
 ---
 
 ## 2. Preparación de la Tarjeta SD
-1. Formatee la tarjeta microSD en **FAT32**.
+1. Formatee la tarjeta microSD en **FAT32** o **exFAT**.
 2. Copie el contenido de la carpeta `release/sdCard/` en la raíz de la tarjeta microSD.
 3. Inserte la tarjeta en la ranura de su placa.
 
 ---
 
-## 3. Compilación y Grabación del Firmware
+## 3. Flasheo o Compilación del Firmware
 
-### Para ESP32 Estándar (`esp32dev`):
+### Opción A: Flasheo en un clic desde el navegador (El más rápido — Sin software adicional)
+Abra **[https://red77290.github.io/ArcadeMatrix/](https://red77290.github.io/ArcadeMatrix/)** en Chrome, Edge u Opera, seleccione su placa (**ESP32 Estándar** o **ESP32-S3 Waveshare**) y haga clic en **Install**.
+
+### Opción B: Compilación y Grabación desde el código fuente (PlatformIO)
+
+#### Para ESP32 Estándar (`esp32dev`):
 ```bash
 pio run -e esp32dev -t upload
 ```
 
-### Para Waveshare ESP32-S3 (`esp32s3_waveshare`):
+#### Para Waveshare ESP32-S3 (`esp32s3_waveshare`):
 ```bash
 pio run -e esp32s3_waveshare -t upload
 ```
@@ -36,3 +41,12 @@ pio run -e esp32s3_waveshare -t upload
    - **Contraseña**: `matrix123`
 2. Abra su navegador en `http://192.168.4.1` (o `http://ArcadeMatrix.local` una vez conectado a su red local).
 3. ¡Configure sus motores, temas y rotación!
+
+---
+
+## 5. Opcional: Conectar Recalbox / Batocera / RetroPie y Showcase en Juego
+1. **Instalar el script en la consola (una sola vez)**: Ejecute `tools/recalbox_daemon/install.sh` (macOS/Linux) o `tools/recalbox_daemon/install.ps1` (Windows) indicando **únicamente la IP de su ArcadeMatrix** (la consola consulta dinámicamente al DMD qué broker MQTT usar, sin necesidad de reinstalar nunca).
+2. **Activar Marquesinas**: En la WebUI, abra **Sistema → MQTT & API → 🎮 FrontendSync** y active **MQTT**. Al navegar por los menús de la consola se mostrarán las marquesinas Pixelcade al instante (`0 ms`).
+3. **Añadir Fichas y Vídeos de Gameplay en Juego** (con **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** en su red local):
+   - En **🎬 DMD Media Showcase**, active el servidor Showcase (`🟢 Comunicación OK`).
+   - En **🎮 FrontendSync**, active **Usar Broker MQTT de Showcase si está activo** (libera RAM del ESP32 automáticamente) y **Showcase en Juego (Tarjeta + Vídeo Gameplay)**, elija su **Ciclo** (`Una vez`, `Alternar Marquesina y Showcase` o `Bucle`) y el **Estilo de Tarjeta** (`Heredar de Showcase Studio` o `Personalizado en el DMD`), y guarde los ajustes.

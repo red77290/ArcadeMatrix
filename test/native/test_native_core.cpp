@@ -4,7 +4,14 @@
 #include "core/EngineRegistry.h"
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
+#include "core/I18n.h"
+#include "core/drawing/Hub75BulkEncoder.h"
 #include "core/drawing/Hub75DmaLayout.h"
+#include "core/drawing/DmdzStreamDecoder.h"
+#include "core/net/DmdzStreamClient.h"
+#include "core/net/ShowcaseDiscovery.h"
+#include "engines/showcase/ShowcaseStreamPlayer.h"
+#include "engines/WebUiSyncEngine.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 #include "engines/mqttdata/GraphPayload.h"
@@ -1991,6 +1998,1307 @@ void test_transition_prefetch_contract(void) {
     TEST_ASSERT_FALSE(freshNeedsTeardown);
 }
 
+void test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission() {
+    // 1. Hardware-scoped unique client/topic IDs (zero collision across same-geometry boards)
+    char gamesId[48] = "";
+    char syncId[48] = "";
+    net::ShowcaseDiscovery::formatClientId("games", 128, 32, false, gamesId, sizeof(gamesId));
+    net::ShowcaseDiscovery::formatClientId("games", 128, 32, true, syncId, sizeof(syncId));
+    TEST_ASSERT_EQUAL_STRING("esp32_ut0001_games_128x32", gamesId);
+    TEST_ASSERT_EQUAL_STRING("esp32_ut0001_games_128x32_sync", syncId);
+
+    // 2. Endpoint parsing & `.local` auto-discovery host classification
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("dmdmediashowcase.local"));
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("auto"));
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::isAutoDiscoverableHost("192.168.1.22"));
+
+    char scheme[12] = "";
+    char host[64] = "";
+    uint16_t port = 0;
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::parseEndpoint(
+        "http://dmdmediashowcase.local:8890/api/v1", 8890, scheme, sizeof(scheme), host, sizeof(host), port
+    ));
+    TEST_ASSERT_EQUAL_STRING("http", scheme);
+    TEST_ASSERT_EQUAL_STRING("dmdmediashowcase.local", host);
+    TEST_ASSERT_EQUAL_UINT16(8890, port);
+
+    // 3. Showcase zero-TLS memory budget (`internalPersistentBytes = 16000`, `internalContiguousBytes = 8192`)
+    //    must keep static ReferenceCapability 100% Compatible AND preserve full 8-bit HUB75 DMA
+    //    on non-PSRAM `esp32dev` (`128x32`) at BOTH cold boot and rotation, as well as on PSRAM `esp32s3_waveshare`!
+    EngineDescriptor showcaseDesc;
+    showcaseDesc.metadata = {"retro_games", "Retro Games Showcase", "arcade", FIRMWARE_VERSION};
+    showcaseDesc.requirements.needsPsram = false;
+    showcaseDesc.requirements.needsNetwork = true;
+    showcaseDesc.requirements.needsTls = false;
+    showcaseDesc.requirements.targetFps = 60;
+    showcaseDesc.requirements.prefersDoubleBuffer = true;
+    showcaseDesc.requirements.supportsSingleBuffer = true;
+    showcaseDesc.requirements.internalPersistentBytes = 16000;
+    showcaseDesc.requirements.internalContiguousBytes = 8192;
+
+    CompatibilityContext refCtx;
+    refCtx.mode = EvaluationMode::ReferenceCapability;
+    refCtx.hardware.profile = HwProfile::ESP32_STD;
+    refCtx.hardware.hasPsram = false;
+    refCtx.hardware.hasNetwork = true;
+    refCtx.isConnectedWifi = true;
+    ReferenceMemoryProfile refMem = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    refCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    refCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+    refCtx.memory.freePsram = refMem.freePsram;
+    refCtx.width = 128;
+    refCtx.height = 32;
+    refCtx.colorDepth = 0;
+    refCtx.requestedPipeline = "auto";
+    CompatibilityVerdict verdict = CompatibilityEvaluator::evaluate(showcaseDesc, refCtx);
+    TEST_ASSERT_TRUE(verdict.compatible());
+
+    // Cold boot / 8-bit rotation into `retro_games` (`panelReleased == false`, `currentDepth = 8`, `freeHeap = 29708`)
+    uint8_t coldBootDepth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseDesc.requirements,
+        8, 24564, 29708, 24000, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, coldBootDepth);
+    bool coldBootNeedsTeardown = (coldBootDepth != 8) || (showcaseDesc.requirements.needsTls && !false);
+    TEST_ASSERT_FALSE(coldBootNeedsTeardown);
+
+    // Post-TLS 4-bit -> 8-bit recovery with DMA panel released (`panelReleased == true`,
+    // `freeHeap = 62500` since Showcase `m_frame565` + `m_poster565` defer allocation to `activate()`)
+    uint8_t rotatedDepth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseDesc.requirements,
+        0, 24564, 62500, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, rotatedDepth);
+
+    // ESP32-S3 with PSRAM (`hasPsram == true`) keeps full 8-bit Double DMA
+    uint8_t s3Depth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, true, showcaseDesc.requirements,
+        8, 110000, 220000, 80000, true, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, s3Depth);
+}
+
+void test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling(void) {
+    // 1. DisplayArbiter: WEBUI_SYNC (110) outranks ALERT (100) & ROTATION (10), then expires back to ROTATION
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::WEBUI_SYNC, (int)DisplayArbiter::parseSourceId("WEBUI_SYNC"));
+    TEST_ASSERT_TRUE(static_cast<uint8_t>(DisplayPriority::WEBUI_SYNC) > static_cast<uint8_t>(DisplayPriority::ALERT));
+
+    DisplayArbiter arbiter;
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false,
+        0, EngineHandle("retro_games", "retro_main"), 0, millis(), true, false, true
+    ));
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::UNTIL_CANCELLED, true,
+        0, EngineHandle("message", "alert_main"), 0, millis(), false, true, false
+    ));
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::WEBUI_SYNC, DisplayPriority::WEBUI_SYNC, RequestLifecycle::TIMED, false,
+        0, EngineHandle("webui_sync", "webui_sync_main"), 4500, millis(), false, true, false
+    ), /*restartTimer=*/true);
+
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::WEBUI_SYNC, (int)d1.sourceId);
+    TEST_ASSERT_EQUAL_STRING("webui_sync", d1.engineHandle.descriptorId);
+    TEST_ASSERT_FALSE(d1.allowsOverlay);
+
+    // Advance past 4500ms TIMED window and cancel ALERT -> control returns cleanly to ROTATION
+    arbiter.cancelRequest(DisplaySourceId::ALERT);
+    advanceVirtualMillis(4600);
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL_INT((int)DisplaySourceId::ROTATION, (int)d2.sourceId);
+    TEST_ASSERT_EQUAL_STRING("retro_games", d2.engineHandle.descriptorId);
+
+    // 2. Centralized I18n DMD WebUI loading labels across all 3 languages (FR, EN, ES)
+    TEST_ASSERT_EQUAL_STRING("CHARGEMENT", I18n::getWebUiLoadingTitleLabel(Lang::FR));
+    TEST_ASSERT_EQUAL_STRING("INTERFACE WEB...", I18n::getWebUiLoadingSubLabel(Lang::FR));
+    TEST_ASSERT_EQUAL_STRING("LOADING", I18n::getWebUiLoadingTitleLabel(Lang::EN));
+    TEST_ASSERT_EQUAL_STRING("WEB INTERFACE...", I18n::getWebUiLoadingSubLabel(Lang::EN));
+    TEST_ASSERT_EQUAL_STRING("CARGANDO", I18n::getWebUiLoadingTitleLabel(Lang::ES));
+    TEST_ASSERT_EQUAL_STRING("INTERFAZ WEB...", I18n::getWebUiLoadingSubLabel(Lang::ES));
+
+    // 3. Automatic migration of legacy `mqtt_udp` Showcase transport config to `mqtt_tcp`
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("mqtt_udp").c_str());
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("mqtt_tcp").c_str());
+    TEST_ASSERT_EQUAL_STRING("mqtt_tcp", normalizeShowcaseTransportMode("").c_str());
+    TEST_ASSERT_EQUAL_STRING("http_poll", normalizeShowcaseTransportMode("http_poll").c_str());
+
+    // 4. Dynamic Showcase bit-depth scaling (`scalesRgb565FrameWithGeometry = true`)
+    EngineRequirements showcaseReq;
+    showcaseReq.needsPsram = false;
+    showcaseReq.needsNetwork = true;
+    showcaseReq.needsTls = false;
+    showcaseReq.internalPersistentBytes = 16000;
+    showcaseReq.internalContiguousBytes = 8192;
+    showcaseReq.scalesRgb565FrameWithGeometry = true;
+
+    // 4a. 128x32 on esp32dev with normal heap -> 8-bit color depth
+    uint8_t normal128x32 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        0, 30000, 62500, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, normal128x32);
+
+    // 4b. 128x32 on esp32dev when instantaneous free SRAM drops -> automatic fallback to 4-bit
+    uint8_t pressured128x32 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        0, 30000, 50000, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, pressured128x32);
+
+    // 4c. 128x64 on esp32dev -> geometry-scaled frame (16 KB) + poster (6 KB) -> automatic 4-bit DMA
+    EngineRequirements scaled128x64 = showcaseReq.scaledForGeometry(128, 64, false);
+    TEST_ASSERT_EQUAL_UINT32(28288U, scaled128x64.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(16384U, scaled128x64.internalContiguousBytes);
+    uint8_t geom128x64 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 64, false, showcaseReq,
+        0, 30000, 82000, 82000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, geom128x64);
+
+    // 4d. 256x64 on PSRAM board (esp32s3_waveshare) -> zero internal SRAM penalty, full 8-bit DMA
+    EngineRequirements scaledPsram = showcaseReq.scaledForGeometry(256, 64, true);
+    TEST_ASSERT_EQUAL_UINT32(16000U, scaledPsram.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(8192U, scaledPsram.internalContiguousBytes);
+    uint8_t psram256x64 = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 256, 64, true, showcaseReq,
+        8, 110000, 220000, 80000, true, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, psram256x64);
+
+    // 4e. Stage 1 recovery from 2-bit WEBUI_SYNC (`cur=2 -> target=8`) on real esp32dev heap metrics
+    //     (`free=54924, largestBlock=34804`): TLSF fragment absorption avoids the 12-byte false downgrade to 4-bit.
+    uint8_t recoverFrom2Bit = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        2, 34804, 54924, 46040, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, recoverFrom2Bit);
+
+    // 4f. Stage 1 recovery from 4-bit TLS/pressured slot (`cur=4 -> target=8`) on esp32dev
+    uint8_t recoverFrom4Bit = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseReq,
+        4, 24564, 46500, 46500, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, recoverFrom4Bit);
+
+    // 4g. Base IEngine contract defaults `evictOnInactiveLowMemory()` to false so TLS caches persist
+    struct DummyCachedEngine : public IEngine {
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override {}
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {}
+    } dummyCached;
+    TEST_ASSERT_FALSE(dummyCached.evictOnInactiveLowMemory());
+}
+
+#include "core/NetworkBudget.h"
+
+void test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease(void) {
+    // 1. Exclusive DMD single-activity state machine (`Idle`, `Mqtt`, `Stream`, `WebUiSync`)
+    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::getDmdNetActivity());
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    {
+        NetworkBudget::ScopedDmdNetActivity mqttTurn(NetworkBudget::DmdNetActivity::Mqtt);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Mqtt),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+    }
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    {
+        NetworkBudget::ScopedDmdNetActivity streamTurn(NetworkBudget::DmdNetActivity::Stream);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Stream),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+        // Priority WebUI load (`WebUiSync`) preempts active worker state and cannot be overwritten
+        NetworkBudget::setDmdNetActivity(NetworkBudget::DmdNetActivity::WebUiSync);
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+            static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+        );
+        {
+            NetworkBudget::ScopedDmdNetActivity blockedMqtt(NetworkBudget::DmdNetActivity::Mqtt);
+            TEST_ASSERT_EQUAL_UINT8(
+                static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+                static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+            );
+        }
+    }
+    // `streamTurn` destructor must NOT clear `WebUiSync` while WebUI is still active
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::WebUiSync),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+    NetworkBudget::clearDmdNetActivityIf(NetworkBudget::DmdNetActivity::WebUiSync);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+
+    // 2. Non-blocking `peekCachedUrlStatus` & continuous `touchVerifiedHost` lease renewal past 90s
+    net::ShowcaseDiscovery::resetCacheForTests();
+    char resolvedUrl[112] = "";
+    char resolvedHost[64] = "";
+    char ver[24] = "";
+    uint16_t port = 0;
+    bool online = true;
+
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_FALSE(online);
+    TEST_ASSERT_EQUAL_STRING("http://dmdmediashowcase.local:8890", resolvedUrl);
+
+    // Simulate active MQTT/Stream turn verifying Docker host `192.168.1.22:8890`
+    net::ShowcaseDiscovery::touchVerifiedHost("192.168.1.22", 8890);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.22", resolvedHost);
+    TEST_ASSERT_EQUAL_STRING("http://192.168.1.22:8890", resolvedUrl);
+
+    // Advance 100s (past old 90s TTL where `ESPmDNS` previously froze `async_tcp`) and renew lease
+    advanceVirtualMillis(100000);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+
+    net::ShowcaseDiscovery::touchVerifiedHost("192.168.1.22", 8890);
+    advanceVirtualMillis(120000); // t = 220s total, 120s since renewal -> still online with 0 sockets!
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_TRUE(online);
+
+    // Without renewal for > 180s, cache expires cleanly without blocking
+    advanceVirtualMillis(70000);
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::peekCachedUrlStatus(
+        "http://dmdmediashowcase.local:8890",
+        resolvedUrl, sizeof(resolvedUrl),
+        resolvedHost, sizeof(resolvedHost),
+        port, online, ver, sizeof(ver)
+    ));
+    TEST_ASSERT_FALSE(online);
+}
+
+void test_cie_depth_lut_monotonic_and_8bit_identity(void) {
+    // CIE 1931 8-bit reference formula (`lumConvTab_8bit` in ESP32-HUB75-MatrixPanel-I2S-DMA)
+    uint8_t cie8[256];
+    for (int i = 0; i < 256; ++i) {
+        const double l = (static_cast<double>(i) * 100.0) / 255.0;
+        const double y = (l <= 8.0) ? (l / 902.3) : pow((l + 16.0) / 116.0, 3.0);
+        int v = static_cast<int>(round(y * 255.0));
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        cie8[i] = static_cast<uint8_t>(v);
+    }
+
+    auto buildCieDepthLut = [&](uint8_t depth, uint8_t srcBits, uint8_t* outLut) {
+        const uint8_t shift = static_cast<uint8_t>(8U - depth);
+        const uint8_t roundBias = (shift > 0U) ? static_cast<uint8_t>(1U << (shift - 1U)) : 0U;
+        const uint16_t maxVal = static_cast<uint16_t>((1U << depth) - 1U);
+        const int count = 1 << srcBits;
+        for (int v = 0; v < count; ++v) {
+            const uint8_t c8 = (srcBits == 6U)
+                ? static_cast<uint8_t>((v << 2) | (v >> 4))
+                : static_cast<uint8_t>((v << 3) | (v >> 2));
+            const uint16_t scaled = static_cast<uint16_t>((cie8[c8] + roundBias) >> shift);
+            outLut[v] = (scaled > maxVal) ? static_cast<uint8_t>(maxVal) : static_cast<uint8_t>(scaled);
+        }
+    };
+
+    const uint8_t depths[] = {2, 4, 6, 7, 8};
+    for (size_t di = 0; di < sizeof(depths); ++di) {
+        const uint8_t d = depths[di];
+        uint8_t lutR[32];
+        uint8_t lutG[64];
+        buildCieDepthLut(d, 5, lutR);
+        buildCieDepthLut(d, 6, lutG);
+        const uint8_t maxCode = static_cast<uint8_t>((1U << d) - 1U);
+        TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(maxCode, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxCode, lutG[63]);
+        for (int v = 1; v < 32; ++v) {
+            TEST_ASSERT_TRUE(lutR[v] >= lutR[v - 1]);
+        }
+        for (int v = 1; v < 64; ++v) {
+            TEST_ASSERT_TRUE(lutG[v] >= lutG[v - 1]);
+        }
+        if (d == 8) {
+            // At 8-bit depth, LUT values match exact native `lumConvTab_8bit` (zero quantization or shift)
+            for (int v = 0; v < 32; ++v) {
+                const uint8_t r8 = static_cast<uint8_t>((v << 3) | (v >> 2));
+                TEST_ASSERT_EQUAL_UINT8(cie8[r8], lutR[v]);
+            }
+            for (int v = 0; v < 64; ++v) {
+                const uint8_t g8 = static_cast<uint8_t>((v << 2) | (v >> 4));
+                TEST_ASSERT_EQUAL_UINT8(cie8[g8], lutG[v]);
+            }
+        }
+    }
+}
+
+void test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds(void) {
+    using core::drawing::DmdzStreamDecoder;
+    using core::drawing::DmdzStreamHeader;
+
+    // Legacy v1 `DMDZ` headers (`version < 2`) are strictly rejected in lossless v2-only codec
+    const uint8_t legacyV1HdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 1, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
+    };
+    DmdzStreamHeader hdr;
+    TEST_ASSERT_FALSE(DmdzStreamDecoder::parseHeader(legacyV1HdrRaw, hdr));
+
+    const uint8_t dmdzHdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 2, 20,
+        16, 0,   // width = 16
+        6, 0,    // height = 6 (96 pixels -> exercises LONG SKIP > 64!)
+        4, 0,    // totalFrames = 4
+        50, 0,   // frameDurMs = 50
+        0, 0
+    };
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(dmdzHdrRaw, hdr));
+    TEST_ASSERT_TRUE(hdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT8(2, hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(20, hdr.fps);
+    TEST_ASSERT_EQUAL_UINT16(16, hdr.width);
+    TEST_ASSERT_EQUAL_UINT16(6, hdr.height);
+    TEST_ASSERT_EQUAL_UINT16(4, hdr.totalFrames);
+
+    const uint8_t dmdsHdrRaw[16] = {
+        'D', 'M', 'D', 'S', 1, 15, 128, 0, 32, 0, 10, 0, 67, 0, 0, 0
+    };
+    DmdzStreamHeader rawHdr;
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(dmdsHdrRaw, rawHdr));
+    TEST_ASSERT_FALSE(rawHdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT16(128, rawHdr.width);
+
+    const uint8_t v2HdrRaw[16] = {
+        'D', 'M', 'D', 'Z', 2, 25, 128, 0, 32, 0, 120, 0, 40, 0, 0, 0
+    };
+    DmdzStreamHeader v2Hdr;
+    TEST_ASSERT_TRUE(DmdzStreamDecoder::parseHeader(v2HdrRaw, v2Hdr));
+    TEST_ASSERT_TRUE(v2Hdr.isDmdz);
+    TEST_ASSERT_EQUAL_UINT8(2, v2Hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(25, v2Hdr.fps);
+
+    const uint8_t badVerRaw[16] = {
+        'D', 'M', 'D', 'Z', 3, 20, 16, 0, 6, 0, 4, 0, 50, 0, 0, 0
+    };
+    TEST_ASSERT_FALSE(DmdzStreamDecoder::parseHeader(badVerRaw, hdr));
+
+    uint16_t fb[16 * 6];
+    memset(fb, 0xAA, sizeof(fb));
+    DmdzStreamDecoder dec;
+    dec.init(16, 6);
+
+    auto feedIn3ByteChunks = [&](const uint8_t* payload, size_t n) -> bool {
+        if (!dec.beginFrame(static_cast<uint16_t>(n))) return false;
+        size_t off = 0;
+        while (off < n) {
+            size_t take = (n - off > 3U) ? 3U : (n - off);
+            if (!dec.feed(payload + off, take, fb)) return false;
+            off += take;
+        }
+        return dec.finishFrame();
+    };
+
+    // Frame 0 (Keyframe = 2):
+    // - Row 0 (16 px): LIT(1) 0xF800 + RUN(15) -> 16 x 0xF800
+    // - Row 1 (16 px): DIFF(dr=-1,dg=+1,db=+1 -> x = 0*9 + 2*3 + 2 = 8 -> 0xC8 => r=30,g=1,b=1 = 0xF021) + RUN(15)
+    // - Row 2 (16 px): INDEX(hashPixel(0xF800)) + RUN(15) -> 16 x 0xF800
+    // - Rows 3..5 (48 px): LIT(2) {0x07E0, 0x001F} + RUN(46) -> 0x07E0, 47 x 0x001F
+    const uint8_t redHash = DmdzStreamDecoder::hashPixel(0xF800);
+    const uint8_t f0[] = {
+        DmdzStreamDecoder::kFrameKey,
+        0xE0, 0x00, 0xF8,             // LIT 1: 0xF800
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        static_cast<uint8_t>(0xC0 | 8),  // DIFF (-1,+1,+1) -> 0xF021
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        static_cast<uint8_t>(0x80 | redHash), // INDEX -> 0xF800
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        0xE1, 0xE0, 0x07, 0x1F, 0x00, // LIT 2: 0x07E0, 0x001F
+        static_cast<uint8_t>(0x40 | 45)  // RUN 46
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f0, sizeof(f0)));
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[0]);
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[15]);
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[16]);
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[32]);
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, fb[48]);
+    TEST_ASSERT_EQUAL_UINT16(0x001F, fb[49]);
+    TEST_ASSERT_EQUAL_UINT16(0x001F, fb[95]);
+
+    // Frame 1 (Scroll up dy=+1): rows 0..4 shift up from old rows 1..5 (80 px unchanged via LONG SKIP),
+    // new bottom row 5 (16 px) filled with 0xFFFF.
+    const uint8_t f1[] = {
+        DmdzStreamDecoder::kFrameScroll,
+        1,                               // dy = +1
+        0xF0, 80, 0,                     // LONG SKIP 80
+        0xE0, 0xFF, 0xFF,                // LIT 1: 0xFFFF
+        static_cast<uint8_t>(0x40 | 14)  // RUN 15
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f1, sizeof(f1)));
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[0]);   // old row 1 is now row 0
+    TEST_ASSERT_EQUAL_UINT16(0xF800, fb[16]);  // old row 2 is now row 1
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, fb[32]);  // old row 3 is now row 2
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, fb[80]);  // new row 5
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, fb[95]);
+
+    // Frame 2 (Scroll down dy=-1): row 0 gets 0x1234 (16 px), rows 1..5 keep shifted rows 0..4 (LONG SKIP 80)
+    const uint8_t f2[] = {
+        DmdzStreamDecoder::kFrameScroll,
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        0xE0, 0x34, 0x12,                // LIT 1: 0x1234
+        static_cast<uint8_t>(0x40 | 14), // RUN 15
+        0xF0, 80, 0                      // LONG SKIP 80
+    };
+    TEST_ASSERT_TRUE(feedIn3ByteChunks(f2, sizeof(f2)));
+    TEST_ASSERT_EQUAL_UINT16(0x1234, fb[0]);
+    TEST_ASSERT_EQUAL_UINT16(0xF021, fb[16]);
+
+    // Frame 3 (Delta with overflow skip -> must reject cleanly without OOB write)
+    const uint8_t badOverflow[] = {
+        DmdzStreamDecoder::kFrameDelta,
+        0xF0, 97, 0 // 97 > 96 pixels!
+    };
+    TEST_ASSERT_FALSE(feedIn3ByteChunks(badOverflow, sizeof(badOverflow)));
+    TEST_ASSERT_TRUE(dec.hasError());
+}
+
+void test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis(void) {
+    EngineRequirements showcaseReqs;
+    showcaseReqs.needsNetwork = true;
+    showcaseReqs.needsTls = false;
+    showcaseReqs.preferredColorDepth = 8;
+    showcaseReqs.internalPersistentBytes = 14000;
+    showcaseReqs.internalContiguousBytes = 8192;
+    showcaseReqs.scalesRgb565FrameWithGeometry = true;
+
+    // 1. Even if user manually set matrix.colorDepth = 4 (with dynamicColorDepth = false),
+    //    Showcase `preferredColorDepth = 8` elevates the target depth to lossless 8-bit on esp32dev!
+    uint8_t bootEval = PipelineSelectionPolicy::evaluate(
+        128, 32,
+        /*colorDepth=*/4,
+        "auto",
+        /*hasPsram=*/false,
+        MemoryBudgetConstraints(/*freeInt=*/72000, /*largest=*/52000, /*freeDma=*/72000),
+        showcaseReqs,
+        /*hasPreallocatedCanvas=*/true
+    ).effectiveColorDepth;
+    TEST_ASSERT_EQUAL_UINT8(8, bootEval);
+
+    // 2. Stage-1 rotation between two Showcase slots at 8-bit (`!panelReleased && currentDepth == 8`):
+    //    even with real-world `esp32dev` post-construction metrics (`freeInternal = 19564`, `largestBlock = 13300`
+    //    after `sizeof(Engine)` + 8-bit DMA + descriptors are already deducted), `resolveTargetDepth` keeps
+    //    `8`-bit in place (zero destructive `8 -> 8` panel teardown and zero fragmentation)!
+    uint8_t rotKeep = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/4,
+        /*dynamicColorDepth=*/false,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/8,
+        /*currentLargestBlock=*/13300,
+        /*currentFreeInternalHeap=*/19564,
+        /*currentFreeDma=*/19564,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, rotKeep);
+
+    // 2b. Even under tighter post-rotation heap (`freeInternal = 21372` B, `largestBlock = 9716` B —
+    //     exact telemetry from `esp32dev` Showcase rotation with Step-C-only `m_frame565` allocation),
+    //     `resolveTargetDepth` keeps `8`-bit in place without tearing down HUB75 DMA!
+    uint8_t rotTightKeep = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/4,
+        /*dynamicColorDepth=*/false,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/8,
+        /*currentLargestBlock=*/9716,
+        /*currentFreeInternalHeap=*/21372,
+        /*currentFreeDma=*/21372,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, rotTightKeep);
+
+    // 3. Stage-2 emptied zone (`panelReleased = true`, `freeInternal = 67848` B): resolves to 8-bit!
+    uint8_t stage2Up = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/8,
+        /*dynamicColorDepth=*/true,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/4,
+        /*currentLargestBlock=*/31732,
+        /*currentFreeInternalHeap=*/67848,
+        /*currentFreeDma=*/67848,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, stage2Up);
+
+    // 4. Graceful step-down `{8, 7, 6, 4, 2}`: if extra services consume ~7 KB so emptied zone is 51 KB
+    //    (cannot fit 8-bit's 58 KB threshold, CAN fit 6-bit = 24,576 + 25,264 = 49,840 B), steps to 6-bit
+    //    instead of cliff-dropping straight to 4-bit!
+    uint8_t stage2Graceful = PipelineSelectionPolicy::resolveTargetDepth(
+        /*configuredDepth=*/8,
+        /*dynamicColorDepth=*/true,
+        128, 32,
+        /*hasPsram=*/false,
+        showcaseReqs,
+        /*currentDepth=*/4,
+        /*currentLargestBlock=*/31732,
+        /*currentFreeInternalHeap=*/51000,
+        /*currentFreeDma=*/51000,
+        /*isDoubleBuffer=*/false,
+        /*hasCanvas=*/true,
+        /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(6, stage2Graceful);
+}
+
+void test_dmdz_http_stream_and_delete_path_builders_and_content_length(void) {
+    // 1. `formatDmdzHttpStreamPath`: `purge=false` (SD download / PSRAM preload / FrontendSync) & `purge=true`,
+    //    `codec=dmdz2`, `client_id`, `api_key` preservation, full `http://` URL stripping, and invalid route rejection
+    char httpPath[320] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "http://192.168.1.40:8890/api/v1/games/stream/ss_1942.rgb565.stream?purge=true&api_key=sec_token_1",
+        "esp32_games_128x32",
+        false,
+        httpPath,
+        sizeof(httpPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/ss_1942.rgb565.stream?purge=false&codec=dmdz2&client_id=esp32_games_128x32&api_key=sec_token_1",
+        httpPath
+    );
+
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream",
+        "esp32s3_movies",
+        true,
+        httpPath,
+        sizeof(httpPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/movies/stream/tmdb_603_c1.rgb565.stream?purge=true&codec=dmdz2&client_id=esp32s3_movies",
+        httpPath
+    );
+
+    TEST_ASSERT_TRUE(net::formatDmdzHttpStreamPath(
+        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream?api_key=tok99",
+        "",
+        false,
+        httpPath,
+        sizeof(httpPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/anime/stream/pkg_anime_akira.rgb565.stream?purge=false&codec=dmdz2&api_key=tok99",
+        httpPath
+    );
+
+    TEST_ASSERT_FALSE(net::formatDmdzHttpStreamPath("/api/v1/games/next", "c1", false, httpPath, sizeof(httpPath)));
+    TEST_ASSERT_FALSE(net::formatDmdzHttpStreamPath(nullptr, "c1", false, httpPath, sizeof(httpPath)));
+
+    // 2. `formatDmdzHttpDeletePath`: preserves `api_key`, appends `client_id`, strips scheme+host
+    char delPath[320] = "";
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "http://192.168.1.40:8890/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?purge=false&api_key=tok99",
+        "esp32_dev_series",
+        delPath,
+        sizeof(delPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/series/stream/pkg_series_xfiles.rgb565.stream?client_id=esp32_dev_series&api_key=tok99",
+        delPath
+    );
+    TEST_ASSERT_TRUE(net::formatDmdzHttpDeletePath(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream",
+        "",
+        delPath,
+        sizeof(delPath)
+    ));
+    TEST_ASSERT_EQUAL_STRING(
+        "/api/v1/games/stream/pkg_games_42.rgb565.stream",
+        delPath
+    );
+    TEST_ASSERT_FALSE(net::formatDmdzHttpDeletePath("/api/v1/games/next", "c1", delPath, sizeof(delPath)));
+
+    // 3. `parseContentLengthHeader` case-insensitivity & strict digit validation
+    size_t contentLen = 0U;
+    TEST_ASSERT_TRUE(net::parseContentLengthHeader(
+        "HTTP/1.1 200 OK\r\nServer: uvicorn\r\ncontent-length:   245776  \r\nContent-Type: application/octet-stream\r\n\r\n",
+        contentLen
+    ));
+    TEST_ASSERT_EQUAL_UINT32(245776U, static_cast<uint32_t>(contentLen));
+    TEST_ASSERT_FALSE(net::parseContentLengthHeader("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", contentLen));
+    TEST_ASSERT_FALSE(net::parseContentLengthHeader("HTTP/1.1 200 OK\r\nContent-Length: abc\r\n\r\n", contentLen));
+
+    // 4. `DmdzHttpStreamSession` zero-heap scratch footprint invariant (`<= 1,472 B`)
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        static_cast<uint32_t>(engines::showcase::ShowcaseStreamPlayer::MIN_SESSION_SCRATCH_BYTES),
+        static_cast<uint32_t>(sizeof(net::DmdzHttpStreamSession))
+    );
+}
+
+void test_dmdz_stream_client_endpoint_and_chunked_helpers(void) {
+    // 1. `net::parseEndpointHostAndPort`
+    char host[64] = "";
+    uint16_t port = 0U;
+    bool isHttps = false;
+    TEST_ASSERT_TRUE(net::parseEndpointHostAndPort(
+        "http://192.168.1.40:8890/api/v1/health",
+        80U,
+        host,
+        sizeof(host),
+        port,
+        &isHttps
+    ));
+    TEST_ASSERT_EQUAL_STRING("192.168.1.40", host);
+    TEST_ASSERT_EQUAL_UINT16(8890U, port);
+    TEST_ASSERT_FALSE(isHttps);
+
+    TEST_ASSERT_TRUE(net::parseEndpointHostAndPort(
+        "https://showcase.example.org/stream",
+        443U,
+        host,
+        sizeof(host),
+        port,
+        &isHttps
+    ));
+    TEST_ASSERT_EQUAL_STRING("showcase.example.org", host);
+    TEST_ASSERT_EQUAL_UINT16(443U, port);
+    TEST_ASSERT_TRUE(isHttps);
+
+    // 2. `net::hasChunkedTransferEncoding`
+    TEST_ASSERT_TRUE(net::hasChunkedTransferEncoding(
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: gzip, Chunked\r\nContent-Type: application/octet-stream"
+    ));
+    TEST_ASSERT_FALSE(net::hasChunkedTransferEncoding(
+        "HTTP/1.1 200 OK\r\nContent-Length: 8208\r\nContent-Type: application/octet-stream"
+    ));
+
+    // 3. `net::HttpChunkedDecoder` across extensions & tiny slices
+    const char* rawChunked =
+        "5;ext=abc\r\nHello\r\n"
+        "7\r\n, DMDZ!\r\n"
+        "0\r\n\r\n";
+    net::HttpChunkedDecoder chunkDec;
+    char outStr[32] = {0};
+    size_t outPos = 0U;
+    size_t srcPos = 0U;
+    const size_t rawLen = strlen(rawChunked);
+    while (srcPos < rawLen && !chunkDec.isDone()) {
+        size_t consumed = 0U;
+        size_t step = std::min<size_t>(3U, rawLen - srcPos);
+        size_t prod = chunkDec.decode(
+            reinterpret_cast<const uint8_t*>(rawChunked + srcPos),
+            step,
+            consumed,
+            reinterpret_cast<uint8_t*>(outStr + outPos),
+            2U
+        );
+        TEST_ASSERT_FALSE(chunkDec.hasError());
+        srcPos += consumed;
+        outPos += prod;
+    }
+    TEST_ASSERT_TRUE(chunkDec.isDone());
+    TEST_ASSERT_EQUAL_UINT32(12U, static_cast<uint32_t>(outPos));
+    TEST_ASSERT_EQUAL_STRING("Hello, DMDZ!", outStr);
+
+    chunkDec.reset();
+    size_t badConsumed = 0U;
+    uint8_t dummy[8];
+    chunkDec.decode(reinterpret_cast<const uint8_t*>("ZZ\r\n"), 4U, badConsumed, dummy, sizeof(dummy));
+    TEST_ASSERT_TRUE(chunkDec.hasError());
+}
+
+void test_hub75_lut_4bit_neutral_grey_and_cie_monotonicity(void) {
+    // 1. Verify full 256-entry CIE 1931 LUT reaches `maxAllowed` at full brightness across all depths
+    //    (guards against truncated CIE tables wrapping indices 208..255 to 0).
+    const uint8_t depths[] = {2, 4, 5, 6, 7, 8};
+    for (uint8_t d : depths) {
+        uint8_t lutR[32] = {0};
+        uint8_t lutG[64] = {0};
+        uint8_t lutB[32] = {0};
+        Hub75BulkEncoder::generateLuts(d, lutR, lutG, lutB);
+        const uint8_t maxVal = static_cast<uint8_t>((1U << d) - 1U);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(0U, lutB[0]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutR[31]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutG[63]);
+        TEST_ASSERT_EQUAL_UINT8(maxVal, lutB[31]);
+
+        for (int i = 1; i < 32; ++i) {
+            TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[i], lutB[i]);
+        }
+        for (int i = 1; i < 64; ++i) {
+            TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+        }
+    }
+
+    // 2. At 4-bit and 5-bit depth, 100% of neutral RGB565 greys (`r5 == b5 == g6 >> 1`, including odd `g6`)
+    //    must map to exact `R == G == B` (zero green/magenta tint), and dark cinema shadows (`r5 = 5 -> c8 = 41`)
+    //    must preserve non-zero gradation instead of crushing to black.
+    for (uint8_t lowDepth : {static_cast<uint8_t>(4), static_cast<uint8_t>(5)}) {
+        uint8_t lutR[32] = {0};
+        uint8_t lutG[64] = {0};
+        uint8_t lutB[32] = {0};
+        Hub75BulkEncoder::generateLuts(lowDepth, lutR, lutG, lutB);
+        for (int k = 0; k < 32; ++k) {
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutB[k]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k]);
+            TEST_ASSERT_EQUAL_UINT8(lutR[k], lutG[2 * k + 1]);
+        }
+        TEST_ASSERT_TRUE(lutR[5] >= 1U);
+    }
+}
+
+void test_stream_byte_ring_and_spsc_byte_ring_non_pow2_wraparound(void) {
+    // 1. `StreamByteRing` `initFromSlice`, `peek`, and circular wraparound across 4096 B `ioScratch`
+    uint8_t scratch[4096];
+    for (size_t i = 0U; i < sizeof(scratch); ++i) {
+        scratch[i] = static_cast<uint8_t>((i * 37U + 11U) & 0xFFU);
+    }
+    net::StreamByteRing ring;
+    ring.initFromSlice(scratch, sizeof(scratch), 4000U, 90U);
+    TEST_ASSERT_EQUAL_UINT32(90U, static_cast<uint32_t>(ring.size()));
+    TEST_ASSERT_EQUAL_UINT32(4006U, static_cast<uint32_t>(ring.freeBytes()));
+
+    uint8_t extraIn[200];
+    for (size_t i = 0U; i < sizeof(extraIn); ++i) {
+        extraIn[i] = static_cast<uint8_t>((i + 0xA0U) & 0xFFU);
+    }
+    TEST_ASSERT_EQUAL_UINT32(200U, static_cast<uint32_t>(ring.push(extraIn, sizeof(extraIn))));
+    TEST_ASSERT_EQUAL_UINT32(290U, static_cast<uint32_t>(ring.size()));
+
+    uint8_t peekHdr[4] = {0};
+    TEST_ASSERT_EQUAL_UINT32(4U, static_cast<uint32_t>(ring.peek(peekHdr, 4U, 88U)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((4088U * 37U + 11U) & 0xFFU), peekHdr[0]);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((4089U * 37U + 11U) & 0xFFU), peekHdr[1]);
+    TEST_ASSERT_EQUAL_UINT8(0xA0U, peekHdr[2]);
+    TEST_ASSERT_EQUAL_UINT8(0xA1U, peekHdr[3]);
+
+    uint8_t popped[290] = {0};
+    TEST_ASSERT_EQUAL_UINT32(290U, static_cast<uint32_t>(ring.pop(popped, sizeof(popped))));
+    TEST_ASSERT_TRUE(ring.empty());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(extraIn, popped + 90U, sizeof(extraIn));
+
+    // 2. `DmdzSpscByteRing`: non-power-of-two capacity (`cap = 100`) full 100% fill and `[0, 2 * cap)` Lamport wraparound
+    uint8_t storage100[100] = {0};
+    net::DmdzSpscByteRing spsc;
+    spsc.init(storage100, sizeof(storage100));
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(spsc.capacity()));
+    TEST_ASSERT_TRUE(spsc.empty());
+
+    uint8_t pat[100];
+    for (size_t i = 0U; i < sizeof(pat); ++i) {
+        pat[i] = static_cast<uint8_t>((i * 41U + 9U) & 0xFFU);
+    }
+    TEST_ASSERT_EQUAL_UINT32(100U, static_cast<uint32_t>(spsc.push(pat, 100U)));
+    TEST_ASSERT_TRUE(spsc.full());
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(spsc.freeBytes()));
+
+    uint8_t out[100] = {0};
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.pop(out, 37U)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(pat, out, 37U);
+    TEST_ASSERT_EQUAL_UINT32(63U, static_cast<uint32_t>(spsc.size()));
+    TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.freeBytes()));
+
+    // Cycle 60 rounds of odd-sized 37-byte frames across `cap = 100` (`2 * cap = 200` wraps > 11 times!)
+    spsc.reset();
+    for (int round = 0; round < 60; ++round) {
+        uint8_t frame[37];
+        const uint16_t payLen = 35U;
+        frame[0] = static_cast<uint8_t>(payLen & 0xFFU);
+        frame[1] = static_cast<uint8_t>(payLen >> 8);
+        for (size_t i = 0U; i < payLen; ++i) {
+            frame[2U + i] = static_cast<uint8_t>((round * 13 + static_cast<int>(i)) & 0xFFU);
+        }
+        TEST_ASSERT_EQUAL_UINT32(37U, static_cast<uint32_t>(spsc.push(frame, sizeof(frame))));
+        uint16_t peekedLen = 0U;
+        TEST_ASSERT_TRUE(spsc.hasCompleteFrame(peekedLen));
+        TEST_ASSERT_EQUAL_UINT16(payLen, peekedLen);
+
+        const uint8_t* p1 = nullptr;
+        const uint8_t* p2 = nullptr;
+        size_t n1 = 0U;
+        size_t n2 = 0U;
+        spsc.getConsumerSlices(2U, payLen, p1, n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT32(payLen, static_cast<uint32_t>(n1 + n2));
+        uint8_t reassembled[35] = {0};
+        if (n1 > 0U) memcpy(reassembled, p1, n1);
+        if (n2 > 0U) memcpy(reassembled + n1, p2, n2);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(frame + 2U, reassembled, payLen);
+        spsc.consumeRead(37U);
+        TEST_ASSERT_TRUE(spsc.empty());
+    }
+
+    // 3. `SRAM_SPSC_DEFAULT_RING_BYTES` (`8,448 B`) holds an entire `128x32` `kFrameRaw` (`8,195 B`) atomically
+    std::vector<uint8_t> storage8448(engines::showcase::ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES, 0U);
+    net::DmdzSpscByteRing ring8448;
+    ring8448.init(storage8448.data(), storage8448.size());
+    std::vector<uint8_t> fullRaw128x32(2U + 1U + 128U * 32U * 2U, 0x5AU);
+    fullRaw128x32[0] = static_cast<uint8_t>(8193U & 0xFFU);
+    fullRaw128x32[1] = static_cast<uint8_t>(8193U >> 8);
+    fullRaw128x32[2] = core::drawing::DmdzStreamDecoder::kFrameRaw;
+    TEST_ASSERT_EQUAL_UINT32(fullRaw128x32.size(), static_cast<uint32_t>(ring8448.push(fullRaw128x32.data(), fullRaw128x32.size())));
+    uint16_t rawLen = 0U;
+    TEST_ASSERT_TRUE(ring8448.hasCompleteFrame(rawLen));
+    TEST_ASSERT_EQUAL_UINT16(8193U, rawLen);
+}
+
+void test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects(void) {
+    using core::drawing::DmdzStreamDecoder;
+
+    // 1. `DmdzStreamDecoder` v2 1-byte chunked round-trip across `kFrameRaw`, `kFrameScroll2D` (+/-),
+    //    `OP_LUMA` (negative odd `dg = -7`), `OP_TLUMA`, `OP_LZ` (overlapping copy), and `OP_TDIFF`
+    uint16_t fb[8 * 4];
+    memset(fb, 0, sizeof(fb));
+    DmdzStreamDecoder dec;
+    dec.init(8U, 4U, 2U);
+    TEST_ASSERT_EQUAL_UINT8(2U, dec.streamVersion());
+
+    auto feedOneByteAtATime = [&](const uint8_t* payload, size_t n) -> bool {
+        if (!dec.beginFrame(static_cast<uint16_t>(n))) {
+            return false;
+        }
+        for (size_t i = 0U; i < n; ++i) {
+            if (!dec.feed(payload + i, 1U, fb)) {
+                return false;
+            }
+        }
+        return dec.finishFrame();
+    };
+
+    // Frame 0: `kFrameRaw` (`1 + 32 * 2 = 65` bytes) -> `fb[k] = 0x1000 + k`
+    uint8_t rawFrame[1 + 32 * 2];
+    rawFrame[0] = DmdzStreamDecoder::kFrameRaw;
+    for (uint16_t k = 0U; k < 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x1000U + k);
+        rawFrame[1U + k * 2U] = static_cast<uint8_t>(px & 0xFFU);
+        rawFrame[2U + k * 2U] = static_cast<uint8_t>(px >> 8);
+    }
+    TEST_ASSERT_TRUE(feedOneByteAtATime(rawFrame, sizeof(rawFrame)));
+    TEST_ASSERT_EQUAL_HEX16(0x1000U, fb[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x101FU, fb[31]);
+
+    // Frame 1: `kFrameScroll2D(dx=+2, dy=+1)` + `SKIP(24)` + `OP_TDIFF(+1,+1,+1)` + `OP_TLUMA(dg=+4,dr=+3,db=+1)` + `SKIP(6)`
+    const uint8_t scroll2dPos[] = {
+        DmdzStreamDecoder::kFrameScroll2D,
+        2, 1,                            // dx = +2, dy = +1
+        static_cast<uint8_t>(0x00 | 23), // SKIP 24 (pixels 0..23)
+        0xFC,                            // OP_TDIFF idx 4 (+1,+1,+1) on ref fb[24] (old fb[26]=0x101A -> 0x183B)
+        0xF4, 0x2B,                      // OP_TLUMA (uDg=12=>dg=+4, dr_dg=+1=>dr=+3, db_dg=-1=>db=+1) on 0x101B -> 0x289C
+        static_cast<uint8_t>(0x00 | 5)   // SKIP 6 (pixels 26..31)
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(scroll2dPos, sizeof(scroll2dPos)));
+    TEST_ASSERT_EQUAL_HEX16(0x100AU, fb[0]);  // old row 1 col 2
+    TEST_ASSERT_EQUAL_HEX16(0x101FU, fb[21]); // old row 3 col 7
+    TEST_ASSERT_EQUAL_HEX16(0x183BU, fb[24]);
+    TEST_ASSERT_EQUAL_HEX16(0x289CU, fb[25]);
+
+    // Frame 2: `kFrameScroll2D(dx=-1, dy=-1)` -> `fb[1*8 + 1]` receives Frame 1's `fb[0] == 0x100A`
+    const uint8_t scroll2dNeg[] = {
+        DmdzStreamDecoder::kFrameScroll2D,
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        static_cast<uint8_t>(static_cast<int8_t>(-1)),
+        static_cast<uint8_t>(0x00 | 31) // SKIP 32
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(scroll2dNeg, sizeof(scroll2dNeg)));
+    TEST_ASSERT_EQUAL_HEX16(0x100AU, fb[9]);
+
+    // Frame 3: `kFrameKey` with `LIT(1)=0x8410`, `OP_LUMA(dg=-7, dr=-2, db=-3) -> 0x732D`,
+    // overlapping `OP_LZ(dist=2, count=6)` repeating `[0x8410, 0x732D]` x3, then `RUN(24)`
+    const uint8_t keyLzLuma[] = {
+        DmdzStreamDecoder::kFrameKey,
+        0xE0, 0x10, 0x84,               // LIT 1: 0x8410
+        0xDC, 0x75,                     // OP_LUMA: uDg=1 (dg=-7, dgRb=-4), dr=-2, db=-3 -> 0x732D
+        0xF6, 0x01, 0x18,               // OP_LZ: packed17 = (3 << 11) | 1 -> count=6, dist=2
+        static_cast<uint8_t>(0x40 | 23) // RUN 24 of m_last (0x732D)
+    };
+    TEST_ASSERT_TRUE(feedOneByteAtATime(keyLzLuma, sizeof(keyLzLuma)));
+    for (int k = 0; k < 8; k += 2) {
+        TEST_ASSERT_EQUAL_HEX16(0x8410U, fb[k]);
+        TEST_ASSERT_EQUAL_HEX16(0x732DU, fb[k + 1]);
+    }
+    TEST_ASSERT_EQUAL_HEX16(0x732DU, fb[31]);
+
+    // 2. Reject unknown/obsolete frame type `0x05` cleanly
+    const uint8_t badType05[] = {0x05U, 0x00U};
+    TEST_ASSERT_TRUE(dec.beginFrame(sizeof(badType05)));
+    TEST_ASSERT_FALSE(dec.feed(badType05, sizeof(badType05), fb));
+    TEST_ASSERT_TRUE(dec.hasError());
+
+    // 3. Reject legacy `version == 1` at `init()`
+    DmdzStreamDecoder decV1;
+    decV1.init(8U, 4U, 1U);
+    TEST_ASSERT_TRUE(decV1.hasError());
+    TEST_ASSERT_FALSE(decV1.beginFrame(sizeof(scroll2dPos)));
+}
+
+void test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload(void) {
+    using core::drawing::DmdzStreamDecoder;
+    using engines::showcase::ShowcaseStreamPlayer;
+
+    class NativeCanvasSurface128x32 : public IDrawingSurface {
+    public:
+        uint16_t pixels[128 * 32];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        uint32_t blits = 0U;
+        NativeCanvasSurface128x32() : IDrawingSurface(128, 32, 128, 32) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                pixels[y * 128 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0U; i < 128U * 32U; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            ++blits;
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 128U, 32U, 128U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    // 1. Atomic 1-tick `128x32` `kFrameRaw` (`8,195 B`) in default `8,448 B` SPSC ring (`0` partial frames!)
+    NativeCanvasSurface128x32 surf128;
+    ShowcaseStreamPlayer atomicPlayer;
+    TEST_ASSERT_TRUE(atomicPlayer.probeZeroCopyOnCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_TRUE(atomicPlayer.isZeroCopyEligible());
+    TEST_ASSERT_NULL(atomicPlayer.fallbackFrameBuffer());
+    TEST_ASSERT_TRUE(atomicPlayer.ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(atomicPlayer.allocateSpscRing(ShowcaseStreamPlayer::SRAM_SPSC_DEFAULT_RING_BYTES, false));
+
+    const uint16_t fullRawPayLen = 1U + 128U * 32U * 2U; // 8,193 B
+    std::vector<uint8_t> fullRawWire(2U + fullRawPayLen);
+    fullRawWire[0] = static_cast<uint8_t>(fullRawPayLen & 0xFFU);
+    fullRawWire[1] = static_cast<uint8_t>(fullRawPayLen >> 8);
+    fullRawWire[2] = DmdzStreamDecoder::kFrameRaw;
+    for (size_t k = 0U; k < 128U * 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x2000U + (k & 0x0FFFU));
+        fullRawWire[3U + k * 2U] = static_cast<uint8_t>(px & 0xFFU);
+        fullRawWire[4U + k * 2U] = static_cast<uint8_t>(px >> 8);
+    }
+
+    // Push 7,940 B into the 8,448 B ring (`producerFreeBytes() == 508 < 512` batch threshold):
+    // Before Core 1 checks, batch refill is false; as soon as Core 1 sees `7,940 < 8,195`, it signals
+    // `m_spscConsumerNeedsTopUp` so `shouldRefillSpscRing(512)` wakes Core 0 with zero deadlock!
+    TEST_ASSERT_EQUAL_UINT32(7940U, static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data(), 7940U)));
+    TEST_ASSERT_EQUAL_UINT32(508U, static_cast<uint32_t>(atomicPlayer.spscRing().producerFreeBytes()));
+    atomicPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 25U);
+    TEST_ASSERT_FALSE(atomicPlayer.shouldRefillSpscRing(512U));
+    TEST_ASSERT_FALSE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_TRUE(atomicPlayer.shouldRefillSpscRing(512U));
+    TEST_ASSERT_FALSE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_EQUAL_UINT32(0U, atomicPlayer.presentedFrames());
+    TEST_ASSERT_EQUAL_HEX16(0x0000U, surf128.pixels[0]);
+
+    // Top up remaining 255 B (`7,940 + 255 = 8,195 B`) -> atomic single-tick decode!
+    TEST_ASSERT_EQUAL_UINT32(
+        fullRawWire.size() - 7940U,
+        static_cast<uint32_t>(atomicPlayer.spscRing().push(fullRawWire.data() + 7940U, fullRawWire.size() - 7940U))
+    );
+    TEST_ASSERT_TRUE(atomicPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(atomicPlayer.shouldRefillSpscRing(512U));
+    TEST_ASSERT_TRUE(atomicPlayer.renderFrameCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_EQUAL_UINT32(1U, atomicPlayer.presentedFrames());
+    TEST_ASSERT_EQUAL_UINT32(1U, surf128.extDraws);
+    TEST_ASSERT_EQUAL_UINT32(0U, surf128.blits);
+    TEST_ASSERT_TRUE(atomicPlayer.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x2000U, surf128.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x2FFFU, surf128.pixels[128 * 32 - 1]);
+    atomicPlayer.releaseAll();
+
+    // 1b. Low-heap `6,144 B` ring incremental decode of an `8,195 B` `128x32` `kFrameRaw` (`totalWire > ringCap`)
+    surf128.clear(0U);
+    surf128.extDraws = 0U;
+    ShowcaseStreamPlayer lowRingPlayer;
+    TEST_ASSERT_TRUE(lowRingPlayer.probeZeroCopyOnCore1(&surf128, 128U, 32U));
+    TEST_ASSERT_TRUE(lowRingPlayer.ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(lowRingPlayer.allocateSpscRing(ShowcaseStreamPlayer::SRAM_SPSC_LOW_RING_BYTES, false));
+    lowRingPlayer.armSpscStreamForTest(128U, 32U, 2U, true, 1U, 25U);
+    TEST_ASSERT_EQUAL_UINT32(5800U, static_cast<uint32_t>(lowRingPlayer.spscRing().push(fullRawWire.data(), 5800U)));
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(lowRingPlayer.renderFrameCore1(&surf128, 128U, 32U)); // Partial chunk 1 consumed
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldRefillSpscRing(512U));
+    TEST_ASSERT_EQUAL_UINT32(
+        fullRawWire.size() - 5800U,
+        static_cast<uint32_t>(lowRingPlayer.spscRing().push(fullRawWire.data() + 5800U, fullRawWire.size() - 5800U))
+    );
+    TEST_ASSERT_TRUE(lowRingPlayer.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_TRUE(lowRingPlayer.renderFrameCore1(&surf128, 128U, 32U)); // Completed!
+    TEST_ASSERT_EQUAL_UINT32(1U, lowRingPlayer.presentedFrames());
+    TEST_ASSERT_TRUE(lowRingPlayer.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x2000U, surf128.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x2FFFU, surf128.pixels[128 * 32 - 1]);
+    lowRingPlayer.releaseAll();
+
+    // 2. Tiny `64 B` SPSC ring incremental fallback (`2 + payLen > ringCap`) + lossless `kFrameScroll2D`
+    class NativeCanvasSurface8x4 : public IDrawingSurface {
+    public:
+        uint16_t pixels[8 * 4];
+        bool dirty = false;
+        uint32_t extDraws = 0U;
+        uint32_t blits = 0U;
+        NativeCanvasSurface8x4() : IDrawingSurface(8, 4, 8, 4) {
+            memset(pixels, 0, sizeof(pixels));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 8 && y >= 0 && y < 4) {
+                pixels[y * 8 + x] = color;
+                dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0U; i < 32U; ++i) pixels[i] = color;
+            dirty = true;
+        }
+        bool isDirty() const override { return dirty; }
+        void markDirty() override { dirty = true; }
+        void markExternalDraw() override {
+            dirty = true;
+            ++extDraws;
+        }
+        PresentationTiming present() override {
+            dirty = false;
+            return PresentationTiming{};
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stride = -1) override {
+            ++blits;
+            int16_t st = stride > 0 ? stride : w;
+            for (int16_t ry = 0; ry < h; ++ry) {
+                for (int16_t rx = 0; rx < w; ++rx) {
+                    drawPixel(x + rx, y + ry, src[ry * st + rx]);
+                }
+            }
+        }
+        CanvasView acquireCanvas() override {
+            dirty = true;
+            return CanvasView{pixels, 8U, 4U, 8U};
+        }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(pixels); }
+    };
+
+    NativeCanvasSurface8x4 surf;
+    ShowcaseStreamPlayer player;
+    TEST_ASSERT_TRUE(player.probeZeroCopyOnCore1(&surf, 8U, 4U));
+    TEST_ASSERT_TRUE(player.ensureDecoderAllocated(false));
+    TEST_ASSERT_TRUE(player.allocateSpscRing(64U, false));
+
+    std::vector<uint8_t> rawWire;
+    const uint16_t rawPayLen = 1U + 32U * 2U; // 65 B > 64 B ring!
+    rawWire.push_back(static_cast<uint8_t>(rawPayLen & 0xFFU));
+    rawWire.push_back(static_cast<uint8_t>(rawPayLen >> 8));
+    rawWire.push_back(DmdzStreamDecoder::kFrameRaw);
+    for (uint16_t k = 0U; k < 32U; ++k) {
+        const uint16_t px = static_cast<uint16_t>(0x3000U + k);
+        rawWire.push_back(static_cast<uint8_t>(px & 0xFFU));
+        rawWire.push_back(static_cast<uint8_t>(px >> 8));
+    }
+
+    TEST_ASSERT_EQUAL_UINT32(40U, static_cast<uint32_t>(player.spscRing().push(rawWire.data(), 40U)));
+    player.armSpscStreamForTest(8U, 4U, 2U, true, 2U, 20U);
+    TEST_ASSERT_TRUE(player.shouldMarkCore1Dirty(millis()));
+    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_EQUAL_UINT32(0U, player.presentedFrames());
+
+    TEST_ASSERT_EQUAL_UINT32(
+        rawWire.size() - 40U,
+        static_cast<uint32_t>(player.spscRing().push(rawWire.data() + 40U, rawWire.size() - 40U))
+    );
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_NULL(player.fallbackFrameBuffer());
+    TEST_ASSERT_EQUAL_UINT32(1U, player.presentedFrames());
+    TEST_ASSERT_EQUAL_UINT32(1U, surf.extDraws);
+    TEST_ASSERT_EQUAL_UINT32(0U, surf.blits);
+    TEST_ASSERT_EQUAL_HEX16(0x3000U, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x301FU, surf.pixels[31]);
+
+    // Frame 1: lossless `kFrameScroll2D` (`dx=+1, dy=+1`) + `SKIP 31` + `LIT(1)=0xCAFE`
+    const uint8_t scroll2dWire[] = {
+        7U, 0U, // payLen = 7
+        DmdzStreamDecoder::kFrameScroll2D,
+        1U, 1U,                           // dx = +1, dy = +1 -> pixels[0] = old pixels[9] (0x3009)
+        static_cast<uint8_t>(0x00U | 30U), // SKIP 31 (pixels 0..30)
+        0xE0U, 0xFEU, 0xCAU                // LIT 1 -> pixels[31] = 0xCAFE
+    };
+    TEST_ASSERT_EQUAL_UINT32(
+        sizeof(scroll2dWire),
+        static_cast<uint32_t>(player.spscRing().push(scroll2dWire, sizeof(scroll2dWire)))
+    );
+    advanceVirtualMillis(55U);
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_EQUAL_UINT32(2U, player.presentedFrames());
+    TEST_ASSERT_TRUE(player.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x3009U, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0xCAFEU, surf.pixels[31]);
+
+    // 3. Rotated surface (`rotation == 1`) disables Zero-Copy and routes through `m_fallbackFrame565` + `blit565`
+    surf.setRotation(1U);
+    player.onGeometryChanged(surf.getRotation());
+    TEST_ASSERT_FALSE(player.isZeroCopyEligible());
+    TEST_ASSERT_TRUE(player.acquireFallbackFrameBuffer(8U, 4U, false));
+    TEST_ASSERT_NOT_NULL(player.fallbackFrameBuffer());
+
+    // 4. `PsramPreload` (`ESP32-S3` <= 4 MB): Core 1 waits while download is incomplete, then presents lossless `kFrameKey`
+    std::vector<uint8_t> preloadBlob(16U, 0U);
+    const uint8_t keySolid[] = {
+        5U, 0U,
+        DmdzStreamDecoder::kFrameKey,
+        0xE0U, 0x1FU, 0x00U,             // LIT 1: 0x001F blue
+        static_cast<uint8_t>(0x40U | 30U) // RUN 31 -> 32 pixels
+    };
+    preloadBlob.insert(preloadBlob.end(), keySolid, keySolid + sizeof(keySolid));
+    player.armPreloadStreamForTest(preloadBlob.data(), 18U, false, 8U, 4U, 2U, true, 1U, 20U);
+    TEST_ASSERT_FALSE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_FALSE(player.isCore1StreamFinished());
+
+    player.updatePreloadProgressForTest(preloadBlob.size(), true);
+    TEST_ASSERT_TRUE(player.renderFrameCore1(&surf, 8U, 4U));
+    TEST_ASSERT_EQUAL_UINT32(1U, surf.blits);
+    TEST_ASSERT_TRUE(player.isCore1StreamFinished());
+    TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x001FU, surf.pixels[31]);
+
+    player.releaseAll();
+}
+
+void test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window(void) {
+    WebUiSyncEngine::resetState();
+
+    // 1. PSRAM boards never engage WEBUI_SYNC regardless of heap or cache state
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(true, false, false, 12000U, 4096U));
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(true, false, true, 12000U, 4096U));
+
+    // 2. Cached refreshes (`If-None-Match` -> 304 Not Modified, 0 B payload) NEVER interrupt DMD
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, true, false, 22284U, 19444U));
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, true, true, 12000U, 6000U));
+
+    // 3. Cold 200 OK with generous internal SRAM (e.g. panel blanked / night mode) skips WEBUI_SYNC
+    TEST_ASSERT_FALSE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 36000U, 20480U));
+
+    // 4. Cold 200 OK during active 8-bit HUB75 engine (`free8 ~ 22-28 KB`) engages short staging
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 26000U, 19444U));
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, false, 36000U, 14000U));
+
+    // 5. Post-staging reload (`syncAlreadyActive == true`) preserves the cold-load window even after
+    //    engine eviction boosted free8 to ~55 KB
+    TEST_ASSERT_TRUE(WebUiSyncEngine::needsColdSpaStaging(false, false, true, 55000U, 34804U));
+
+    // 6. Monotonic window tracker: short bootstrap tail (1200 ms) must NEVER shorten an active
+    //    cold-load window (2400 ms), and only extends when remaining time drops near expiry
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kStagingWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1000U, WebUiSyncEngine::kStagingWindowMs)
+    );
+    TEST_ASSERT_TRUE(WebUiSyncEngine::isRequested());
+
+    // Reload arrives 250 ms later with 2400 ms cold window (remaining 1750 ms < 2400 + 100 -> extends)
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kColdLoadWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1250U, WebUiSyncEngine::kColdLoadWindowMs)
+    );
+
+    // Rapid /api/* calls at t=1500 ms and t=1800 ms (remaining 2150 ms / 1850 ms >= 1300 ms):
+    // returns 0 so DisplayArbiter's 2400 ms window is neither shortened nor spammed
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1500U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+    TEST_ASSERT_EQUAL_UINT32(
+        0U,
+        WebUiSyncEngine::acquireOrExtendWindowMs(1800U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+
+    // Slow Wi-Fi /api/* call near deadline (t=2800 ms, remaining 850 ms < 1300 ms): extends by 1200 ms
+    TEST_ASSERT_EQUAL_UINT32(
+        WebUiSyncEngine::kBootstrapTailWindowMs,
+        WebUiSyncEngine::acquireOrExtendWindowMs(2800U, WebUiSyncEngine::kBootstrapTailWindowMs)
+    );
+
+    // Engine deactivation clears all flags and deadlines cleanly
+    WebUiSyncEngine syncEngine;
+    syncEngine.activate();
+    TEST_ASSERT_TRUE(WebUiSyncEngine::isReadyForServing());
+    syncEngine.deactivate();
+    TEST_ASSERT_FALSE(WebUiSyncEngine::isReadyForServing());
+    TEST_ASSERT_FALSE(WebUiSyncEngine::isRequested());
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(NetworkBudget::DmdNetActivity::Idle),
+        static_cast<uint8_t>(NetworkBudget::getDmdNetActivity())
+    );
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2075,6 +3383,19 @@ int main(int argc, char** argv) {
 
     // Transition Prefetch Contracts (Hardware Gating)
     RUN_TEST(test_transition_prefetch_contract);
+    RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
+    RUN_TEST(test_webui_sync_priority_eviction_and_showcase_geometry_bit_depth_scaling);
+    RUN_TEST(test_single_activity_coordinator_and_nonblocking_showcase_discovery_lease);
+    RUN_TEST(test_cie_depth_lut_monotonic_and_8bit_identity);
+    RUN_TEST(test_dmdz_stream_decoder_chunked_roundtrip_scroll_and_bounds);
+    RUN_TEST(test_showcase_preferred_8bit_depth_pinning_and_keep_hysteresis);
+    RUN_TEST(test_dmdz_http_stream_and_delete_path_builders_and_content_length);
+    RUN_TEST(test_dmdz_stream_client_endpoint_and_chunked_helpers);
+    RUN_TEST(test_hub75_lut_4bit_neutral_grey_and_cie_monotonicity);
+    RUN_TEST(test_stream_byte_ring_and_spsc_byte_ring_non_pow2_wraparound);
+    RUN_TEST(test_dmdz_v2_lossless_decoder_2d_scroll_lz77_luma_raw_and_strict_rejects);
+    RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
+    RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
 
     return UNITY_END();
 }

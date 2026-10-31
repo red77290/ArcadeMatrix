@@ -675,7 +675,7 @@ void GoogleCastEngine::update(EngineContext* context) {
     }
 }
 
-#include <glcdfont.c>
+#include "fonts/ArcadeFonts.h"
 
 static void drawClippedString(Adafruit_GFX* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
     if (!display || !text || text[0] == '\0' || clipMinX >= clipMaxX) return;
@@ -690,7 +690,7 @@ static void drawClippedString(Adafruit_GFX* display, const char* text, int x, in
             for (int col = 0; col < 5; col++) {
                 int px = curX + col;
                 if (px >= clipMinX && px < clipMaxX) {
-                    uint8_t line = pgm_read_byte(&font[c * 5 + col]);
+                    uint8_t line = pgm_read_byte(&g_glcdFont5x7[c * 5 + col]);
                     for (int row = 0; row < 8; row++) {
                         if (line & 1) {
                             display->drawPixel(px, y + row, color);

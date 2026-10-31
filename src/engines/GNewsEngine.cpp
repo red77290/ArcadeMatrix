@@ -4,6 +4,17 @@
 #include "../core/I18n.h"
 #include "../core/net/SecureHttpClient.h"
 #include <cmath>
+#include <cstdlib>
+
+namespace {
+uint32_t gnewsRandomU32() {
+#if defined(ESP32)
+    return esp_random();
+#else
+    return static_cast<uint32_t>(rand());
+#endif
+}
+} // namespace
 
 GNewsEngine::GNewsEngine() {
     _geometry.width = 64;
@@ -29,12 +40,35 @@ void GNewsEngine::applyConfig(const EngineConfig* config) {
     config_keywords = config->getString("keywords", "");
     config_lang = config->getString("lang", "auto");
     config_country = config->getString("country", "auto");
-    config_max_articles = config->getInt("max_articles", 5);
+    config_max_articles = std::max(3, std::min(15, config->getInt("max_articles", 5)));
+    config_articles_per_rotation = std::max(1, std::min(15, config->getInt("articles_per_rotation", 2)));
     config_cache_ttl_min = config->getInt("cache_ttl_min", 30);
     config_requests_per_day = config->getInt("requests_per_day", 10);
     config_force_refresh = config->getBool("force_refresh", false);
+
+    String prevMode = config_display_mode;
+    bool prevTitle = config_show_title;
+    bool prevDesc = config_show_description;
+    bool prevContent = config_show_content;
+
     config_display_mode = config->getString("display_mode", "smooth_scroll");
-    config_scroll_speed = config->getInt("scroll_speed", 3);
+    config_show_title = config->getBool("show_title", false);
+    config_show_description = config->getBool("show_description", false);
+    config_show_content = config->getBool("show_content", true);
+
+    if (config_display_mode != prevMode || config_show_title != prevTitle ||
+        config_show_description != prevDesc || config_show_content != prevContent) {
+        scrollPixelOffset = 0;
+        scrollState = ScrollState::PauseStart;
+        stateStartTime = millis();
+        lastScrollTick = millis();
+        currentPageIndex = 0;
+        totalPages = 1;
+        lastPageSwitchTime = millis();
+        cachedArticleIndex = -1;
+    }
+
+    config_scroll_speed = std::max(1, std::min(10, config->getInt("scroll_speed", 3)));
     config_scroll_pause_start_ms = config->getInt("scroll_pause_start_ms", 1200);
     config_scroll_pause_end_ms = config->getInt("scroll_pause_end_ms", 1000);
     config_article_duration_sec = config->getInt("article_duration_sec", 12);
@@ -62,12 +96,47 @@ const char* GNewsEngine::getCategoryShort(const char* category) {
     return I18n::getGNewsCategoryShort(category);
 }
 
-void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
-    if (snap.count > 0) {
-        currentArticleIndex = (currentArticleIndex + 1) % snap.count;
-    } else {
-        currentArticleIndex = 0;
+void GNewsEngine::pickNextRandomArticle(size_t count) {
+    if (count > GNEWS_MAX_ARTICLES) {
+        count = GNEWS_MAX_ARTICLES;
     }
+    if (count == 0) {
+        currentArticleIndex = 0;
+        m_shuffleCount = 0;
+        m_shufflePos = 0;
+        return;
+    }
+    if (count == 1) {
+        currentArticleIndex = 0;
+        m_shuffleCount = 1;
+        m_shufflePos = 1;
+        return;
+    }
+    if (m_shuffleCount != count || m_shufflePos >= m_shuffleCount) {
+        size_t prevIdx = currentArticleIndex;
+        for (size_t i = 0; i < count; ++i) {
+            m_shuffledOrder[i] = static_cast<uint8_t>(i);
+        }
+        for (size_t i = count - 1; i > 0; --i) {
+            size_t j = gnewsRandomU32() % (i + 1);
+            uint8_t tmp = m_shuffledOrder[i];
+            m_shuffledOrder[i] = m_shuffledOrder[j];
+            m_shuffledOrder[j] = tmp;
+        }
+        if (m_shuffledOrder[0] == prevIdx && count > 1) {
+            uint8_t tmp = m_shuffledOrder[0];
+            m_shuffledOrder[0] = m_shuffledOrder[count - 1];
+            m_shuffledOrder[count - 1] = tmp;
+        }
+        m_shuffleCount = count;
+        m_shufflePos = 0;
+    }
+    currentArticleIndex = m_shuffledOrder[m_shufflePos++];
+}
+
+void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
+    m_articlesShownThisCycle++;
+    pickNextRandomArticle(snap.count);
     currentPageIndex = 0;
     totalPages = 1;
     lastPageSwitchTime = millis();
@@ -323,15 +392,60 @@ void GNewsEngine::formatGNewsText(const char* utf8Input, char* output, size_t ma
 }
 
 void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
-    formatGNewsText(article.title, formattedHeadline, sizeof(formattedHeadline));
-    if (article.description[0] != '\0') {
+    formattedHeadline[0] = '\0';
+
+    auto appendSegment = [this](const char* segment) {
+        if (!segment || segment[0] == '\0') return;
         size_t curLen = strlen(formattedHeadline);
-        if (curLen + 4 < sizeof(formattedHeadline)) {
+        if (curLen > 0) {
+            if (curLen + 4 >= sizeof(formattedHeadline)) return;
             strcat(formattedHeadline, " - ");
             curLen += 3;
-            formatGNewsText(article.description, formattedHeadline + curLen, sizeof(formattedHeadline) - curLen);
+        }
+        formatGNewsText(segment, formattedHeadline + curLen, sizeof(formattedHeadline) - curLen);
+    };
+
+    const char* lastAdded = nullptr;
+    auto startsWithCi = [](const char* haystack, const char* needle) -> bool {
+        if (!haystack || !needle || *needle == '\0') return false;
+        while (*needle != '\0') {
+            if (*haystack == '\0') return false;
+            char c1 = (*haystack >= 'A' && *haystack <= 'Z') ? (*haystack + 32) : *haystack;
+            char c2 = (*needle >= 'A' && *needle <= 'Z') ? (*needle + 32) : *needle;
+            if (c1 != c2) return false;
+            haystack++;
+            needle++;
+        }
+        return true;
+    };
+
+    if (config_show_title && article.title[0] != '\0') {
+        appendSegment(article.title);
+        lastAdded = article.title;
+    }
+    if (config_show_description && article.description[0] != '\0') {
+        if (!lastAdded || !startsWithCi(article.description, lastAdded)) {
+            appendSegment(article.description);
+            lastAdded = article.description;
         }
     }
+    if (config_show_content && article.content[0] != '\0') {
+        if (!lastAdded || !startsWithCi(article.content, lastAdded)) {
+            appendSegment(article.content);
+            lastAdded = article.content;
+        }
+    }
+
+    if (formattedHeadline[0] == '\0') {
+        if (article.content[0] != '\0') {
+            appendSegment(article.content);
+        } else if (article.description[0] != '\0') {
+            appendSegment(article.description);
+        } else if (article.title[0] != '\0') {
+            appendSegment(article.title);
+        }
+    }
+
     formatGNewsText(article.source, formattedSource, sizeof(formattedSource));
 }
 
@@ -432,7 +546,16 @@ void GNewsEngine::fetchWorker() {
 }
 
 void GNewsEngine::activate() {
-    currentArticleIndex = 0;
+    m_articlesShownThisCycle = 0;
+    m_activateTimeMs = millis();
+    const GNewsSnapshot& snap = gnewsService.getSnapshot();
+    if (snap.hasData && snap.count > 0) {
+        pickNextRandomArticle(snap.count);
+        m_needsInitialPick = false;
+    } else {
+        currentArticleIndex = 0;
+        m_needsInitialPick = true;
+    }
     currentPageIndex = 0;
     totalPages = 1;
     lastPageSwitchTime = millis();
@@ -455,6 +578,9 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     applyConfig(config);
     cachedArticleIndex = -1;
     if (config_force_refresh && !prevForce) {
+        m_shuffleCount = 0;
+        m_shufflePos = 0;
+        m_needsInitialPick = true;
         m_purgeRequested.store(true, std::memory_order_release);
     }
     m_fetchRequested.store(true, std::memory_order_release);
@@ -473,7 +599,13 @@ bool GNewsEngine::shutdownForDestruction() {
 }
 
 bool GNewsEngine::isFinished() const {
-    return false;
+    const GNewsSnapshot& snap = gnewsService.getSnapshot();
+    if (!snap.hasData || snap.count == 0) {
+        uint32_t fallbackMs = static_cast<uint32_t>(std::max(5, config_article_duration_sec)) * 1000UL;
+        return (millis() - m_activateTimeMs) >= fallbackMs;
+    }
+    size_t target = static_cast<size_t>(std::max(1, config_articles_per_rotation));
+    return m_articlesShownThisCycle >= target;
 }
 
 void GNewsEngine::update(EngineContext* context) {
@@ -487,8 +619,9 @@ void GNewsEngine::update(EngineContext* context) {
     const GNewsSnapshot& snap = gnewsService.getSnapshot();
     if (!snap.hasData || snap.count == 0) return;
 
-    if (currentArticleIndex >= snap.count) {
-        currentArticleIndex = 0;
+    if (m_needsInitialPick || currentArticleIndex >= snap.count || m_shuffleCount != snap.count) {
+        pickNextRandomArticle(snap.count);
+        m_needsInitialPick = false;
     }
     const GNewsArticle& curArt = snap.articles[currentArticleIndex];
 
@@ -553,24 +686,49 @@ void GNewsEngine::update(EngineContext* context) {
             wrapTextToLines(formattedHeadline, maxW);
             int totalH = (int)cachedLineCount * lineSpacing;
             int viewH = mH - bodyY;
-            cachedMaxScroll = (totalH > viewH) ? (totalH - viewH + 8) : 0;
+            cachedMaxScroll = (totalH > viewH) ? (totalH - viewH + 12) : max(6, totalH + 4);
         } else if (config_display_mode == "serpentine") {
             int tLen = strlen(formattedHeadline);
             int availW = max(1, mW - 4);
             int charsPerRow = max(1, availW / 6);
             int neededRows = (tLen + charsPerRow - 1) / charsPerRow;
             if (neededRows <= numRows) {
-                cachedMaxScroll = 0;
+                cachedMaxScroll = max(6, tLen * 6);
             } else {
                 int overflowChars = tLen - (numRows * charsPerRow);
                 cachedMaxScroll = (overflowChars + 3) * 6;
             }
         } else {
             // "smooth_scroll"
-            int textW = strlen(formattedHeadline) * 6;
-            cachedMaxScroll = textW + 16;
-            wrapTextToLines(formattedHeadline, mW - 4);
+            if (isTate) {
+                distributeTextToRows(formattedHeadline, numRows);
+                int maxLineW = 0;
+                for (size_t i = 0; i < cachedLineCount; i++) {
+                    int w = (int)strlen(cachedDisplayLines[i]) * 6;
+                    if (w > maxLineW) maxLineW = w;
+                }
+                cachedMaxScroll = mW + maxLineW + 12;
+            } else {
+                int charPx = (mH >= 64 && mW >= 256) ? 12 : 6;
+                int textW = (int)strlen(formattedHeadline) * charPx;
+                cachedMaxScroll = textW + 16;
+                wrapTextToLines(formattedHeadline, mW - 4);
+            }
         }
+    }
+
+    uint32_t baseTickMs = 55;
+    switch (config_scroll_speed) {
+        case 1: baseTickMs = 100; break;
+        case 2: baseTickMs = 75; break;
+        case 3: baseTickMs = 55; break;
+        case 4: baseTickMs = 42; break;
+        case 5: baseTickMs = 32; break;
+        case 6: baseTickMs = 24; break;
+        case 7: baseTickMs = 18; break;
+        case 8: baseTickMs = 13; break;
+        case 9: baseTickMs = 9; break;
+        case 10: default: baseTickMs = 6; break;
     }
 
     if (config_display_mode == "static_paged") {
@@ -579,7 +737,8 @@ void GNewsEngine::update(EngineContext* context) {
         if (currentPageIndex >= totalPages) currentPageIndex = 0;
 
         uint32_t totalArticleMs = (uint32_t)config_article_duration_sec * 1000UL;
-        uint32_t pageDurationMs = max<uint32_t>(2500U, totalArticleMs / (uint32_t)totalPages);
+        uint32_t basePageMs = max<uint32_t>(2000U, totalArticleMs / (uint32_t)totalPages);
+        uint32_t pageDurationMs = max<uint32_t>(1000U, (basePageMs * baseTickMs) / 55U);
 
         if (now - lastPageSwitchTime >= pageDurationMs) {
             lastPageSwitchTime = now;
@@ -589,19 +748,7 @@ void GNewsEngine::update(EngineContext* context) {
             }
         }
     } else {
-        uint32_t tickMs = 30;
-        switch (config_scroll_speed) {
-            case 1: tickMs = 60; break;
-            case 2: tickMs = 45; break;
-            case 3: tickMs = 35; break;
-            case 4: tickMs = 28; break;
-            case 5: tickMs = 22; break;
-            case 6: tickMs = 18; break;
-            case 7: tickMs = 14; break;
-            case 8: tickMs = 10; break;
-            case 9: tickMs = 7; break;
-            case 10: default: tickMs = 4; break;
-        }
+        uint32_t tickMs = (config_display_mode == "vertical_crawl") ? (baseTickMs * 4U) : baseTickMs;
 
         switch (scrollState) {
             case ScrollState::PauseStart:
@@ -964,11 +1111,16 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
     } else if (config_display_mode == "serpentine") {
         renderSerpentine(context, formattedHeadline, bodyY, 2, mW - 2, 20, mH, lineSpacing, numRows);
     } else {
+        int startX = mW - scrollPixelOffset;
         matrix->setTextColor(0xFFFF);
-        matrix->setCursor(2, 24);
-        matrix->setTextWrap(true);
-        matrix->print(formattedHeadline);
         matrix->setTextWrap(false);
+        for (size_t i = 0; i < cachedLineCount; i++) {
+            int y = bodyY + (int)i * lineSpacing;
+            if (y + 8 > 22 && y < mH) {
+                matrix->setCursor(startX, y);
+                matrix->print(cachedDisplayLines[i]);
+            }
+        }
     }
 
     // 2. Clear Header Bar area to occlude any scrolling text
@@ -1035,13 +1187,17 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalContiguousBytes = 16000;
     desc.requirements.psramBytes = 0;
 
-    desc.schema.fields = {
+    static constexpr FieldTableEntry kFields[] = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "GNews.io API key (comma-separated for multi-key pool)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("category", ConfigType::ENUM, "Category", "News topic category", "technology", false, "", "", "", "general,world,nation,business,technology,entertainment,sports,science,health", "", true, "", ValidationPolicy::FallbackDefault),
         ConfigField("keywords", ConfigType::STRING, "Keywords", "Custom search query or filter tags", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("lang", ConfigType::ENUM, "Language", "Article language (auto matches system)", "auto", false, "", "", "", "auto,en,fr,es,de,it,pt,nl,ru,zh,ja", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("country", ConfigType::ENUM, "Country", "Country edition", "auto", false, "", "", "", "auto,us,fr,gb,es,de,ca,it,jp,au,br,in", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("max_articles", ConfigType::INTEGER, "Max Articles", "Headlines count per cycle", "5", false, "3", "15", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("articles_per_rotation", ConfigType::INTEGER, "Articles per Rotation", "Number of random articles to scroll before rotating to the next screen (overrides slot timer)", "2", false, "1", "15", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("show_title", ConfigType::BOOLEAN, "Show Title", "Include article title in the scrolling feed", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("show_description", ConfigType::BOOLEAN, "Show Description", "Include article summary description in the scrolling feed", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("show_content", ConfigType::BOOLEAN, "Show Content", "Include full article body content in the scrolling feed", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("requests_per_day", ConfigType::INTEGER, "Daily Requests Budget", "Total API requests per 24 hours (Free tier: max 100)", "10", false, "1", "100", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("force_refresh", ConfigType::BOOLEAN, "Force Refresh Now", "Purge cached news of obsolete language and immediately query API", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("cache_ttl_min", ConfigType::INTEGER, "Cache TTL (min)", "Minutes between fresh API requests", "30", false, "5", "120", "5", "", "", false, "", ValidationPolicy::Clamp),
@@ -1057,6 +1213,7 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_beacon", ConfigType::BOOLEAN, "Show Live Beacon", "Display live pulsing broadcast dot", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_progress_dots", ConfigType::BOOLEAN, "Show Progress Dots", "Display headline index dots", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
     };
+    desc.schema.fields.assign(kFields, kFields + (sizeof(kFields) / sizeof(kFields[0])));
 
     desc.factory = []() { return std::unique_ptr<IEngine>(new GNewsEngine()); };
     return desc;

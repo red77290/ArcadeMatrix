@@ -293,6 +293,54 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.internalContiguousBytes = 8000;
         engines.push_back(d);
     }
+    // 19. Retro Games Showcase
+    {
+        EngineDescriptor d;
+        d.metadata = {"retro_games", "Retro Games Showcase", "arcade", FIRMWARE_VERSION};
+        d.requirements.needsNetwork = true;
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
+        engines.push_back(d);
+    }
+    // 20. Movie Showcase
+    {
+        EngineDescriptor d;
+        d.metadata = {"movie_showcase", "Movie Showcase", "media", FIRMWARE_VERSION};
+        d.requirements.needsNetwork = true;
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
+        engines.push_back(d);
+    }
+    // 21. Series Showcase
+    {
+        EngineDescriptor d;
+        d.metadata = {"series_showcase", "Series Showcase", "media", FIRMWARE_VERSION};
+        d.requirements.needsNetwork = true;
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
+        engines.push_back(d);
+    }
+    // 22. Anime Showcase
+    {
+        EngineDescriptor d;
+        d.metadata = {"anime_showcase", "Anime Showcase", "media", FIRMWARE_VERSION};
+        d.requirements.needsNetwork = true;
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
+        engines.push_back(d);
+    }
 
     return engines;
 }

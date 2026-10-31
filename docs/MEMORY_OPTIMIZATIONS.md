@@ -293,6 +293,25 @@ When `StockEngine` or `CryptoEngine` switched to chart display mode, missing his
 
 ---
 
+### 2.17 DMD Media Showcase V3.1: Compact Footprint, Zero-Copy SRAM1 Decode & Zero-Wi-Fi Playback (S19)
+
+#### The Problem: Multi-Instance Retention, Framebuffer Duplication & Wi-Fi Burst Jitter
+Keeping all four DMD Media Showcase engines (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) in a rotation playlist under the `Lazy-Once` model previously retained large inline configuration buffers per instance, allocated a duplicate `8,192 B` RGB565 `m_frame565` buffer alongside `CanvasBufferedSurface`'s `SRAM1` canvas on classic ESP32, and risked splitting the Sandbox Zone if transient buffers were allocated before the `ShowcaseWkr` FreeRTOS stack.
+
+#### The Architectural Solution
+1. **Compact `MediaShowcaseBase` Footprint (`<= 1,600 B`):**
+   - Cold filter arrays are relocated into a heap-allocated `ConfigExtras` block and double-buffered config slots are compacted, enforcing `static_assert(sizeof(MediaShowcaseBase) <= 1600)` across all four `Lazy-Once` Showcase instances.
+2. **Task-First Allocation & Placement-New Session Reuse:**
+   - `activate()` spawns `ShowcaseWkr` (`5,120 B` stack on `esp32dev`, `6,144 B` on PSRAM S3) **first**, before allocating `m_ioScratch` or `m_spscRing`, preventing stack-induced fragmentation of the contiguous 8-bit heap.
+   - `DmdzHttpStreamSession` (`<= 1,472 B`, `SO_LINGER {1,0}`) is constructed via placement-new (`ScratchSessionGuard`) inside `m_ioScratch`, consuming `0 B` of extra heap or worker stack.
+3. **Shared `ShowcaseStreamPlayer` Zero-Copy Core 1 `ScopedCanvasGuard` + Lossless `16-bit` `DMDZ` v2:**
+   - Both `MediaShowcaseBase` and `FrontendSyncEngine` + `InGameShowcaseEngine` share `engines::showcase::ShowcaseStreamPlayer` (`src/engines/showcase/ShowcaseStreamPlayer.{h,cpp}`). Returning `allowsOverlay() == false` during `Phase::StreamBlank` / `Phase::LiveStream` and `InGameShowcaseEngine` playback makes `CanvasBufferedSurface`'s linear RGB565 `SRAM1` buffer invariant between frames, allowing Core 1 to decode lossless `16-bit` True-RGB565 `DMDZ` v2 opcodes (`0x00..0x04`) directly in place (`0 B` private RGB565 buffer in both `MediaShowcaseBase` and `FrontendSyncEngine` on unrotated panels, eliminating `FrontendSyncEngine`'s legacy `8,192 B` `m_streamFrames[0]` DRAM allocation on `esp32dev`; Core 0 `m_fallbackFrame565` fallback on rotated geometries).
+4. **Hardware-Tailored Plain HTTP/1.1 Transport (`esp32dev` Self-Cleaning SD Cache vs `ESP32-S3` 100% PSRAM):**
+   - **`esp32dev` (`!m_hasPsram`):** Opens `/cache/showcase_{live,sync}.dmdz` with `O_TRUNC` (`ScopedSdCacheFile`), downloads `.rgb565.stream?purge=false&codec=dmdz2` onto the `25 MHz` SD card during Info Card dwell (`0 B` heap alloc during download), closes the TCP socket before Frame 0 (**zero Wi-Fi traffic and zero `lwIP` `pbuf`s during playback**), feeds Core 1 via an atomic `8,448–9,216 B` `DmdzSpscByteRing` (`> 8,195 B` max `128x32` `FRAME_RAW`) with lock-free consumer top-up signaling (`shouldRefillSpscRing()`), holds the final video frame in `Phase::StreamEndHold`, and deterministically deletes (`sd.remove`) the `.dmdz` file on completion, error, `WebUiYield`, or rotation abort (`0` residual SD files).
+   - **`ESP32-S3` (`m_hasPsram`):** 100% PSRAM-only (strictly `0` microSD I/O even with no SD card inserted), opening the HTTP `GET` socket **once** during Info Card dwell: clips `<= min(4 MB, freePsram - 1.5 MB)` preload into `MALLOC_CAP_SPIRAM` and close TCP before Frame 0 (`PsramPreload`, **zero Wi-Fi during playback**, freed on exit); giant HD clips (`> 4 MB`, e.g. `256x64`) reuse the already-open HTTP socket and stream through a `1 MB` (`1,048,576 B`) PSRAM `DmdzSpscByteRing`.
+
+---
+
 ## 3. Quantitative Impact & Memory Baseline Comparison
 
 Measurements taken on **ESP32dev (Xtensa Dual-Core 240 MHz, No PSRAM)** driving a **128×32 HUB75 matrix**:
@@ -334,3 +353,5 @@ To ensure that empirical success translates into verifiable architectural rigor:
 * **Invariant 16 (Two-Stage Quiescent Deactivation):** `deactivate()` on Core 1 establishes immediate logical rendering quiescence; `shutdownForDestruction()` on Core 0 terminates background tasks, sockets, and I/O handles before shared resource release.
 * **Invariant 19 (DMA Isolation):** HUB75 DMA framebuffers are accessed solely through `IDrawingSurface` transactions.
 * **Invariant 21 (HUB75 Output Isolation):** During presentation pipeline reconfiguration, OE remains asserted (HIGH) until the first valid frame of the new pipeline is committed.
+* **Softened Conditional `WEBUI_SYNC` Eviction (`esp32dev` Only, Zero PSRAM Impact, Zero `304` Interruption):** On classic ESP32 without PSRAM (`!hasPsram`), conditional browser refreshes (`If-None-Match` -> `304 Not Modified`, `0 B` payload) and cold `200 OK` loads with abundant internal SRAM (`>= 32 KB` free and `>= 18 KB` contiguous block) bypass `WEBUI_SYNC` completely (`0 ms` DMD interruption). Only cold `200 OK` compressed SPA transfers under tight SRAM or genuine low-heap `/api/*` deferrals engage `DisplaySourceId::WEBUI_SYNC` (`Priority 110`, `2.0s` staging / `2.4s` cold window + `1.2s` non-shortening bootstrap tail), temporarily retiring active rotation engines (`evictAllActiveEnginesForMemory()`) and scaling HUB75 DMA down to 2-bit (`LOADING / WEB INTERFACE...` in EN/FR/ES) before resuming automatically at full **8-bit color depth** (scaling dynamically to 4-bit only if runtime SRAM or `128x64` geometry requires it via `scalesRgb565FrameWithGeometry`).
+* **Showcase V3.1 Zero-Copy & Task-First Discipline:** `MediaShowcaseBase` caps `sizeof(MediaShowcaseBase) <= 1,600 B`, spawns `ShowcaseWkr` before transient heap buffers, frees binary `.rgb565` posters strictly after `Phase::StreamBlank` presents a black frame, holds the final decoded frame in `Phase::StreamEndHold` (`0` posterless Card flash), unlinks `/cache/showcase_{live,sync}.dmdz` via `sd.remove` on every exit path (`esp32dev`), and decodes lossless `16-bit` `DMDZ` v2 directly into `CanvasBufferedSurface`'s `SRAM1` buffer via `ScopedCanvasGuard` (`0 B` duplicate engine framebuffer on unrotated panels, `0` Wi-Fi traffic during `esp32dev` SD-cached or `ESP32-S3` `0`-SD PSRAM-preloaded playback).

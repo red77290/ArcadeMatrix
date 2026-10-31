@@ -15,10 +15,22 @@
 #include "../engines/MessageEngine.h"
 #include "../engines/MarqueeEngine.h"
 #include "../engines/GifEngine.h"
+#include "../engines/WebUiSyncEngine.h"
 #include "../services/AudioSessionManager.h"
 
 #include "drawing/IDrawingSurface.h"
 #include <memory>
+
+struct MatrixRecoveryStatus {
+    bool safeModeActive = false;
+    bool headlessMode = false;
+    int rejectedWidth = 0;
+    int rejectedHeight = 0;
+    int rejectedChain = 0;
+    int rejectedColorDepth = 0;
+    int rejectedLatchBlanking = 0;
+    char reason[128] = "";
+};
 
 class AppRuntime {
 public:
@@ -31,6 +43,10 @@ public:
     inline ConfigLoader& getConfig();
     inline DisplayRuntime& getDisplayRuntime() { return m_displayRuntime; }
     inline IDrawingSurface* getDrawingSurface() { return m_drawingSurface.get(); }
+    inline const MatrixRecoveryStatus& getMatrixRecoveryStatus() const { return m_matrixRecovery; }
+    inline void clearMatrixRecoveryStatus() { m_matrixRecovery = MatrixRecoveryStatus{}; }
+    inline bool canEngageWebUiSync() const { return !m_firstLoop && !m_matrixRecovery.headlessMode; }
+    void requestWebUiSyncWindow(uint32_t durationMs = WebUiSyncEngine::kLowHeapDeferralWindowMs);
 
 private:
     DisplayArbiter m_displayArbiter;
@@ -42,6 +58,8 @@ private:
 
     MessageEngine* m_messageEngine = nullptr;
     MarqueeEngine* m_marqueeEngine = nullptr;
+    InGameShowcaseEngine* m_inGameShowcaseEngine = nullptr;
+    WebUiSyncEngine* m_webUiSyncEngine = nullptr;
     WebServerAPI* m_webServer = nullptr;
     FrontendSyncEngine* m_frontendListener = nullptr;
 
@@ -68,6 +86,8 @@ private:
     ProducerSyncState m_syncMarquee;
     ProducerSyncState m_syncGif;
     ProducerSyncState m_syncVis;
+    ProducerSyncState m_syncInGameShowcase;
+    MatrixRecoveryStatus m_matrixRecovery;
 
     bool handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);

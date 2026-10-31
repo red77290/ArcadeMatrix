@@ -13,8 +13,10 @@
 #include <esp_ota_ops.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
 #include "../core/MatrixEngine.h"
 #include "../engines/GifEngine.h"
+#include "../engines/FrontendSyncEngine.h"
 #include "../core/RotationManager.h"
 #include "WebUI.h"
 #include "../core/Globals.h"
@@ -33,8 +35,80 @@
 #include <atomic>
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/ShowcaseDiscovery.h"
+#include "../core/AppRuntime.h"
+#include "../engines/WebUiSyncEngine.h"
+#include <fcntl.h>
+#include <errno.h>
+#include <lwip/inet.h>
+#include <lwip/sockets.h>
+#ifdef INADDR_NONE
+#undef INADDR_NONE
+#endif
+
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+// Core 0 HTTP control plane only: optimize 4,400+ lines of ArduinoJson/route lambdas for Flash size
+// while preserving -O2 on Core 1 60 FPS HUB75 DMA rendering TUs.
+#pragma GCC optimize("Os")
+#endif
 
 extern ConfigLoader config;
+
+static inline size_t freeInternal8BitHeap() {
+#if defined(ESP32)
+    return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+    return ESP.getFreeHeap();
+#endif
+}
+
+static inline size_t largestInternal8BitBlock() {
+#if defined(ESP32)
+    return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+    return ESP.getMaxAllocHeap();
+#endif
+}
+
+static bool deferForWebUiSyncIfLowHeap(AsyncWebServerRequest* request, size_t minLargest8, size_t minFree8) {
+#if defined(ESP32)
+    if (!hardwareHAL.capabilities().hasPsram) {
+        if (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing()) {
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kBootstrapTailWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kBootstrapTailWindowMs);
+        }
+        size_t free8 = freeInternal8BitHeap();
+        size_t largest8 = largestInternal8BitBlock();
+        if (largest8 < minLargest8 || free8 < minFree8) {
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+            LOGI("WebServer", "Deferring %s to engage WEBUI_SYNC (free8=%u, largest8=%u, needFree=%u, needLargest=%u)",
+                 request ? request->url().c_str() : "request",
+                 (unsigned)free8, (unsigned)largest8, (unsigned)minFree8, (unsigned)minLargest8);
+            if (request) {
+                request->send(503);
+            }
+            return true;
+        }
+    }
+#else
+    (void)request;
+    (void)minLargest8;
+    (void)minFree8;
+#endif
+    return false;
+}
+
+static void recordPeerCandidateFromRequest(AsyncWebServerRequest* request) {
+    if (request && request->client()) {
+        IPAddress peerIp = request->client()->remoteIP();
+        if (peerIp != IPAddress(0, 0, 0, 0) && peerIp != INADDR_NONE) {
+            char peerStr[20];
+            snprintf(peerStr, sizeof(peerStr), "%u.%u.%u.%u", peerIp[0], peerIp[1], peerIp[2], peerIp[3]);
+            net::ShowcaseDiscovery::recordCandidateIpStr(peerStr);
+        }
+    }
+}
 
 // A config change is applied in memory first and then written to the card. When the write fails (the
 // card is busy with a rescan or upload, or the write itself fails) the change would silently vanish at
@@ -94,7 +168,7 @@ static void appendJsonString(String& out, const char* str) {
 }
 
 static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out, bool includeSchema = true) {
-    out.reserve(out.length() + (includeSchema ? 2048 : 1024));
+    out.reserve(out.length() + (includeSchema ? 2048 : 640));
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* targetPipeline = guard.get().matrix.render_pipeline.c_str();
@@ -447,35 +521,81 @@ void WebServerAPI::begin() {
     // The ETag is content-derived (see scripts/build_webui.py): a commit-derived tag would not
     // change when data/index.html is edited without committing, leaving stale UI in the browser.
     auto serveWebUi = [](AsyncWebServerRequest *request) {
-        LOGI("WebServer", "Serving WebUI to %s (Free DRAM: %u, MaxAlloc: %u)",
-             request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
-             (unsigned)ESP.getFreeHeap(),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        recordPeerCandidateFromRequest(request);
 
-        // If client sends conditional refresh, respond with 304 Not Modified instantly (0 bytes payload)
+        // Fast-path conditional refresh FIRST: 304 Not Modified sends 0 payload bytes and never
+        // interrupts active DMD playback with WEBUI_SYNC on cached browser reloads.
+        bool etagMatched = false;
         if (request->hasHeader("If-None-Match")) {
             const AsyncWebHeader* h = request->getHeader("If-None-Match");
             if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
-                request->send(304);
-                return;
+                etagMatched = true;
             }
         }
+        if (etagMatched) {
+            request->send(304);
+            return;
+        }
+
+        const size_t free8 = freeInternal8BitHeap();
+        const size_t largest8 = largestInternal8BitBlock();
+        LOGI("WebServer", "Serving WebUI to %s (Free8Bit: %u, MaxAlloc8Bit: %u)",
+             request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
+             (unsigned)free8,
+             (unsigned)largest8);
 
 #if defined(ESP32)
-        if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 6144) {
-            LOGW("WebServer", "Serving WebUI deferred: insufficient contiguous DRAM (%u bytes)",
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-            request->send(503, "text/plain", "Server Busy - Low Memory");
+        // On classic ESP32 without PSRAM (esp32dev), cold 200 OK SPA transfers only engage
+        // DisplaySourceId::WEBUI_SYNC when internal 8-bit DRAM is below the safe bulk watermark
+        // (or while a staging reload is already completing), using short non-sticky windows.
+        const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+        const bool syncActive = WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing();
+        if (WebUiSyncEngine::needsColdSpaStaging(hasPsram, /*etagMatched=*/false, syncActive, free8, largest8)) {
+            if (app.canEngageWebUiSync() && !WebUiSyncEngine::isReadyForServing()) {
+                app.requestWebUiSyncWindow(WebUiSyncEngine::kStagingWindowMs);
+                NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kStagingWindowMs);
+                if (free8 < 4096U || largest8 < 2048U) {
+                    AsyncWebServerResponse* r = request->beginResponse(503);
+                    if (r) {
+                        r->addHeader("Refresh", "1");
+                        request->send(r);
+                    } else {
+                        request->send(503);
+                    }
+                    return;
+                }
+                static const char kWebUiStagingHtml[] PROGMEM =
+                    "<!doctype html><html><head><meta charset='utf-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<title>ArcadeMatrix</title>"
+                    "<style>html,body{margin:0;height:100%;background:#0b0e14;display:flex;align-items:center;justify-content:center}"
+                    ".s{width:28px;height:28px;border:3px solid #1e293b;border-top-color:#00e5ff;border-radius:50%;animation:r .7s linear infinite}"
+                    "@keyframes r{to{transform:rotate(360deg)}}</style>"
+                    "<script>setTimeout(function(){location.replace(location.href)},250)</script>"
+                    "</head><body><div class='s'></div></body></html>";
+                AsyncWebServerResponse* staging = request->beginResponse(200, "text/html; charset=utf-8", kWebUiStagingHtml);
+                staging->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+                request->send(staging);
+                return;
+            }
+            app.requestWebUiSyncWindow(WebUiSyncEngine::kColdLoadWindowMs);
+            NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kColdLoadWindowMs);
+        }
+
+        if (largestInternal8BitBlock() < 6144U || freeInternal8BitHeap() < 8192U) {
+            LOGW("WebServer", "Serving WebUI deferred: insufficient contiguous 8-bit DRAM (%u / %u bytes)",
+                 (unsigned)largestInternal8BitBlock(), (unsigned)freeInternal8BitHeap());
+            request->send(503);
             return;
         }
 
         // Memory-constrained platforms without PSRAM (classic ESP32 / esp32dev):
-        // When serving the heavy 109KB compressed SPA bundle while internal DRAM is below TLS watermark,
+        // When serving the heavy compressed SPA bundle while internal DRAM is below TLS watermark,
         // mark heavy transfer active to temporarily protect display pipeline and pause concurrent TLS bursts.
-        if (!hardwareHAL.capabilities().hasPsram) {
-            uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        if (!hasPsram) {
+            uint32_t largest = largestInternal8BitBlock();
             if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
-                NetworkBudget::markBulkTransferActive(3000);
+                NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kColdLoadWindowMs);
             }
         }
 #endif
@@ -556,31 +676,48 @@ static bool checkAuth(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized: missing or invalid API token\"}");
         return false;
     }
+    recordPeerCandidateFromRequest(request);
     return true;
 }
 
 // Config mutations copy maps/strings (snapshot publish, SD save). Under severe DRAM exhaustion a
-// throwing allocation aborts the firmware, so refuse the request early instead.
+// throwing allocation aborts the firmware, so engage WEBUI_SYNC on non-PSRAM and let the client auto-retry.
 static bool rejectIfLowHeap(AsyncWebServerRequest* request) {
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
     size_t minLargest = hasPsram ? 12288 : 5120;
-    size_t minFree = hasPsram ? 20480 : 12288;
-    if (ESP.getMaxAllocHeap() >= minLargest && ESP.getFreeHeap() >= minFree) return false;
-    LOGW("WebServer", "Rejecting config mutation: DRAM pressure (free=%u, largest=%u, minFree=%u, minLargest=%u)",
-         (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)minFree, (unsigned)minLargest);
-    AsyncWebServerResponse* r = request->beginResponse(503);
-    r->addHeader("Retry-After", "2");
-    request->send(r);
+    size_t minFree = hasPsram ? 20480 : 10240;
+#if defined(ESP32)
+    if (!hasPsram && (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+        app.requestWebUiSyncWindow(WebUiSyncEngine::kBootstrapTailWindowMs);
+        NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kBootstrapTailWindowMs);
+    }
+#endif
+    size_t free8 = freeInternal8BitHeap();
+    size_t largest8 = largestInternal8BitBlock();
+    if (largest8 >= minLargest && free8 >= minFree) return false;
+#if defined(ESP32)
+    if (!hasPsram) {
+        app.requestWebUiSyncWindow(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+        NetworkBudget::markBulkTransferActive(WebUiSyncEngine::kLowHeapDeferralWindowMs);
+    }
+#endif
+    LOGW("WebServer", "Rejecting config mutation: 8-bit DRAM pressure (free8=%u, largest8=%u, minFree=%u, minLargest=%u)",
+         (unsigned)free8, (unsigned)largest8, (unsigned)minFree, (unsigned)minLargest);
+    if (request) {
+        request->send(503);
+    }
     return true;
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
     size_t minLargest = hasPsram ? 4096 : 3072;
-    size_t minFree = hasPsram ? 12288 : 8192;
-    if (ESP.getMaxAllocHeap() < minLargest || ESP.getFreeHeap() < minFree) {
-        LOGW("WebServer", "Dropping API response: DRAM pressure (free=%u, largest=%u, minFree=%u, minLargest=%u)",
-             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)minFree, (unsigned)minLargest);
+    size_t minFree = hasPsram ? 12288 : 6144;
+    size_t free8 = freeInternal8BitHeap();
+    size_t largest8 = largestInternal8BitBlock();
+    if (largest8 < minLargest || free8 < minFree) {
+        LOGW("WebServer", "Dropping API response: 8-bit DRAM pressure (free8=%u, largest8=%u, minFree=%u, minLargest=%u)",
+             (unsigned)free8, (unsigned)largest8, (unsigned)minFree, (unsigned)minLargest);
         // Never close the client from inside a handler: the library keeps parsing this request
         // after the handler returns and would dereference a destroyed client. A body-less 503 is
         // the smallest valid answer and lets the client retry.
@@ -679,73 +816,111 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        LOGI("WebServer", "Serving /api/engines (catalog) to %s (Free DRAM: %u, MaxAlloc: %u)",
+        LOGI("WebServer", "Serving /api/engines (catalog) to %s (Free8Bit: %u, MaxAlloc8Bit: %u)",
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
-             (unsigned)ESP.getFreeHeap(),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+             (unsigned)freeInternal8BitHeap(),
+             (unsigned)largestInternal8BitBlock());
 
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) {
+            return;
+        }
 #if defined(ESP32)
-        if (!hardwareHAL.capabilities().hasPsram) {
-            uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-            if (largest < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
-                NetworkBudget::markBulkTransferActive(2500);
-            }
+        if (!hardwareHAL.capabilities().hasPsram &&
+            largestInternal8BitBlock() < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
+            NetworkBudget::markBulkTransferActive(2500);
         }
 #endif
 
         struct EnginesCatalogStreamContext {
             size_t currentIndex = 0;
             String carry;
+            String scratch;
+            size_t carryOffset = 0;
             bool sentOpening = false;
-            bool done = false;
+            bool sentClosing = false;
         };
 
         auto ctx = std::make_shared<EnginesCatalogStreamContext>();
+        ctx->carry.reserve(768);
+        ctx->scratch.reserve(768);
 
         AsyncWebServerResponse* response = request->beginChunkedResponse("application/json", [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
-            size_t out = 0;
-            auto emit = [&](const String& piece) -> bool {
-                if (out + piece.length() > maxLen) {
-                    ctx->carry = piece;
-                    return false;
-                }
-                memcpy(buf + out, piece.c_str(), piece.length());
-                out += piece.length();
-                return true;
-            };
-
-            if (ctx->carry.length()) {
-                String c = ctx->carry;
-                ctx->carry = "";
-                if (!emit(c)) return out;
+            (void)index;
+            if (maxLen == 0) {
+                return RESPONSE_TRY_AGAIN;
             }
 
-            if (ctx->done) {
-                return 0;
+            size_t out = 0;
+            auto flushCarry = [&]() -> bool {
+                if (ctx->carryOffset >= ctx->carry.length()) {
+                    ctx->carry.remove(0);
+                    ctx->carryOffset = 0;
+                    return true;
+                }
+                size_t rem = ctx->carry.length() - ctx->carryOffset;
+                size_t space = maxLen - out;
+                size_t toCopy = (rem < space) ? rem : space;
+                if (toCopy > 0) {
+                    memcpy(buf + out, ctx->carry.c_str() + ctx->carryOffset, toCopy);
+                    out += toCopy;
+                    ctx->carryOffset += toCopy;
+                }
+                if (ctx->carryOffset >= ctx->carry.length()) {
+                    ctx->carry.remove(0);
+                    ctx->carryOffset = 0;
+                    return true;
+                }
+                return false;
+            };
+
+            auto emit = [&](const String& piece) -> bool {
+                if (piece.length() == 0) return true;
+                size_t space = maxLen - out;
+                if (piece.length() <= space) {
+                    memcpy(buf + out, piece.c_str(), piece.length());
+                    out += piece.length();
+                    return true;
+                }
+                if (space > 0) {
+                    memcpy(buf + out, piece.c_str(), space);
+                    out += space;
+                }
+                ctx->carry = piece;
+                ctx->carryOffset = space;
+                return false;
+            };
+
+            if (!flushCarry()) {
+                return out;
+            }
+
+            if (ctx->sentClosing) {
+                return out;
             }
 
             if (!ctx->sentOpening) {
-                if (!emit("[")) return out;
                 ctx->sentOpening = true;
+                if (!emit("[")) return out;
             }
 
             size_t count = 0;
             const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
 
-            while (ctx->currentIndex < count) {
-                String piece;
-                if (ctx->currentIndex > 0) piece += ',';
-                serializeEngineDescriptor(descriptors[ctx->currentIndex], piece, false /* compact catalog */);
+            while (ctx->currentIndex < count && out < maxLen) {
+                ctx->scratch.remove(0);
+                if (ctx->currentIndex > 0) ctx->scratch += ',';
+                serializeEngineDescriptor(descriptors[ctx->currentIndex], ctx->scratch, false /* compact catalog */);
                 ctx->currentIndex++;
-                if (!emit(piece)) {
+                if (!emit(ctx->scratch)) {
                     return out;
                 }
-                if (out > maxLen - 128) break;
+                if (maxLen - out <= 128) break;
             }
 
-            if (ctx->currentIndex >= count) {
-                if (emit("]")) {
-                    ctx->done = true;
+            if (ctx->currentIndex >= count && !ctx->sentClosing && out < maxLen) {
+                ctx->sentClosing = true;
+                if (!emit("]")) {
+                    return out;
                 }
             }
 
@@ -801,6 +976,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) return;
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
@@ -936,6 +1112,7 @@ void WebServerAPI::setupRoutes() {
     // API: DELETE /api/instances/{id} — Remove an instance by ID
     server.on("/api/instances", HTTP_DELETE, [](AsyncWebServerRequest *request){
         if (!checkAuth(request)) return;
+        if (rejectIfLowHeap(request)) return;
         // ESPAsyncWebServer doesn't natively support path parameters,
         // so we look for ?id=xxx or parse the URL path manually.
         String instanceId = "";
@@ -1010,6 +1187,7 @@ void WebServerAPI::setupRoutes() {
     // Also handle path-style DELETE: /api/instances/xxx (catchall for sub-paths)
     server.on("/api/instances/*", HTTP_DELETE, [](AsyncWebServerRequest *request){
         if (!checkAuth(request)) return;
+        if (rejectIfLowHeap(request)) return;
         String url = request->url();
         String instanceId = "";
         if (url.startsWith("/api/instances/")) {
@@ -1073,6 +1251,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/rotation — Return the current rotation list
     server.on("/api/rotation", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) return;
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
@@ -1401,6 +1580,7 @@ void WebServerAPI::setupRoutes() {
             request->send(200, "application/json", s_playlistCache[cacheSlot]);
             return;
         }
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) return;
 
         auto readOrScan = [](const String& rootDir) -> String {
             String cleanRoot = rootDir;
@@ -1553,8 +1733,9 @@ void WebServerAPI::setupRoutes() {
     server.addHandler(playHandler);
     
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (deferForWebUiSyncIfLowHeap(request, 8192U, 16384U)) return;
         extern ConfigLoader config;
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 4096);
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 3072);
         JsonObject doc = response->getRoot().as<JsonObject>();
         
         if (doc.isNull()) {
@@ -1716,6 +1897,25 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
         doc["mqtt_device"] = snap.mqtt.deviceName;
         doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
+        doc["mqtt_use_showcase_broker"] = snap.mqtt.use_showcase_broker;
+        doc["mqtt_ingame_showcase_enabled"] = snap.mqtt.ingame_showcase_enabled;
+        doc["mqtt_ingame_cycle_mode"] = snap.mqtt.ingame_cycle_mode;
+        doc["mqtt_ingame_marquee_interval_sec"] = snap.mqtt.ingame_marquee_interval_sec;
+        doc["mqtt_card_style_source"] = snap.mqtt.card_style_source;
+        doc["mqtt_include_card_intro"] = snap.mqtt.include_card_intro;
+        doc["mqtt_card_layout"] = snap.mqtt.card_layout;
+        doc["mqtt_card_theme"] = snap.mqtt.card_theme;
+        doc["mqtt_show_poster"] = snap.mqtt.show_poster;
+        doc["mqtt_show_synopsis"] = snap.mqtt.show_synopsis;
+        doc["mqtt_text_scroll_speed"] = snap.mqtt.text_scroll_speed;
+        doc["mqtt_jacket_panorama"] = snap.mqtt.jacket_panorama;
+        doc["mqtt_marquee_panorama"] = snap.mqtt.marquee_panorama;
+        doc["mqtt_snapshot_panorama_count"] = snap.mqtt.snapshot_panorama_count;
+        doc["mqtt_show_video"] = snap.mqtt.show_video;
+        doc["mqtt_video_max_duration_s"] = snap.mqtt.video_max_duration_s;
+        doc["mqtt_video_fps"] = snap.mqtt.video_fps;
+        doc["mqtt_video_mode"] = snap.mqtt.video_mode;
+        doc["mqtt_color_boost"] = snap.mqtt.color_boost;
 
         // MQTT Data broker (used only while the mqttdata engine is on screen)
         doc["data_mqtt_broker"] = snap.dataMqtt.broker;
@@ -1723,6 +1923,14 @@ void WebServerAPI::setupRoutes() {
         doc["data_mqtt_user"] = snap.dataMqtt.user;
         doc["data_mqtt_pass"] = snap.dataMqtt.pass;
         doc["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
+
+        // DMD Media Showcase server & MQTT
+        doc["showcase_enabled"] = snap.showcase.enabled;
+        doc["showcase_server_url"] = snap.showcase.server_url;
+        doc["showcase_transport_mode"] = snap.showcase.transport_mode;
+        doc["showcase_use_broker"] = snap.showcase.use_showcase_broker;
+        doc["showcase_broker_source"] = snap.showcase.mqtt_broker_source;
+        doc["showcase_custom_url"] = snap.showcase.mqtt_custom_url;
 
         response->setLength();
         request->send(response);
@@ -1954,11 +2162,38 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
             if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
+            if (!doc["mqtt_use_showcase_broker"].isNull()) cfg.mqtt.use_showcase_broker = (bool)doc["mqtt_use_showcase_broker"];
+            if (!doc["mqtt_ingame_showcase_enabled"].isNull()) cfg.mqtt.ingame_showcase_enabled = (bool)doc["mqtt_ingame_showcase_enabled"];
+            if (!doc["mqtt_ingame_cycle_mode"].isNull()) cfg.mqtt.ingame_cycle_mode = doc["mqtt_ingame_cycle_mode"].as<String>();
+            if (!doc["mqtt_ingame_marquee_interval_sec"].isNull()) cfg.mqtt.ingame_marquee_interval_sec = doc["mqtt_ingame_marquee_interval_sec"].as<int>();
+            if (!doc["mqtt_card_style_source"].isNull()) cfg.mqtt.card_style_source = doc["mqtt_card_style_source"].as<String>();
+            if (!doc["mqtt_include_card_intro"].isNull()) cfg.mqtt.include_card_intro = doc["mqtt_include_card_intro"].as<bool>();
+            if (!doc["mqtt_card_layout"].isNull()) cfg.mqtt.card_layout = doc["mqtt_card_layout"].as<String>();
+            if (!doc["mqtt_card_theme"].isNull()) cfg.mqtt.card_theme = doc["mqtt_card_theme"].as<String>();
+            if (!doc["mqtt_show_poster"].isNull()) cfg.mqtt.show_poster = doc["mqtt_show_poster"].as<bool>();
+            if (!doc["mqtt_show_synopsis"].isNull()) cfg.mqtt.show_synopsis = doc["mqtt_show_synopsis"].as<bool>();
+            if (!doc["mqtt_text_scroll_speed"].isNull()) cfg.mqtt.text_scroll_speed = doc["mqtt_text_scroll_speed"].as<String>();
+            if (!doc["mqtt_jacket_panorama"].isNull()) cfg.mqtt.jacket_panorama = doc["mqtt_jacket_panorama"].as<bool>();
+            if (!doc["mqtt_marquee_panorama"].isNull()) cfg.mqtt.marquee_panorama = doc["mqtt_marquee_panorama"].as<bool>();
+            if (!doc["mqtt_snapshot_panorama_count"].isNull()) cfg.mqtt.snapshot_panorama_count = doc["mqtt_snapshot_panorama_count"].as<int>();
+            if (!doc["mqtt_show_video"].isNull()) cfg.mqtt.show_video = doc["mqtt_show_video"].as<bool>();
+            if (!doc["mqtt_video_max_duration_s"].isNull()) cfg.mqtt.video_max_duration_s = doc["mqtt_video_max_duration_s"].as<int>();
+            if (!doc["mqtt_video_fps"].isNull()) cfg.mqtt.video_fps = doc["mqtt_video_fps"].as<int>();
+            if (!doc["mqtt_video_mode"].isNull()) cfg.mqtt.video_mode = doc["mqtt_video_mode"].as<String>();
+            if (!doc["mqtt_color_boost"].isNull()) cfg.mqtt.color_boost = doc["mqtt_color_boost"].as<String>();
+            ConfigSanitizer::sanitize(cfg);
             // Read when the mqttdata engine next connects: no reboot.
             if (!doc["data_mqtt_broker"].isNull()) cfg.dataMqtt.broker = (const char*)doc["data_mqtt_broker"];
             if (!doc["data_mqtt_port"].isNull()) cfg.dataMqtt.port = (int)doc["data_mqtt_port"];
             if (!doc["data_mqtt_user"].isNull()) cfg.dataMqtt.user = (const char*)doc["data_mqtt_user"];
             if (!doc["data_mqtt_pass"].isNull()) cfg.dataMqtt.pass = (const char*)doc["data_mqtt_pass"];
+            // Showcase server & MQTT
+            if (!doc["showcase_enabled"].isNull()) cfg.showcase.enabled = (bool)doc["showcase_enabled"];
+            if (!doc["showcase_server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_server_url"]), true);
+            if (!doc["showcase_transport_mode"].isNull()) cfg.showcase.transport_mode = normalizeShowcaseTransportMode(String((const char*)doc["showcase_transport_mode"]));
+            if (!doc["showcase_use_broker"].isNull()) cfg.showcase.use_showcase_broker = (bool)doc["showcase_use_broker"];
+            if (!doc["showcase_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = (const char*)doc["showcase_broker_source"];
+            if (!doc["showcase_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String((const char*)doc["showcase_custom_url"]), false);
             if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
             if (!doc["api_token"].isNull()) {
                 String newTok = doc["api_token"].as<String>();
@@ -2113,7 +2348,7 @@ void WebServerAPI::setupRoutes() {
         });
         extern MatrixEngine matrixEngine;
         matrixEngine.setBrightness((uint8_t)b);
-        config.saveToSD("/config.json");
+        config.saveDomainsToSD(CONFIG_DOMAIN_HARDWARE, "/config.json");
 
         SpiRamJsonDocument resp(256);
         resp["status"] = "success";
@@ -2179,17 +2414,20 @@ void WebServerAPI::setupRoutes() {
 
     // API: System settings (GET /api/system?section=system|matrix|mqtt|wifi|hardware)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
-        extern ConfigLoader config;
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const ConfigSnapshot& snap = guard.get();
-
         String section = "";
         if (request->hasParam("section")) {
             section = request->getParam("section")->value();
             section.toLowerCase();
         }
+        const size_t minLargest8 = section.isEmpty() ? 8192U : 6144U;
+        const size_t minFree8 = section.isEmpty() ? 18432U : 14336U;
+        if (deferForWebUiSyncIfLowHeap(request, minLargest8, minFree8)) return;
 
-        size_t docCap = section.isEmpty() ? 4096 : 1024;
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
+
+        size_t docCap = section.isEmpty() ? 6144 : 2048;
         SpiRamJsonDocument doc(docCap);
 
         if (section.isEmpty() || section == "system") {
@@ -2262,6 +2500,20 @@ void WebServerAPI::setupRoutes() {
             mat["matrix_power"] = snap.matrix.matrix_power;
             mat["brightness"] = snap.matrix.powerLimitPercent;
             mat["power_limit_percent"] = snap.matrix.powerLimitPercent;
+            const auto& dispCaps = BoardProfile::current().display();
+            mat["max_width"] = dispCaps.maxWidth;
+            mat["max_height"] = dispCaps.maxHeight;
+            const auto& rec = app.getMatrixRecoveryStatus();
+            mat["safe_mode"] = rec.safeModeActive;
+            mat["headless_mode"] = rec.headlessMode;
+            mat["safe_mode_reason"] = rec.reason;
+            if (rec.safeModeActive) {
+                mat["rejected_width"] = rec.rejectedWidth;
+                mat["rejected_height"] = rec.rejectedHeight;
+                mat["rejected_chain_length"] = rec.rejectedChain;
+                mat["rejected_color_depth"] = rec.rejectedColorDepth;
+                mat["rejected_latch_blanking"] = rec.rejectedLatchBlanking;
+            }
         }
 
         if (section.isEmpty() || section == "mqtt") {
@@ -2274,6 +2526,25 @@ void WebServerAPI::setupRoutes() {
             mqtt["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
             mqtt["device_name"] = snap.mqtt.deviceName;
             mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
+            mqtt["use_showcase_broker"] = snap.mqtt.use_showcase_broker;
+            mqtt["ingame_showcase_enabled"] = snap.mqtt.ingame_showcase_enabled;
+            mqtt["ingame_cycle_mode"] = snap.mqtt.ingame_cycle_mode;
+            mqtt["ingame_marquee_interval_sec"] = snap.mqtt.ingame_marquee_interval_sec;
+            mqtt["card_style_source"] = snap.mqtt.card_style_source;
+            mqtt["include_card_intro"] = snap.mqtt.include_card_intro;
+            mqtt["card_layout"] = snap.mqtt.card_layout;
+            mqtt["card_theme"] = snap.mqtt.card_theme;
+            mqtt["show_poster"] = snap.mqtt.show_poster;
+            mqtt["show_synopsis"] = snap.mqtt.show_synopsis;
+            mqtt["text_scroll_speed"] = snap.mqtt.text_scroll_speed;
+            mqtt["jacket_panorama"] = snap.mqtt.jacket_panorama;
+            mqtt["marquee_panorama"] = snap.mqtt.marquee_panorama;
+            mqtt["snapshot_panorama_count"] = snap.mqtt.snapshot_panorama_count;
+            mqtt["show_video"] = snap.mqtt.show_video;
+            mqtt["video_max_duration_s"] = snap.mqtt.video_max_duration_s;
+            mqtt["video_fps"] = snap.mqtt.video_fps;
+            mqtt["video_mode"] = snap.mqtt.video_mode;
+            mqtt["color_boost"] = snap.mqtt.color_boost;
         }
 
         if (section.isEmpty() || section == "data_mqtt") {
@@ -2283,6 +2554,16 @@ void WebServerAPI::setupRoutes() {
             dmq["user"] = snap.dataMqtt.user;
             dmq["pass"] = snap.dataMqtt.pass;
             dmq["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
+        }
+
+        if (section.isEmpty() || section == "showcase") {
+            JsonObject sc = section.isEmpty() ? doc.createNestedObject("showcase") : doc.to<JsonObject>();
+            sc["enabled"] = snap.showcase.enabled;
+            sc["server_url"] = snap.showcase.server_url;
+            sc["transport_mode"] = snap.showcase.transport_mode;
+            sc["use_showcase_broker"] = snap.showcase.use_showcase_broker;
+            sc["mqtt_broker_source"] = snap.showcase.mqtt_broker_source;
+            sc["mqtt_custom_url"] = snap.showcase.mqtt_custom_url;
         }
 
         if (section.isEmpty() || section == "wifi") {
@@ -2326,10 +2607,34 @@ void WebServerAPI::setupRoutes() {
         }
         JsonObject doc = json.as<JsonObject>();
         extern ConfigLoader config;
+        if (doc.containsKey("matrix") && doc["matrix"].is<JsonObject>()) {
+            JsonObject matCheck = doc["matrix"].as<JsonObject>();
+            ConfigSnapshotGuard snapGuard = config.acquireSnapshot();
+            int candW = !matCheck["width"].isNull() ? matCheck["width"].as<int>() : snapGuard->matrix.width;
+            int candH = !matCheck["height"].isNull() ? matCheck["height"].as<int>() : snapGuard->matrix.height;
+            int candC = !matCheck["chain_length"].isNull() ? matCheck["chain_length"].as<int>() : snapGuard->matrix.chainLength;
+            const auto& dispCaps = BoardProfile::current().display();
+            uint32_t totalW = (candW > 0 && candC > 0) ? (static_cast<uint32_t>(candW) * static_cast<uint32_t>(candC)) : 0U;
+            uint32_t totalH = (candH > 0) ? static_cast<uint32_t>(candH) : 0U;
+            if (candW < 16 || candH < 16 || candC < 1 || totalW > dispCaps.maxWidth || totalH > dispCaps.maxHeight) {
+                char errBuf[192];
+                snprintf(
+                    errBuf,
+                    sizeof(errBuf),
+                    "{\"error\":\"Requested matrix geometry (%dx%d Chain %d = %ux%u) exceeds board hardware limit (%ux%u)\"}",
+                    candW, candH, candC, (unsigned)totalW, (unsigned)totalH,
+                    (unsigned)dispCaps.maxWidth, (unsigned)dispCaps.maxHeight
+                );
+                request->send(400, "application/json", errBuf);
+                return;
+            }
+        }
+
         bool changed = false;
         bool willReboot = false;
         if (doc.containsKey("reboot") && doc["reboot"].as<bool>()) willReboot = true;
         bool langChanged = false;
+        uint8_t domainMask = 0;
 
         config.mutate([&](ConfigLoader& cfg) {
             JsonObject sys = doc.containsKey("system") ? doc["system"].as<JsonObject>() : doc;
@@ -2339,44 +2644,54 @@ void WebServerAPI::setupRoutes() {
                     cfg.system.lang = newLang;
                     changed = true;
                     langChanged = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 }
             }
             if (!sys["timezone"].isNull()) {
                 cfg.system.timezone = sys["timezone"].as<String>();
                 configTzTime(getPosixTimezone(cfg.system.timezone).c_str(), "pool.ntp.org");
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["format_24h"].isNull()) {
                 cfg.system.format24h = sys["format_24h"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["unit"].isNull()) {
                 cfg.system.unit = sys["unit"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["temp_unit"].isNull()) {
                 cfg.system.unit = sys["temp_unit"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["temp_offset"].isNull()) {
                 cfg.system.temp_offset = sys["temp_offset"].as<float>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["night_mode_enabled"].isNull()) {
                 cfg.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["turn_off_at"].isNull()) {
                 cfg.system.turn_off_at = sys["turn_off_at"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["wake_up_at"].isNull()) {
                 cfg.system.wake_up_at = sys["wake_up_at"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["night_brightness"].isNull()) {
                 cfg.system.night_brightness = sys["night_brightness"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["brightness_limit"].isNull() || !sys["brightness"].isNull() || !sys["day_brightness"].isNull()) {
                 int b = !sys["brightness_limit"].isNull() ? sys["brightness_limit"].as<int>() : (!sys["brightness"].isNull() ? sys["brightness"].as<int>() : sys["day_brightness"].as<int>());
@@ -2386,31 +2701,38 @@ void WebServerAPI::setupRoutes() {
                 extern MatrixEngine matrixEngine;
                 matrixEngine.setBrightness(b);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
             if (!sys["idle_fighter_enabled"].isNull()) {
                 cfg.system.idle_fighter_enabled = sys["idle_fighter_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["idle_fighter_interval"].isNull()) {
                 cfg.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["idle_fighter_speed"].isNull()) {
                 cfg.system.idle_fighter_speed = sys["idle_fighter_speed"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["api_auth_enabled"].isNull()) {
                 cfg.system.api_auth_enabled = sys["api_auth_enabled"].as<bool>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
             if (!sys["api_token"].isNull()) {
                 String newTok = sys["api_token"].as<String>();
                 if (newTok.length() > 0) {
                     cfg.system.api_token = newTok;
                     changed = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 } else if (!cfg.system.api_auth_enabled && cfg.system.api_token.length() > 0) {
                     cfg.system.api_token = "";
                     changed = true;
+                    domainMask |= CONFIG_DOMAIN_SYSTEM;
                 }
             }
 
@@ -2429,35 +2751,42 @@ void WebServerAPI::setupRoutes() {
                 cfg.matrix.rotation_offset = parseRotationVal(rootRot);
                 displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["transition_effect"].isNull()) {
                 cfg.matrix.rotation_transition = doc["transition_effect"].as<String>();
                 displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             } else if (!doc["rotation_transition"].isNull()) {
                 cfg.matrix.rotation_transition = doc["rotation_transition"].as<String>();
                 displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["transition_duration_ms"].isNull()) {
                 cfg.matrix.rotation_transition_duration_ms = doc["transition_duration_ms"].as<int>();
                 displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             } else if (!doc["rotation_transition_duration_ms"].isNull()) {
                 cfg.matrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
                 displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (!doc["slot_transition"].isNull()) {
                 cfg.matrix.slot_transition = doc["slot_transition"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
             if (!doc["slot_transition_duration_ms"].isNull()) {
                 cfg.matrix.slot_transition_duration_ms = doc["slot_transition_duration_ms"].as<int>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (doc.containsKey("matrix")) {
@@ -2475,8 +2804,8 @@ void WebServerAPI::setupRoutes() {
                 if (!mat["limit_refresh_rate_hz"].isNull()) { cfg.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>(); willReboot = true; }
                 if (!mat["clk_phase"].isNull()) { cfg.matrix.clkPhase = mat["clk_phase"].as<bool>(); willReboot = true; }
                 else if (!mat["clkPhase"].isNull()) { cfg.matrix.clkPhase = mat["clkPhase"].as<bool>(); willReboot = true; }
-                if (!mat["latch_blanking"].isNull()) { cfg.matrix.latchBlanking = mat["latch_blanking"].as<int>(); willReboot = true; }
-                else if (!mat["latchBlanking"].isNull()) { cfg.matrix.latchBlanking = mat["latchBlanking"].as<int>(); willReboot = true; }
+                if (!mat["latch_blanking"].isNull()) { cfg.matrix.latchBlanking = constrain(mat["latch_blanking"].as<int>(), 1, 8); willReboot = true; }
+                else if (!mat["latchBlanking"].isNull()) { cfg.matrix.latchBlanking = constrain(mat["latchBlanking"].as<int>(), 1, 8); willReboot = true; }
                 if (!mat["render_pipeline"].isNull()) { cfg.matrix.render_pipeline = mat["render_pipeline"].as<String>(); willReboot = true; }
                 else if (!mat["renderPipeline"].isNull()) { cfg.matrix.render_pipeline = mat["renderPipeline"].as<String>(); willReboot = true; }
                 else if ((!mat["force_single_buffer"].isNull() && mat["force_single_buffer"].as<bool>()) ||
@@ -2513,6 +2842,7 @@ void WebServerAPI::setupRoutes() {
                     cfg.matrix.slot_transition_duration_ms = mat["slot_transition_duration_ms"].as<int>();
                 }
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
             if (doc.containsKey("mqtt")) {
@@ -2527,7 +2857,30 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["pass"].isNull()) cfg.mqtt.pass = mq["pass"].as<String>();
                 if (!mq["device_name"].isNull()) cfg.mqtt.deviceName = mq["device_name"].as<String>();
                 if (!mq["allow_overlay"].isNull()) cfg.mqtt.allow_overlay = mq["allow_overlay"].as<bool>();
+                if (!mq["use_showcase_broker"].isNull()) cfg.mqtt.use_showcase_broker = mq["use_showcase_broker"].as<bool>();
+                if (!mq["ingame_showcase_enabled"].isNull()) cfg.mqtt.ingame_showcase_enabled = mq["ingame_showcase_enabled"].as<bool>();
+                if (!mq["ingame_cycle_mode"].isNull()) cfg.mqtt.ingame_cycle_mode = mq["ingame_cycle_mode"].as<String>();
+                if (!mq["ingame_marquee_interval_sec"].isNull()) cfg.mqtt.ingame_marquee_interval_sec = mq["ingame_marquee_interval_sec"].as<int>();
+                if (!mq["card_style_source"].isNull()) cfg.mqtt.card_style_source = mq["card_style_source"].as<String>();
+                if (!mq["include_card_intro"].isNull()) cfg.mqtt.include_card_intro = mq["include_card_intro"].as<bool>();
+                if (!mq["card_layout"].isNull()) cfg.mqtt.card_layout = mq["card_layout"].as<String>();
+                if (!mq["card_theme"].isNull()) cfg.mqtt.card_theme = mq["card_theme"].as<String>();
+                if (!mq["show_poster"].isNull()) cfg.mqtt.show_poster = mq["show_poster"].as<bool>();
+                else if (!mq["include_poster"].isNull()) cfg.mqtt.show_poster = mq["include_poster"].as<bool>();
+                if (!mq["show_synopsis"].isNull()) cfg.mqtt.show_synopsis = mq["show_synopsis"].as<bool>();
+                else if (!mq["include_synopsis"].isNull()) cfg.mqtt.show_synopsis = mq["include_synopsis"].as<bool>();
+                if (!mq["text_scroll_speed"].isNull()) cfg.mqtt.text_scroll_speed = mq["text_scroll_speed"].as<String>();
+                if (!mq["jacket_panorama"].isNull()) cfg.mqtt.jacket_panorama = mq["jacket_panorama"].as<bool>();
+                if (!mq["marquee_panorama"].isNull()) cfg.mqtt.marquee_panorama = mq["marquee_panorama"].as<bool>();
+                if (!mq["snapshot_panorama_count"].isNull()) cfg.mqtt.snapshot_panorama_count = mq["snapshot_panorama_count"].as<int>();
+                if (!mq["show_video"].isNull()) cfg.mqtt.show_video = mq["show_video"].as<bool>();
+                else if (!mq["include_video"].isNull()) cfg.mqtt.show_video = mq["include_video"].as<bool>();
+                if (!mq["video_max_duration_s"].isNull()) cfg.mqtt.video_max_duration_s = mq["video_max_duration_s"].as<int>();
+                if (!mq["video_fps"].isNull()) cfg.mqtt.video_fps = mq["video_fps"].as<int>();
+                if (!mq["video_mode"].isNull()) cfg.mqtt.video_mode = mq["video_mode"].as<String>();
+                if (!mq["color_boost"].isNull()) cfg.mqtt.color_boost = mq["color_boost"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
                 }
@@ -2541,6 +2894,20 @@ void WebServerAPI::setupRoutes() {
                 if (!dm["user"].isNull()) cfg.dataMqtt.user = dm["user"].as<String>();
                 if (!dm["pass"].isNull()) cfg.dataMqtt.pass = dm["pass"].as<String>();
                 changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
+            }
+
+            // DMD Media Showcase server & MQTT
+            if (doc.containsKey("showcase")) {
+                JsonObject sc = doc["showcase"].as<JsonObject>();
+                if (!sc["enabled"].isNull()) cfg.showcase.enabled = sc["enabled"].as<bool>();
+                if (!sc["server_url"].isNull()) cfg.showcase.server_url = normalizeMdnsEndpointUrl(sc["server_url"].as<String>(), true);
+                if (!sc["transport_mode"].isNull()) cfg.showcase.transport_mode = normalizeShowcaseTransportMode(sc["transport_mode"].as<String>());
+                if (!sc["use_showcase_broker"].isNull()) cfg.showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
+                if (!sc["mqtt_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
+                if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(sc["mqtt_custom_url"].as<String>(), false);
+                changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
             }
             if (changed) {
                 ConfigSanitizer::sanitize(cfg);
@@ -2550,8 +2917,13 @@ void WebServerAPI::setupRoutes() {
         bool saved = true;
         if (changed) {
             CompatibilityEvaluator::notifyHardwareCapabilityChanged();
-            saved = config.saveToSD("/config.json");
-            if (!saved) willReboot = false;   // a reboot now would discard the change
+            uint8_t effectiveMask = (domainMask != 0) ? domainMask : CONFIG_DOMAIN_ALL;
+            saved = config.saveDomainsToSD(effectiveMask, "/config.json");
+            if (!saved) {
+                willReboot = false;   // a reboot now would discard the change
+            } else if ((effectiveMask & CONFIG_DOMAIN_HARDWARE) != 0 && !willReboot) {
+                app.clearMatrixRecoveryStatus();
+            }
         }
 
         if ((changed || langChanged) && rotationManager && !willReboot) {
@@ -2578,6 +2950,260 @@ void WebServerAPI::setupRoutes() {
         return request->url() == "/api/system";
     });
     server.addHandler(sysHandler);
+
+    // API: DMD Media Showcase Live Connection Status & mDNS Resolver (GET /api/showcase/status)
+    server.on("/api/showcase/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const auto& snap = guard.get();
+
+        bool enabled = snap.showcase.enabled;
+        if (request->hasParam("enabled")) {
+            String enVal = request->getParam("enabled")->value();
+            enabled = (enVal == "true" || enVal == "1");
+        }
+        bool forceProbe = false;
+        if (request->hasParam("force")) {
+            String fVal = request->getParam("force")->value();
+            forceProbe = (fVal == "true" || fVal == "1");
+        }
+        String rawUrl = snap.showcase.server_url;
+        if (request->hasParam("url")) {
+            String qUrl = request->getParam("url")->value();
+            qUrl.trim();
+            if (qUrl.length() > 0) rawUrl = qUrl;
+        }
+        rawUrl.trim();
+        while (rawUrl.endsWith("/")) rawUrl.remove(rawUrl.length() - 1);
+
+        SpiRamJsonDocument doc(512);
+        doc["enabled"] = enabled;
+        doc["server_url"] = rawUrl;
+
+        if ((!enabled && !forceProbe) || rawUrl.length() < 8) {
+            doc["online"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
+        }
+
+        char origScheme[12] = "http";
+        char origHost[64] = "";
+        uint16_t port = 8890;
+        if (!net::ShowcaseDiscovery::parseEndpoint(rawUrl.c_str(), 8890, origScheme, sizeof(origScheme), origHost, sizeof(origHost), port)) {
+            doc["online"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
+        }
+
+        char resolvedUrlBuf[112] = "";
+        char resolvedHostBuf[64] = "";
+        char verBuf[24] = "";
+        bool online = false;
+        // 100% zero-blocking inspection on `async_tcp`: never run `ESPmDNS` or synchronous TCP probes
+        // inside an AsyncWebServer handler. Active Showcase engines continuously renew the cache lease,
+        // and cold cache misses / `force=1` trigger a single-flight Core 0 background probe.
+        if (!net::ShowcaseDiscovery::peekCachedUrlStatus(
+                rawUrl.c_str(),
+                resolvedUrlBuf,
+                sizeof(resolvedUrlBuf),
+                resolvedHostBuf,
+                sizeof(resolvedHostBuf),
+                port,
+                online,
+                verBuf,
+                sizeof(verBuf))) {
+            doc["online"] = false;
+            doc["probing"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
+        }
+        bool probing = false;
+        if (!online || forceProbe) {
+            probing = net::ShowcaseDiscovery::triggerBackgroundProbe(rawUrl.c_str(), forceProbe);
+        }
+
+        doc["resolved_url"] = resolvedUrlBuf;
+        doc["online"] = online;
+        doc["probing"] = probing;
+        doc["version"] = online ? (verBuf[0] != '\0' ? verBuf : "1.1.4") : "";
+        sendJsonResponse(request, doc);
+    });
+
+    // API: Dynamic MQTT Broker Target Discovery for Recalbox/Batocera/RetroPie daemons (GET /api/mqtt/broker-target)
+    // Intentionally unauthenticated (zero secrets exposed) so remote console daemons can always resolve the active broker IP/port.
+    server.on("/api/mqtt/broker-target", HTTP_GET, [](AsyncWebServerRequest *request) {
+        extern ConfigLoader config;
+        String brokerHost;
+        uint16_t brokerPort = 1883;
+        String source;
+        bool showcaseActive = false;
+        FrontendSyncEngine::getResolvedBrokerTarget(brokerHost, brokerPort, source, showcaseActive);
+
+        if (brokerHost.length() == 0) {
+            IPAddress localIp = (request->client() != nullptr) ? request->client()->localIP() : IPAddress(0, 0, 0, 0);
+            if (localIp == IPAddress(0, 0, 0, 0) || localIp == INADDR_NONE) {
+                localIp = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP() : WiFi.softAPIP();
+            }
+            brokerHost = localIp.toString();
+        }
+
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        bool mqttEnabled = guard.get().mqtt.enabled;
+
+        StaticJsonDocument<256> doc;
+        doc["host"] = brokerHost;
+        doc["port"] = brokerPort;
+        doc["source"] = source;
+        doc["mqtt_enabled"] = mqttEnabled;
+        doc["showcase_broker_active"] = showcaseActive;
+        sendJsonResponse(request, doc);
+    });
+
+    // API: Evict Persistent On-Demand Conversion Cache on DMD Media Showcase (POST /api/showcase/cache/evict)
+    server.on("/api/showcase/cache/evict", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
+        extern ConfigLoader config;
+        String rawUrl;
+        {
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            rawUrl = guard.get().showcase.server_url;
+        }
+        rawUrl.trim();
+        while (rawUrl.endsWith("/")) rawUrl.remove(rawUrl.length() - 1);
+        if (rawUrl.length() < 8) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server URL is empty\"}");
+            return;
+        }
+
+        char resolvedUrlBuf[112] = "";
+        char resolvedHostBuf[64] = "";
+        uint16_t port = 8890;
+        bool online = false;
+        if (!net::ShowcaseDiscovery::peekCachedUrlStatus(
+                rawUrl.c_str(),
+                resolvedUrlBuf,
+                sizeof(resolvedUrlBuf),
+                resolvedHostBuf,
+                sizeof(resolvedHostBuf),
+                port,
+                online,
+                nullptr,
+                0,
+                86400000U)) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Showcase server URL\"}");
+            return;
+        }
+        if (net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedHostBuf)) {
+            net::ShowcaseDiscovery::triggerBackgroundProbe(rawUrl.c_str(), true);
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+            return;
+        }
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        if (inet_aton(resolvedHostBuf, &addr.sin_addr) == 0) {
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+            return;
+        }
+
+        int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (fd < 0) {
+            request->send(503, "application/json", "{\"status\":\"error\",\"message\":\"Socket table busy\"}");
+            return;
+        }
+        auto closeEvictSock = [&]() {
+            if (fd >= 0) {
+                lwip_close(fd);
+                fd = -1;
+            }
+        };
+
+        int flags = lwip_fcntl(fd, F_GETFL, 0);
+        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        int rc = lwip_connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (rc < 0 && errno != EINPROGRESS) {
+            closeEvictSock();
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+            return;
+        }
+        if (rc != 0) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(fd, &wfds);
+            struct timeval tv = {0, 350000};
+            int sel = lwip_select(fd + 1, nullptr, &wfds, nullptr, &tv);
+            int soErr = -1;
+            socklen_t errLen = sizeof(soErr);
+            if (sel <= 0 || !FD_ISSET(fd, &wfds) || lwip_getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen) != 0 || soErr != 0) {
+                closeEvictSock();
+                request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+                return;
+            }
+        }
+
+        lwip_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        struct timeval rtv = {0, 450000};
+        lwip_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+        lwip_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
+
+        char reqBuf[160];
+        int reqLen = snprintf(
+            reqBuf,
+            sizeof(reqBuf),
+            "POST /api/v1/cache/on-demand/evict HTTP/1.1\r\nHost: %s:%u\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            resolvedHostBuf,
+            static_cast<unsigned>(port)
+        );
+        if (reqLen <= 0 || lwip_send(fd, reqBuf, static_cast<size_t>(reqLen), 0) != reqLen) {
+            closeEvictSock();
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase evict send failed\"}");
+            return;
+        }
+
+        char rxBuf[512];
+        size_t rxUsed = 0;
+        uint32_t t0 = millis();
+        while ((millis() - t0) < 500U && rxUsed < sizeof(rxBuf) - 1U) {
+            int r = lwip_recv(fd, rxBuf + rxUsed, sizeof(rxBuf) - 1U - rxUsed, 0);
+            if (r > 0) {
+                rxUsed += static_cast<size_t>(r);
+            } else {
+                break;
+            }
+        }
+        closeEvictSock();
+        rxBuf[rxUsed] = '\0';
+
+        bool httpOk = (strncmp(rxBuf, "HTTP/1.1 200", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.0 200", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.1 202", 12) == 0 ||
+                       strncmp(rxBuf, "HTTP/1.0 202", 12) == 0);
+        const char* bodyStart = strstr(rxBuf, "\r\n\r\n");
+        const char* jsonSlice = bodyStart ? strchr(bodyStart + 4, '{') : strchr(rxBuf, '{');
+        const char* jsonEnd = jsonSlice ? strrchr(jsonSlice, '}') : nullptr;
+        String respBody;
+        if (jsonSlice && jsonEnd && jsonEnd >= jsonSlice) {
+            size_t jLen = static_cast<size_t>((jsonEnd - jsonSlice) + 1);
+            respBody.reserve(jLen + 1);
+            for (size_t i = 0; i < jLen; ++i) respBody += jsonSlice[i];
+        }
+
+        if (!httpOk) {
+            request->send(502, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"error\",\"message\":\"Showcase evict failed\"}");
+            return;
+        }
+        net::ShowcaseDiscovery::touchVerifiedHost(resolvedHostBuf, port);
+        request->send(200, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"evicted\",\"removed_entries\":0,\"freed_bytes\":0}");
+    });
     
     // API: System commands (Reboot / Shutdown / Restart)
     server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -3472,7 +4098,7 @@ void WebServerAPI::setupRoutes() {
             cfg.wifi.password = newPass;
             tz = cfg.system.timezone;
         });
-        bool saved = config.saveToSD("/config.json");
+        bool saved = config.saveDomainsToSD(CONFIG_DOMAIN_NETWORK, "/config.json");
         if (!saved) {
             sendConfigSaveFailed(request);
             return;

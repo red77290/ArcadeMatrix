@@ -390,7 +390,11 @@ size_t FastMatrixPanel::getDmaAllocatedBytes() const {
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
     if (color != 0) {
-        MatrixPanel_I2S_DMA::fillScreen(color);
+        if (m_depth == 8) {
+            MatrixPanel_I2S_DMA::fillScreen(color);
+        } else {
+            fillRect(0, 0, width(), height(), color);
+        }
         return;
     }
     auto& targetFb = frame_buffer[m_back];
@@ -446,27 +450,61 @@ void FastMatrixPanel::initLuts(uint8_t depth) {
     if (depth < 2) depth = 2;
     if (depth > 8) depth = 8;
     m_depth = depth;
-    uint8_t shift = 8 - depth;
-    uint8_t round = (shift > 0) ? (1 << (shift - 1)) : 0;
-    uint16_t maxVal = (1 << depth) - 1;
+    Hub75BulkEncoder::generateLuts(depth, m_lut_r, m_lut_g, m_lut_b);
+}
 
-    for (int r = 0; r < 32; r++) {
-        uint8_t r8 = (r << 3) | (r >> 2);
-        uint16_t val = lumConvTab_8bit[r8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_r[r] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+void FastMatrixPanel::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
+    if (m_depth == 8) {
+        MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, color);
+        return;
     }
-    for (int g = 0; g < 64; g++) {
-        uint8_t g8 = (g << 2) | (g >> 4);
-        uint16_t val = lumConvTab_8bit[g8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_g[g] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+    if (h < 0) {
+        y = static_cast<int16_t>(y + h + 1);
+        h = static_cast<int16_t>(-h);
     }
-    for (int b = 0; b < 32; b++) {
-        uint8_t b8 = (b << 3) | (b >> 2);
-        uint16_t val = lumConvTab_8bit[b8];
-        uint16_t scaled = (val + round) >> shift;
-        m_lut_b[b] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+    if (x < 0 || x >= _width || h <= 0) return;
+    int32_t y0 = (y < 0) ? 0 : y;
+    int32_t y1 = static_cast<int32_t>(y) + h;
+    if (y1 > _height) y1 = _height;
+    for (int32_t row = y0; row < y1; ++row) {
+        drawPixel(x, static_cast<int16_t>(row), color);
+    }
+}
+
+void FastMatrixPanel::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+    if (m_depth == 8) {
+        MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, color);
+        return;
+    }
+    if (w < 0) {
+        x = static_cast<int16_t>(x + w + 1);
+        w = static_cast<int16_t>(-w);
+    }
+    if (y < 0 || y >= _height || w <= 0) return;
+    int32_t x0 = (x < 0) ? 0 : x;
+    int32_t x1 = static_cast<int32_t>(x) + w;
+    if (x1 > _width) x1 = _width;
+    for (int32_t col = x0; col < x1; ++col) {
+        drawPixel(static_cast<int16_t>(col), y, color);
+    }
+}
+
+void FastMatrixPanel::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    if (m_depth == 8) {
+        MatrixPanel_I2S_DMA::fillRect(x, y, w, h, color);
+        return;
+    }
+    if (w <= 0 || h <= 0) return;
+    int32_t x0 = (x < 0) ? 0 : x;
+    int32_t y0 = (y < 0) ? 0 : y;
+    int32_t x1 = static_cast<int32_t>(x) + w;
+    int32_t y1 = static_cast<int32_t>(y) + h;
+    if (x1 > _width) x1 = _width;
+    if (y1 > _height) y1 = _height;
+    for (int32_t row = y0; row < y1; ++row) {
+        for (int32_t col = x0; col < x1; ++col) {
+            drawPixel(static_cast<int16_t>(col), static_cast<int16_t>(row), color);
+        }
     }
 }
 

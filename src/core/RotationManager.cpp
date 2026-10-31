@@ -224,6 +224,43 @@ size_t RotationManager::getActiveEngineCount() const {
     return cnt;
 }
 
+void RotationManager::evictAllActiveEnginesForMemory() {
+    bool retiredAny = false;
+    for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+        if (activeEngines[i].engine) {
+            retireEngineSlot(i);
+            retiredAny = true;
+        }
+    }
+    currentActiveInstanceId[0] = '\0';
+    currentActiveEngineId[0] = '\0';
+    m_slotMissing = false;
+    m_missingClears = 0;
+#if defined(ESP32)
+    if (retiredAny) {
+        uint32_t waitStart = millis();
+        while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 250U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+            if (activeEngines[i].pendingRetirement && activeEngines[i].engine) {
+                if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[i].engine))) {
+                    activeEngines[i].pendingRetirement = false;
+                }
+            }
+        }
+        waitStart = millis();
+        while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 150U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        LOGI("RotationManager", "WEBUI_SYNC evicted active rotation engines -> Free=%u, LargestBlock=%u",
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    }
+#else
+    (void)retiredAny;
+#endif
+}
+
 IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     if (!instanceId || instanceId[0] == '\0') return nullptr;
     if (strlen(instanceId) >= 32) {
@@ -317,10 +354,34 @@ void RotationManager::switchToModule(int index) {
       }
   }
 
-  // Deactivate old engine
+  const bool switchingInstance =
+      (currentActiveInstanceId[0] == '\0') || (strcmp(currentActiveInstanceId, newInstanceId) != 0);
+
+  // Deactivate (or retire on non-PSRAM if large stateless Showcase object) old engine
   if (currentActiveInstanceId[0] != '\0' && strcmp(currentActiveInstanceId, newInstanceId) != 0) {
-      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
-      if (oldEngine) {
+      char outgoingId[32]{0};
+      strncpy(outgoingId, currentActiveInstanceId, sizeof(outgoingId) - 1);
+      IEngine* oldEngine = findActiveEngine(outgoingId);
+      bool evictedOutgoing = false;
+#if defined(ESP32)
+      if (!hardwareHAL.capabilities().hasPsram && oldEngine && oldEngine->evictOnInactiveLowMemory()) {
+          for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+              if (!activeEngines[i].pendingRetirement &&
+                  activeEngines[i].engine.get() == oldEngine) {
+                  retireEngineSlot(i);
+                  evictedOutgoing = true;
+                  break;
+              }
+          }
+          if (evictedOutgoing) {
+              uint32_t waitStart = millis();
+              while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart) < 400U) {
+                  vTaskDelay(pdMS_TO_TICKS(5));
+              }
+          }
+      }
+#endif
+      if (!evictedOutgoing && oldEngine) {
           oldEngine->deactivate();
       }
       if (m_ctx && m_ctx->getSurface()) {
@@ -334,8 +395,9 @@ void RotationManager::switchToModule(int index) {
               m_slotFxStartedMs = millis();
           }
       }
-      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s' -> Baseline Heap: Free=%u, LargestBlock=%u",
-           currentActiveInstanceId, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s'%s -> Baseline Heap: Free=%u, LargestBlock=%u",
+           outgoingId, evictedOutgoing ? " (evicted)" : "",
+           (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   // Activate new engine
@@ -348,7 +410,7 @@ void RotationManager::switchToModule(int index) {
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
-      if (strcmp(currentActiveInstanceId, newInstanceId) != 0 || (newEngine->selfPaced() && newEngine->isFinished())) {
+      if (switchingInstance || (newEngine->selfPaced() && newEngine->isFinished())) {
           newEngine->activate();
       }
   }
@@ -432,6 +494,9 @@ bool RotationManager::loop() {
     if (currentIndex >= guard->rotation.size()) {
         currentIndex = 0;
         switchToModule(0);
+    } else if (currentActiveInstanceId[0] == '\0' && !m_slotMissing) {
+        // Re-instantiate and reconfigure pipeline depth (e.g. 2-bit -> 8-bit) after WEBUI_SYNC eviction
+        switchToModule(static_cast<int>(currentIndex));
     }
 
     uint32_t now = millis();

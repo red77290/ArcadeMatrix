@@ -40,16 +40,27 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     }
     */
 
-    if (!m_gifEngine) {
-        m_gifEngine = new GifEngine();
-        m_gifEngine->initialize(context, engineConfig);
-        m_gifEngine->begin(surface);
-        m_gifEngine->setFitMode(m_fitMode);
-        m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
+    if (m_hasPsram) {
+        ensureGifEngine();
     }
 
     if (engineConfig) onConfigChanged(engineConfig);
     return EngineError::OK;
+}
+
+bool MarqueeEngine::ensureGifEngine() {
+    if (m_gifEngine) return true;
+    if (!m_context || !m_context->getSurface()) return false;
+    m_gifEngine = new GifEngine();
+    if (!m_gifEngine) return false;
+    if (m_gifEngine->initialize(m_context, nullptr) != EngineError::OK) {
+        delete m_gifEngine;
+        m_gifEngine = nullptr;
+        return false;
+    }
+    m_gifEngine->setFitMode(m_fitMode);
+    m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
+    return true;
 }
 
 MarqueeEngine::~MarqueeEngine() {
@@ -95,7 +106,7 @@ void MarqueeEngine::setMarqueeFile(const char* path) {
     m_filePath = String(path);
     m_hasRawBuffer = false;
     m_clearFramesRemaining.store(2, std::memory_order_relaxed);
-    if (m_active && m_gifEngine) {
+    if (m_active && ensureGifEngine()) {
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
         m_gifEngine->playGif(m_filePath.c_str());
@@ -318,7 +329,7 @@ void MarqueeEngine::activate() {
         return;
     }
     String file = resolveMarqueeFile();
-    if (file.length() > 0 && m_gifEngine) {
+    if (file.length() > 0 && ensureGifEngine()) {
         LOGI("MarqueeEngine", "Activating marquee file: %s (fit=%s, speed=%.2f)", file.c_str(), m_fitMode.c_str(), m_speedMultiplier);
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
@@ -332,6 +343,11 @@ void MarqueeEngine::deactivate() {
     m_active = false;
     if (m_gifEngine) {
         m_gifEngine->deactivate();
+        if (!m_hasPsram) {
+            m_gifEngine->shutdownForDestruction();
+            delete m_gifEngine;
+            m_gifEngine = nullptr;
+        }
     }
 }
 

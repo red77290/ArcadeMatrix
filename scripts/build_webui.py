@@ -8,8 +8,16 @@ import gzip
 import hashlib
 import json
 
-input_file = "data/index.html"
-output_file = "src/api/WebUI.h"
+try:
+    script_path = __file__
+except NameError:
+    # Running inside SCons / PlatformIO
+    script_path = os.path.abspath("scripts/build_webui.py")
+
+script_dir = os.path.dirname(os.path.abspath(script_path))
+repo_dir = os.path.dirname(script_dir)
+input_file = os.path.join(repo_dir, "data", "index.html")
+output_file = os.path.join(repo_dir, "src", "api", "WebUI.h")
 
 if not os.path.exists(input_file):
     print(f"Error: {input_file} not found.")
@@ -86,8 +94,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals
 sys.path.insert(0, script_dir)
 from extract_engine_catalog import extract_engine_catalog, extract_themes, extract_engine_meta_map
 
-engine_catalog = extract_engine_catalog("src/engines")
-themes = extract_themes("src/api/WebServerAPI.cpp")
+engine_catalog = extract_engine_catalog(os.path.join(repo_dir, "src", "engines"))
+themes = extract_themes(os.path.join(repo_dir, "src", "api", "WebServerAPI.cpp"))
 engine_meta_map = extract_engine_meta_map(engine_catalog)
 
 catalog_json = json.dumps(engine_catalog, separators=(',', ':'))
@@ -148,7 +156,7 @@ if ref_name.startswith("v") and re.match(r"^v\d+\.\d+", ref_name):
 # 2. Dynamic Git Tag detection via git describe
 if not firmware_version:
     try:
-        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always']).decode('ascii').strip()
+        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always'], cwd=repo_dir).decode('ascii').strip()
         m = re.match(r"^v?(\d+\.\d+\.\d+)", tag_desc)
         if m:
             firmware_version = m.group(1)
@@ -161,7 +169,7 @@ if not firmware_version:
 
 # 3. Read base version from VERSION file if present
 if not firmware_version:
-    version_file = "VERSION"
+    version_file = os.path.join(repo_dir, "VERSION")
     if os.path.exists(version_file):
         with open(version_file, "r") as vf:
             firmware_version = vf.read().strip().lstrip("v")
@@ -172,7 +180,7 @@ if not firmware_version:
 
 # Generate Git commit hash
 try:
-    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo_dir).decode('ascii').strip()
 except Exception:
     git_commit = "unknown"
 
@@ -181,6 +189,7 @@ build_timestamp = ""
 try:
     build_timestamp = subprocess.check_output(
         ['git', 'log', '-1', '--format=%cd', '--date=format:%Y-%m-%d %H:%M:%S UTC'],
+        cwd=repo_dir,
         stderr=subprocess.DEVNULL
     ).decode('ascii').strip()
 except Exception:
@@ -194,7 +203,7 @@ build_info_content = (f'#pragma once\n'
                       f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
                       f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
 
-build_info_file = "src/core/BuildInfo.h"
+build_info_file = os.path.join(repo_dir, "src", "core", "BuildInfo.h")
 if not os.path.exists(build_info_file) or open(build_info_file, "r", encoding="utf-8").read() != build_info_content:
     with open(build_info_file, "w", encoding="utf-8") as f:
         f.write(build_info_content)
@@ -205,6 +214,39 @@ else:
 try:
     Import("env")
     env.Append(CPPDEFINES=[("BUILD_GIT_COMMIT", f'\\"{git_commit}\\"')])
+
+    def verify_app0_partition_fit(source, target, env):
+        import struct
+
+        fw_path = str(target[0])
+        build_dir = os.path.dirname(fw_path)
+        part_path = os.path.join(build_dir, "partitions.bin")
+        if not os.path.exists(fw_path) or not os.path.exists(part_path):
+            return
+        fw_size = os.path.getsize(fw_path)
+        raw = open(part_path, "rb").read()
+        app0_size = None
+        for off in range(0, len(raw) - 31, 32):
+            magic, ptype, sub, addr, size = struct.unpack("<HBBII", raw[off : off + 12])
+            if magic != 0x50AA:
+                break
+            if ptype == 0x00 and sub in (0x00, 0x10):
+                app0_size = size
+                break
+        if app0_size is not None:
+            safety_margin = 16384
+            pct = (fw_size * 100.0) / float(app0_size)
+            print(
+                f"🔍 [Partition Gate] firmware.bin = {fw_size} B / app0 = {app0_size} B ({pct:.1f}%, headroom = {app0_size - fw_size} B)"
+            )
+            if fw_size > app0_size - safety_margin:
+                print(
+                    f"❌ FATAL ERROR: firmware.bin ({fw_size} B) exceeds app0 partition safety limit "
+                    f"({app0_size - safety_margin} B, partition={app0_size} B)! ESP32 bootloader will SW_RESET bootloop."
+                )
+                sys.exit(1)
+
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", verify_app0_partition_fit)
 except Exception:
     pass
 

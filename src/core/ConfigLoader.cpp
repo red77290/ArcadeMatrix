@@ -97,6 +97,7 @@ void ConfigLoader::publishSnapshot_locked() {
     snap.wifi = wifi;
     snap.mqtt = mqtt;
     snap.dataMqtt = dataMqtt;
+    snap.showcase = showcase;
     snap.system = system;
     snap.rotation = rotation;
     snap.instances.clear();
@@ -162,15 +163,10 @@ void ConfigLoader::setDefaults() {
     wifi.password = "";
     wifi.hostname = "arcadematrix";
 
-    mqtt.enabled = false;
-    mqtt.broker = "";
-    mqtt.port = 1883;
-    mqtt.user = "";
-    mqtt.pass = "";
-    mqtt.deviceName = "ArcadeMatrix";
-    mqtt.allow_overlay = false;
+    mqtt = MqttConfig();
 
     dataMqtt = DataMqttConfig();
+    showcase = ShowcaseConfig();
 
     system.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
     system.format24h = true;
@@ -181,7 +177,7 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
-    system.idle_fighter_enabled = true;
+    system.idle_fighter_enabled = false;
     system.idle_fighter_interval = 60;
     system.idle_fighter_speed = 100;
     system.api_auth_enabled = false;
@@ -315,6 +311,28 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
         else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
         if (m.containsKey("allow_overlay")) mqtt.allow_overlay = m["allow_overlay"].as<bool>();
+        if (m.containsKey("use_showcase_broker")) mqtt.use_showcase_broker = m["use_showcase_broker"].as<bool>();
+        if (m.containsKey("ingame_showcase_enabled")) mqtt.ingame_showcase_enabled = m["ingame_showcase_enabled"].as<bool>();
+        if (m.containsKey("ingame_cycle_mode")) mqtt.ingame_cycle_mode = m["ingame_cycle_mode"].as<String>();
+        if (m.containsKey("ingame_marquee_interval_sec")) mqtt.ingame_marquee_interval_sec = m["ingame_marquee_interval_sec"].as<int>();
+        if (m.containsKey("card_style_source")) mqtt.card_style_source = m["card_style_source"].as<String>();
+        if (m.containsKey("include_card_intro")) mqtt.include_card_intro = m["include_card_intro"].as<bool>();
+        if (m.containsKey("card_layout")) mqtt.card_layout = m["card_layout"].as<String>();
+        if (m.containsKey("card_theme")) mqtt.card_theme = m["card_theme"].as<String>();
+        if (m.containsKey("show_poster")) mqtt.show_poster = m["show_poster"].as<bool>();
+        else if (m.containsKey("include_poster")) mqtt.show_poster = m["include_poster"].as<bool>();
+        if (m.containsKey("show_synopsis")) mqtt.show_synopsis = m["show_synopsis"].as<bool>();
+        else if (m.containsKey("include_synopsis")) mqtt.show_synopsis = m["include_synopsis"].as<bool>();
+        if (m.containsKey("text_scroll_speed")) mqtt.text_scroll_speed = m["text_scroll_speed"].as<String>();
+        if (m.containsKey("jacket_panorama")) mqtt.jacket_panorama = m["jacket_panorama"].as<bool>();
+        if (m.containsKey("marquee_panorama")) mqtt.marquee_panorama = m["marquee_panorama"].as<bool>();
+        if (m.containsKey("snapshot_panorama_count")) mqtt.snapshot_panorama_count = m["snapshot_panorama_count"].as<int>();
+        if (m.containsKey("show_video")) mqtt.show_video = m["show_video"].as<bool>();
+        else if (m.containsKey("include_video")) mqtt.show_video = m["include_video"].as<bool>();
+        if (m.containsKey("video_max_duration_s")) mqtt.video_max_duration_s = m["video_max_duration_s"].as<int>();
+        if (m.containsKey("video_fps")) mqtt.video_fps = m["video_fps"].as<int>();
+        if (m.containsKey("video_mode")) mqtt.video_mode = m["video_mode"].as<String>();
+        if (m.containsKey("color_boost")) mqtt.color_boost = m["color_boost"].as<String>();
     }
 
     // Older builds also stored "enabled" and "topic_prefix" here; they are no longer used and are
@@ -325,6 +343,16 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         dataMqtt.port = d["port"] | dataMqtt.port;
         dataMqtt.user = d["user"] | dataMqtt.user;
         dataMqtt.pass = d["pass"] | dataMqtt.pass;
+    }
+
+    if (doc.containsKey("showcase")) {
+        JsonObjectConst sc = doc["showcase"];
+        if (sc.containsKey("enabled")) showcase.enabled = sc["enabled"].as<bool>();
+        showcase.server_url = normalizeMdnsEndpointUrl(String(sc["server_url"] | showcase.server_url), true);
+        showcase.transport_mode = normalizeShowcaseTransportMode(String(sc["transport_mode"] | showcase.transport_mode));
+        if (sc.containsKey("use_showcase_broker")) showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
+        showcase.mqtt_broker_source = sc["mqtt_broker_source"] | showcase.mqtt_broker_source;
+        showcase.mqtt_custom_url = normalizeMdnsEndpointUrl(String(sc["mqtt_custom_url"] | showcase.mqtt_custom_url), false);
     }
 
     if (doc.containsKey("rotation")) {
@@ -391,6 +419,25 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
                 }
             }
             instances.push_back(inst);
+        }
+    }
+
+    // Auto-migrate legacy per-engine showcase network settings if system showcase settings are not yet set
+    if (!doc.containsKey("showcase")) {
+        for (const auto& inst : instances) {
+            if (inst.engine_id == "retro_games" || inst.engine_id == "movie_showcase" ||
+                inst.engine_id == "series_showcase" || inst.engine_id == "anime_showcase") {
+                String sUrl = inst.config.getString("server_url", "");
+                if (!sUrl.isEmpty() && sUrl != "http://192.168.1.50:8000" && sUrl != "http://127.0.0.1:8080") {
+                    showcase.enabled = true;
+                    showcase.server_url = sUrl;
+                    showcase.transport_mode = normalizeShowcaseTransportMode(inst.config.getString("transport_mode", "mqtt_tcp"));
+                    showcase.use_showcase_broker = inst.config.getBool("use_showcase_broker", true);
+                    showcase.mqtt_broker_source = inst.config.getString("mqtt_broker_source", "showcase_builtin");
+                    showcase.mqtt_custom_url = inst.config.getString("mqtt_custom_url", "");
+                    break;
+                }
+            }
         }
     }
 
@@ -472,12 +519,39 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     mObj["pass"] = mqtt.pass;
     mObj["deviceName"] = mqtt.deviceName;
     mObj["allow_overlay"] = mqtt.allow_overlay;
+    mObj["use_showcase_broker"] = mqtt.use_showcase_broker;
+    mObj["ingame_showcase_enabled"] = mqtt.ingame_showcase_enabled;
+    mObj["ingame_cycle_mode"] = mqtt.ingame_cycle_mode;
+    mObj["ingame_marquee_interval_sec"] = mqtt.ingame_marquee_interval_sec;
+    mObj["card_style_source"] = mqtt.card_style_source;
+    mObj["include_card_intro"] = mqtt.include_card_intro;
+    mObj["card_layout"] = mqtt.card_layout;
+    mObj["card_theme"] = mqtt.card_theme;
+    mObj["show_poster"] = mqtt.show_poster;
+    mObj["show_synopsis"] = mqtt.show_synopsis;
+    mObj["text_scroll_speed"] = mqtt.text_scroll_speed;
+    mObj["jacket_panorama"] = mqtt.jacket_panorama;
+    mObj["marquee_panorama"] = mqtt.marquee_panorama;
+    mObj["snapshot_panorama_count"] = mqtt.snapshot_panorama_count;
+    mObj["show_video"] = mqtt.show_video;
+    mObj["video_max_duration_s"] = mqtt.video_max_duration_s;
+    mObj["video_fps"] = mqtt.video_fps;
+    mObj["video_mode"] = mqtt.video_mode;
+    mObj["color_boost"] = mqtt.color_boost;
 
     JsonObject dObj = doc.createNestedObject("data_mqtt");
     dObj["broker"] = dataMqtt.broker;
     dObj["port"] = dataMqtt.port;
     dObj["user"] = dataMqtt.user;
     dObj["pass"] = dataMqtt.pass;
+
+    JsonObject scObj = doc.createNestedObject("showcase");
+    scObj["enabled"] = showcase.enabled;
+    scObj["server_url"] = showcase.server_url;
+    scObj["transport_mode"] = showcase.transport_mode;
+    scObj["use_showcase_broker"] = showcase.use_showcase_broker;
+    scObj["mqtt_broker_source"] = showcase.mqtt_broker_source;
+    scObj["mqtt_custom_url"] = showcase.mqtt_custom_url;
 
     JsonArray rotArr = doc.createNestedArray("rotation");
     for (const auto& rot : rotation) {
@@ -619,6 +693,9 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     if (sdStorage.exists("/config/hardware.json") && sdStorage.exists("/config/system.json")) {
         LOGI("ConfigLoader", "Loading modular configuration from /config/...");
         if (mgr.loadAll(*this)) {
+            if (wifi.ssid.isEmpty()) {
+                autoHealNetworkFromBackups(sdStorage, mgr, filepath);
+            }
             bool hadPlaylist = sdStorage.exists("/config/playlist.json");
             ConfigSanitizer::sanitize(*this, !hadPlaylist);
             publishSnapshot();
@@ -743,7 +820,91 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     }
 }
 
+bool __attribute__((noinline)) ConfigLoader::autoHealNetworkFromBackups(
+    IConfigStorage& storage,
+    ModularConfigManager& mgr,
+    const char* filepath
+) {
+    if (!wifi.ssid.isEmpty()) {
+        return false;
+    }
+    String bakPath = String(filepath) + ".bak";
+    const char* candidates[2] = { filepath, bakPath.c_str() };
+    for (int i = 0; i < 2; ++i) {
+        String raw;
+        if (!storage.readString(candidates[i], raw) || raw.length() < 16) continue;
+        // Allocate transient ConfigLoader on the heap (never on loopTask's 8 KB stack)
+        std::unique_ptr<ConfigLoader> backupCfg(new (std::nothrow) ConfigLoader());
+        if (!backupCfg) {
+            LOGE("ConfigLoader", "Out of heap allocating transient ConfigLoader for network auto-heal");
+            break;
+        }
+        if (!backupCfg->parseFromJson(raw.c_str())) continue;
+        if (!backupCfg->wifi.ssid.isEmpty()) {
+            LOGW("ConfigLoader", "Auto-healing empty Wi-Fi credentials in /config/network.json from %s (SSID: '%s')",
+                 candidates[i], backupCfg->wifi.ssid.c_str());
+            wifi = backupCfg->wifi;
+            if (!mqtt.enabled && backupCfg->mqtt.enabled) mqtt = backupCfg->mqtt;
+            if (dataMqtt.broker.isEmpty() && !backupCfg->dataMqtt.broker.isEmpty()) dataMqtt = backupCfg->dataMqtt;
+            if (!showcase.enabled && backupCfg->showcase.enabled) showcase = backupCfg->showcase;
+            mgr.saveNetwork(wifi, mqtt, dataMqtt, &showcase);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool __attribute__((noinline)) ConfigLoader::tryLoadFallbackMatrixFromStorage(
+    IConfigStorage& storage,
+    MatrixConfig& outMatrix,
+    uint16_t maxTotalW,
+    uint16_t maxTotalH,
+    const char* filepath
+) const {
+    String bakPath = String(filepath) + ".bak";
+    const char* candidates[2] = { bakPath.c_str(), filepath };
+    for (int i = 0; i < 2; ++i) {
+        String raw;
+        if (!storage.readString(candidates[i], raw) || raw.length() < 16) continue;
+        // Allocate transient ConfigLoader on the heap (never on loopTask's 8 KB stack)
+        std::unique_ptr<ConfigLoader> backupCfg(new (std::nothrow) ConfigLoader());
+        if (!backupCfg) {
+            LOGE("ConfigLoader", "Out of heap allocating transient ConfigLoader for matrix fallback");
+            break;
+        }
+        if (!backupCfg->parseFromJson(raw.c_str())) continue;
+        int w = backupCfg->matrix.width;
+        int h = backupCfg->matrix.height;
+        int c = backupCfg->matrix.chainLength;
+        if (w >= 16 && h >= 16 && c >= 1) {
+            uint32_t totalW = static_cast<uint32_t>(w) * static_cast<uint32_t>(c);
+            uint32_t totalH = static_cast<uint32_t>(h);
+            if (totalW <= maxTotalW && totalH <= maxTotalH) {
+                outMatrix = backupCfg->matrix;
+                LOGI("ConfigLoader", "Recovered valid fallback MatrixConfig (%dx%d, Chain %d) from %s",
+                     w, h, c, candidates[i]);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool ConfigLoader::tryLoadFallbackMatrixFromBackups(
+    MatrixConfig& outMatrix,
+    uint16_t maxTotalW,
+    uint16_t maxTotalH,
+    const char* filepath
+) const {
+    SdConfigStorage sdStorage;
+    return tryLoadFallbackMatrixFromStorage(sdStorage, outMatrix, maxTotalW, maxTotalH, filepath);
+}
+
 bool ConfigLoader::saveToSD(const char* filepath) {
+    return saveDomainsToSD(CONFIG_DOMAIN_ALL, filepath);
+}
+
+bool ConfigLoader::saveDomainsToSD(uint8_t domainMask, const char* filepath) {
     SdLockGuard lock(pdMS_TO_TICKS(5000));
     if (!lock) {
         LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
@@ -752,7 +913,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
 
     const bool isMainConfig = (strcmp(filepath, "/config.json") == 0);
     SdConfigStorage sdStorage;
-    // One manager per save; saveAll() persists the instances without copying them into a cache.
     std::unique_ptr<ModularConfigManager> mgr;
     if (isMainConfig) {
         mgr.reset(new (std::nothrow) ModularConfigManager(sdStorage));
@@ -761,11 +921,18 @@ bool ConfigLoader::saveToSD(const char* filepath) {
 
     bool modularOk = false;
     if (isMainConfig && mgr) {
-        modularOk = mgr->saveAll(*this);
+        modularOk = mgr->saveDomains(*this, domainMask);
         if (modularOk) {
-            LOGI("ConfigLoader", "Modular configuration saved successfully to /config/.");
+            LOGI("ConfigLoader", "Modular configuration (mask=0x%02X) saved successfully to /config/.",
+                 static_cast<unsigned>(domainMask));
         } else {
-            LOGW("ConfigLoader", "Modular configuration save encountered an error.");
+            LOGW("ConfigLoader", "Modular configuration save (mask=0x%02X) encountered an error.",
+                 static_cast<unsigned>(domainMask));
+        }
+        // For partial domain saves on low-heap devices, avoid rewriting monolithic /config.json
+        // unless plenty of contiguous heap is available; /config/ domain files are authoritative.
+        if (modularOk && domainMask != CONFIG_DOMAIN_ALL && ESP.getMaxAllocHeap() < 16384U) {
+            return true;
         }
     }
 

@@ -116,20 +116,41 @@ También puedes enviar nuevas credenciales Wi-Fi en tiempo de ejecución con `PO
 
 ---
 
-## 5. El Bloque `"mqtt"` (Marquees Recalbox / Batocera)
+## 5. El Bloque `"mqtt"` (Marquees Recalbox / Batocera / RetroPie y Showcase en Juego)
 
-| Clave | Tipo | Descripción |
-| :--- | :--- | :--- |
-| `enabled` | `bool` | Activa el listener MQTT para marquees estilo Pixelcade. |
-| `broker` | `String` | IP/host del broker (normalmente la propia Pi). |
-| `port` | `int` | Puerto del broker (por defecto `1883`). |
-| `user` | `String` | Usuario del broker (opcional). |
-| `pass` | `String` | Contraseña del broker (opcional). |
-| `device_name` | `String` | Identificador publicado por este dispositivo. |
-| `allow_overlay` | `bool` | Permite el overlay decorativo (ej. Fighter Engine) sobre pantallas MQTT/marquesinas (por defecto `false`). |
-| *(auto-suscripción)* | `system/playing/#` | Se suscribe automáticamente a todos los sistemas retro soportados: `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
+| Clave | Tipo | Por defecto | Descripción |
+| :--- | :--- | :--- | :--- |
+| `enabled` | `bool` | `false` | Activa el listener MQTT (`FrontendSync`) para marquees estilo Pixelcade y eventos de consola. |
+| `broker` | `String` | `"127.0.0.1"` | IP/host del broker MQTT local o de respaldo (`127.0.0.1` usa el broker integrado en el ESP32 en modo autónomo). |
+| `port` | `int` | `1883` | Puerto del broker. |
+| `user` | `String` | `""` | Usuario del broker (opcional). |
+| `pass` | `String` | `""` | Contraseña del broker (opcional). |
+| `device_name` | `String` | `"ArcadeMatrix"` | Identificador publicado por este dispositivo. |
+| `allow_overlay` | `bool` | `false` | Permite el overlay decorativo (ej. Fighter Engine) sobre pantallas MQTT/marquesinas. |
+| `use_showcase_broker` | `bool` | `true` | Cuando `showcase.enabled` es `true` y Showcase está accesible, comparte automáticamente el broker MQTT de Showcase y apaga el broker interno del ESP32 para liberar RAM (vuelve automáticamente al broker local si Showcase se desconecta). |
+| `ingame_showcase_enabled` | `bool` | `true` | Al lanzar un juego (`playing`) con Showcase activo, muestra al instante la marquesina local (`0 ms`), prepara en segundo plano la Ficha Informativa + Panoramas + Vídeo Gameplay y realiza la transición suavemente cuando está lista. |
+| `ingame_cycle_mode` | `String` | `"once"` | Ciclo durante la partida: `"once"` (reproduce Showcase una vez y mantiene la marquesina), `"alternating"` (alterna Showcase y pausa en marquesina) o `"loop"` (repite Showcase continuamente). |
+| `ingame_marquee_interval_sec` | `int` | `45` | Segundos que permanece visible la marquesina fija entre ciclos Showcase cuando `ingame_cycle_mode` es `"alternating"` (`5`–`600`). |
+| `card_style_source` | `String` | `"showcase_profile"` | `"showcase_profile"` hereda el perfil visual configurado en Showcase Studio; `"custom"` aplica las opciones personalizadas de Tarjeta y Vídeo de abajo directamente desde el DMD. |
+| `include_card_intro` | `bool` | `true` | (Modo `custom`) Incluye la introducción de Ficha Informativa animada antes de panoramas y vídeo. |
+| `card_layout` | `String` | `"classic_split"` | (Modo `custom`) Diseño de tarjeta: `"classic_split"`, `"badge_header"`, `"full_art"` o `"minimal"`. |
+| `card_theme` | `String` | `"tinted"` | (Modo `custom`) Tema visual de tarjeta: `"tinted"`, `"neon_border"` o `"poster_wash"`. |
+| `show_poster` | `bool` | `true` | (Modo `custom`) Muestra la minicarátula en la Ficha Informativa. |
+| `show_synopsis` | `bool` | `true` | (Modo `custom`) Desplaza la sinopsis localizada del juego en la Ficha Informativa. |
+| `text_scroll_speed` | `String` | `"4"` | (Modo `custom`) Velocidad de desplazamiento de la sinopsis (`"1"` Lento a `"10"` Turbo, o `"slow"` / `"normal"` / `"fast"`). |
+| `jacket_panorama` | `bool` | `true` | (Modo `custom`) Panorama vertical de la carátula completa tras la Ficha Informativa. |
+| `marquee_panorama` | `bool` | `false` | (Modo `custom`) Panorama vertical del banner marquee arcade. |
+| `snapshot_panorama_count` | `int` | `0` | (Modo `custom`) Número de capturas de pantalla en panorama (`0`–`5`). |
+| `show_video` | `bool` | `true` | (Modo `custom`) Transmite el clip de vídeo de gameplay tras la ficha y los panoramas. |
+| `video_max_duration_s` | `int` | `12` | (Modo `custom`) Duración máxima del vídeo de gameplay en segundos (`2`–`120`). |
+| `video_fps` | `int` | `15` | (Modo `custom`) Cuadros por segundo objetivo del vídeo (`8`–`60`). |
+| `video_mode` | `String` | `"auto_action"` | (Modo `custom`) Modo de encuadre de vídeo: `"auto_action"`, `"panorama"` o `"center_crop"`. |
+| `color_boost` | `String` | `"auto"` | (Modo `custom`) Perfil de color LED HUB75: `"auto"`, `"pixel_art"`, `"anime"` o `"cinema"`. |
+| *(auto-suscripción)* | `system/playing/#` | — | Se suscribe automáticamente a todos los sistemas retro soportados: `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
 
-El daemon de sincronización puede instalarse en la consola (Recalbox, Batocera, RetroPie) por SSH desde la interfaz Web (`POST /api/mqtt/install`) con selección de SO objetivo o detección automática, y sus logs pueden obtenerse con `POST /api/mqtt/logs`.
+### Descubrimiento Dinámico del Broker y Vaciado de Caché en 1 Clic
+- **Cero Reinstalación de Scripts (`GET /api/mqtt/broker-target`)**: Los scripts de consola instalados mediante `tools/recalbox_daemon/` guardan únicamente la IP del DMD (`DMD_HOST`) y consultan dinámicamente `GET /api/mqtt/broker-target` (con respaldo automático a `<DMD_HOST>:1883`). Activar o apagar Showcase nunca requiere reinstalar scripts en Recalbox, Batocera o RetroPie.
+- **Vaciado de Caché en 1 Clic (`POST /api/showcase/cache/evict`)**: En **Sistema → MQTT & API → 🎮 FrontendSync** (y **🎬 DMD Media Showcase**), el botón **🗑️ Vaciar Caché de Showcase** limpia al instante la caché persistente de conversiones On-Demand de Showcase cuando cambias el diseño de las tarjetas.
 
 > [!NOTE]
 > Para Batocera, se requiere la versión **v33 o superior** para el cambio dinámico de marquesinas durante la navegación (hooks `game-selected` y `system-selected`). Batocera v32 y versiones anteriores solo activan eventos de inicio/parada de juego. Recalbox es compatible en todas sus versiones.
@@ -356,7 +377,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | `symbols` | `String` | `BTC,ETH` | Separados por comas | Símbolos de criptomonedas a monitorear (CoinGecko / Binance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Mostrar el gráfico sparkline histórico. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal para el historial de precios. |
-| `page_seconds` | `int` | `5` | `3` a `30` | Segundos de permanencia en cada página antes de alternar. |
+| `duration_sec` | `int` | `5` | `2` a `60` | Segundos de permanencia en cada página (alias `page_seconds`). Como `crypto` es autónomo (`selfPaced() == true`), este tiempo por página controla la duración completa de la ranura de rotación para mostrar todas las criptomonedas configuradas antes de avanzar. |
 | `cache_ttl_min` | `int` | `1` | `1` a `60` | Minutos de caché para la cotización. |
 
 ### Motor: `stock`
@@ -365,7 +386,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | `symbols` | `String` | `AAPL,NVDA,TSLA` | Separados por comas | Tickers bursátiles a monitorear (Yahoo Finance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Mostrar el gráfico sparkline histórico. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal para el historial de precios. |
-| `page_seconds` | `int` | `5` | `3` a `30` | Segundos de permanencia en cada página antes de alternar. |
+| `duration_sec` | `int` | `5` | `2` a `60` | Segundos de permanencia en cada página (alias `page_seconds`). Como `stock` es autónomo (`selfPaced() == true`), este tiempo por página controla la duración completa de la ranura de rotación para mostrar todas las acciones configuradas antes de avanzar. |
 | `cache_ttl_min` | `int` | `1` | `1` a `60` | Minutos de caché para la cotización. |
 
 ### Motor: `weather`
@@ -407,16 +428,20 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 | `keywords` | `String` | `""` | Texto / Consulta | Palabras clave de búsqueda o etiquetas personalizadas (ej. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Idioma de las noticias (`auto` sincroniza con el sistema). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Edición regional por país. |
-| `max_articles` | `int` | `5` | `3` a `15` | Cantidad máxima de titulares almacenados en caché por ciclo. |
+| `max_articles` | `int` | `5` | `3` a `15` | Cantidad máxima de artículos almacenados en caché y seleccionados en orden aleatorio sin repetición entre ranuras de rotación. |
+| `articles_per_rotation` | `int` | `2` | `1` a `15` | Rotación con ritmo propio: cantidad de artículos aleatorios a desplazar por completo (`PauseStart` -> `Scrolling` -> `PauseEnd`) antes de avanzar la rotación. |
 | `requests_per_day` | `int` | `10` | `1` a `100` | Presupuesto total de solicitudes API por cada 24 horas (nivel gratuito GNews: 100 sol/día por clave). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Acción: purga inmediatamente la caché del idioma anterior y consulta la API sin reiniciar contadores de cuota diaria. |
 | `cache_ttl_min` | `int` | `30` | `5` a `120` | Intervalo mínimo de refresco de caché en minutos. |
 | `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Estilo de animación (desplazamiento horizontal fluido, desplazamiento vertical, paginación multilínea, o serpentín alternado). |
 | `scroll_speed` | `int` | `3` | `1` a `10` | Velocidad de desplazamiento (1: Lento a 10: Turbo). |
-| `scroll_pause_start_ms` | `int` | `1200` | `0` a `4000` | Tiempo de pausa inicial (ms) antes de comenzar el desplazamiento. |
-| `scroll_pause_end_ms` | `int` | `1000` | `0` a `4000` | Tiempo de pausa final (ms) al final del titular antes de cambiar. |
-| `article_duration_sec` | `int` | `12` | `5` a `60` | Duración de visualización por artículo en segundos. |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` a `4000` | Tiempo de pausa inicial (ms) antes de comenzar el desplazamiento del artículo. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` a `4000` | Tiempo de pausa final (ms) al terminar el artículo antes de cambiar. |
+| `article_duration_sec` | `int` | `12` | `5` a `60` | Duración de visualización de respaldo por artículo en segundos. |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Esquema de colores visual. |
+| `show_title` | `bool` | `false` | `true`, `false` | Incluye el titular del artículo en el texto desplazado. |
+| `show_description` | `bool` | `false` | `true`, `false` | Incluye el resumen / entradilla del artículo en el texto desplazado. |
+| `show_content` | `bool` | `true` | `true`, `false` | Incluye el cuerpo del artículo en el texto desplazado (con respaldo automático a descripción/título si está vacío). |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Muestra la píldora de categoría en color (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Muestra el nombre de la fuente de noticias (`BBC News`, `Reuters`, etc.). |
 | `show_time_ago` | `bool` | `true` | `true`, `false` | Muestra la antigüedad relativa (`5m ago`, `2h ago`). |
@@ -428,8 +453,9 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
    - Puede ingresar múltiples claves API separadas por comas (`api_key: "clave1,clave2,clave3"`).
    - Si una clave resulta inválida (`HTTP 401/403`) o agota su cuota de 100 solicitudes/día (`HTTP 429/403`), el motor conmuta instantáneamente a la siguiente clave y reintenta la solicitud.
    - 2 cuentas = 200 solicitudes/día; 3 cuentas = 300 solicitudes/día.
-2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS):**
+2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS) y Selección Aleatoria:**
    - Los artículos y la telemetría se guardan en almacenamiento local. Al reiniciar, las noticias se muestran al instante sin consumir cuota API.
+   - En cada ranura de rotación, los titulares en caché se seleccionan mediante una permutación aleatoria Fisher-Yates sin repetición para mostrar todas las noticias de forma equitativa incluso con tiempos de rotación cortos.
    - Si no hay conexión o se agota la cuota, las noticias persisten y siguen desplazándose 24/7.
 3. **Presupuesto Diario de Solicitudes (Por defecto: 10 sol/día) y Protección de Claves Compartidas:**
    - Aunque las cuentas gratuitas de GNews.io permiten hasta 100 solicitudes/día por clave, los usuarios suelen compartir su clave con otros proyectos o sistemas domóticos externos.
@@ -562,6 +588,38 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 Muestra páginas publicadas vía MQTT por cualquier publicador: un `value`, una `table` de hasta 4 valores, un `graph` o una página `weather`, según el `type` de cada mensaje. Aquí solo se configuran los topics; todo lo demás (tiempo por página, títulos, colores) viene de los mensajes, que deben publicarse **retenidos**. La pantalla solo se conecta mientras se muestra y fija su propio tiempo (un ciclo de sus páginas), así que su duración en la rotación se ignora. Protocolo, formatos, límites y avisos: [MQTT_DATA_CONTRACT_ES.md](MQTT_DATA_CONTRACT_ES.md). Blueprints de Home Assistant: [HOME_ASSISTANT_ES.md](HOME_ASSISTANT_ES.md).
 
 Ejemplo de instancia: `{"instance_id":"home_data","engine_id":"mqttdata","config":{"topics":"arcadematrix/weather/local,arcadematrix/graph/inside,arcadematrix/value/outside"}}`.
+
+### Motores: `retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase` (DMD Media Showcase)
+> [!IMPORTANT]
+> Estos 4 motores Showcase **funcionan exclusivamente con la aplicación complementaria [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) instalada en otra máquina de la misma red local** (Raspberry Pi, NAS, servidor Docker o PC). La conexión al servidor se configura una sola vez de forma global en el bloque raíz `showcase` de `config.json` (o mediante la tarjeta unificada **Showcase Server** en la pestaña Settings de la Web UI).
+
+| Campo Raíz `showcase` | Tipo | Por defecto | Descripción |
+| :--- | :--- | :--- | :--- |
+| `showcase.enabled` | `bool` | `false` | Interruptor de activación global (desactivado por defecto para evitar peticiones de red innecesarias si `dmd_media_showcase` no está instalado). |
+| `showcase.server_url` | `String` | `"http://dmdmediashowcase.local:8890"` | URL HTTP pre-rellenada (autodescubrimiento mDNS) de su servidor **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** en la red local (verificada por el indicador **`🟢 Comunicación OK`** en la Web UI). |
+| `showcase.transport_mode` | `Options` | `mqtt_tcp` | Protocolo de transporte (`mqtt_tcp` para control MQTT en tiempo real + streaming HTTP/1.1 directo `DMDZ` v2 / `DMDS` sin pérdida cero-heap, o `http_poll` para sondeo HTTP directo). |
+| `showcase.use_showcase_broker` | `bool` | `true` | Conecta automáticamente al broker MQTT alojado en el servidor Showcase (`<server_ip>:1883`). |
+| `showcase.mqtt_broker_source` | `Options` | `global` | Fuente del broker MQTT cuando `use_showcase_broker` es `false` (`global` usa `mqtt.server`, `custom` usa `mqtt_custom_url`). |
+| `showcase.mqtt_custom_url` | `String` | `""` | URL personalizada del broker MQTT (ej. `mqtt://192.168.1.200:1883`) cuando `mqtt_broker_source` es `custom`. |
+
+| Campo de Instancia (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) | Tipo | Por defecto | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `text_scroll_speed` | `Options` | `4` | `1` a `10` (`slow`, `normal`, `fast`) | Velocidad de lectura del desplazamiento completo de la sinopsis en la tarjeta de información (`1` = Lento .. `10` = Turbo). |
+| `jacket_panorama` | `bool` | `true` | `true`, `false` | Desplaza verticalmente la portada/póster a ancho completo después de la tarjeta de información. |
+| `marquee_panorama` | `bool` | `false` | `true`, `false` | Desplaza verticalmente la marquesina arcade o el banner después del póster. |
+| `snapshot_panorama_count` | `int` | `0` | `0` a `5` | Capturas adicionales para desplazar de arriba a abajo (`0`..`5`). |
+| `video_max_duration_s` | `int` | `8` | `2` a `120` | Segundos máximos para el clip de vídeo RGB565. |
+| `video_fps` | `int` | `15` | `8` a `60` | Velocidad de fotogramas objetivo para los clips de vídeo RGB565 transmitidos. |
+| `video_mode` | `Options` | `auto_action` | `auto_action`, `panorama`, `center_crop` | Estrategia de encuadre de vídeo impulsada por `dmd_gif_converter` (`auto_action` IA Let Me Handle It, `panorama` barrido vertical de arriba a abajo, o `center_crop` recorte central fijo). |
+| `show_poster` | `bool` | `true` | `true`, `false` | Muestra la miniatura ajustada en la tarjeta. |
+| `show_synopsis` | `bool` | `true` | `true`, `false` | Desplaza el resumen del argumento traducido en la tarjeta. |
+| `show_video` | `bool` | `true` | `true`, `false` | Transmite el clip de vídeo RGB565 si está disponible. |
+| `color_boost` | `Options` | `auto` | `auto`, `pixel_art`, `anime`, `cinema` | Perfil de colorimetría para paneles LED HUB75 (`auto` IA Smart Color Boost Let Me Handle It, o ajuste fijo `pixel_art`, `anime`, `cinema`). |
+| `lang` | `Options` | `system` | `system,en,fr,es,de,it` | Idioma de títulos y sinopsis (`system` sincroniza con el idioma configurado en el DMD). |
+| `systems` | `List` | `""` | Dinámico (`/api/v1/games/filters`) | (`retro_games` únicamente) Filtrar por sistemas arcade/consola (dejar vacío para todos). |
+| `genres` | `List` | `""` | Dinámico (`/api/v1/{domain}/filters`) | Filtrar por géneros obtenidos dinámicamente del servidor Showcase. |
+| `decades` | `List` | `""` | Dinámico (`/api/v1/{domain}/filters`) | Filtrar por décadas obtenidas dinámicamente del servidor Showcase. |
+| `video_type` | `Options` | `any` / `opening` | `any`, `trailer`, `scene`, `opening`, `ending` | (`movie_showcase`, `series_showcase`, `anime_showcase`) Tipo de clip de vídeo preferido. |
 
 ---
 
