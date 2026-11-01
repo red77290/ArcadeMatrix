@@ -93,6 +93,10 @@ uint32_t Hub75BulkEncoder::encode(
     const uint8_t* const lutB = params.lutB;
 
     for (int y = 0; y < rpf; y++) {
+        if (params.rowSync) {
+            params.rowSync(params.syncCtx, static_cast<uint8_t>(y));
+        }
+
         const uint16_t* src1;
         const uint16_t* src2;
 
@@ -206,6 +210,10 @@ uint32_t Hub75BulkEncoder::encode(
     if (!effParams.rowFlush && target.rowFlush) {
         effParams.rowFlush = target.rowFlush;
         effParams.flushCtx = target.accessorCtx;
+    }
+    if (!effParams.rowSync && target.rowSync) {
+        effParams.rowSync = target.rowSync;
+        effParams.syncCtx = target.accessorCtx;
     }
     if (target.rowAccessor) {
         return encode(canvas, canvasStridePixels, target.rowAccessor, target.accessorCtx, effParams);

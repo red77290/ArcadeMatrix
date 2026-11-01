@@ -3562,6 +3562,148 @@ void test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll
     TEST_ASSERT_EQUAL_UINT32(1U, step30Hz);
 }
 
+void test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases(void) {
+    // Simulate a 256x64 single-DMA-buffer panel (`ROWS_PER_FRAME = 32`, 173 us/row GDMA scan,
+    // 95 us/row CPU encode + L1 writeback) across all 32 starting GDMA phases (0..31).
+    static constexpr int kRpf = 32;
+    static constexpr uint32_t kDmaRowUs = 173U;
+    static constexpr uint32_t kCpuRowUs = 95U;
+
+    struct SimBus {
+        uint32_t initDmaRow = 0U;
+        uint32_t simUs = 0U;
+        uint32_t lastAdvancedUs = 0U;
+        int currentScanRow = 0;
+        uint8_t dmaBufferFrameId[kRpf] = {};
+        uint8_t scannedRowFrameId[8][kRpf] = {};
+        uint32_t currentScanIdx = 0U;
+        bool stalled = false;
+        bool unsupported = false;
+        uint32_t delayCalls = 0U;
+
+        void reset(uint32_t startRow) {
+            initDmaRow = startRow % static_cast<uint32_t>(kRpf);
+            simUs = 0U;
+            lastAdvancedUs = 0U;
+            currentScanRow = static_cast<int>(initDmaRow);
+            currentScanIdx = 0U;
+            stalled = false;
+            unsupported = false;
+            delayCalls = 0U;
+            for (int r = 0; r < kRpf; ++r) {
+                dmaBufferFrameId[r] = 1U; // Frame N initially in single DMA buffer
+            }
+            for (int s = 0; s < 8; ++s) {
+                for (int r = 0; r < kRpf; ++r) {
+                    scannedRowFrameId[s][r] = (s == 0 && r < static_cast<int>(initDmaRow)) ? 1U : 0U;
+                }
+            }
+            // Active row at t=0 has already begun latching Frame 1
+            scannedRowFrameId[0][initDmaRow] = 1U;
+        }
+
+        void advanceTime(uint32_t deltaUs) {
+            const uint32_t targetUs = simUs + deltaUs;
+            if (stalled || unsupported) {
+                simUs = targetUs;
+                return;
+            }
+            while (simUs < targetUs) {
+                const uint32_t remInRow = kDmaRowUs - (simUs % kDmaRowUs);
+                const uint32_t step = (targetUs - simUs < remInRow) ? (targetUs - simUs) : remInRow;
+                simUs += step;
+                if ((simUs % kDmaRowUs) == 0U) {
+                    currentScanRow = (currentScanRow + 1) % kRpf;
+                    if (currentScanRow == 0 && currentScanIdx + 1U < 8U) {
+                        currentScanIdx++;
+                    }
+                    // Hardware GDMA begins transferring `currentScanRow` from single DMA buffer
+                    scannedRowFrameId[currentScanIdx][currentScanRow] = dmaBufferFrameId[currentScanRow];
+                }
+            }
+        }
+    };
+
+    static SimBus* s_bus = nullptr;
+    SimBus bus;
+    s_bus = &bus;
+
+    auto queryCb = [](void* ctx) -> int {
+        auto* b = static_cast<SimBus*>(ctx);
+        if (b->unsupported) return -1;
+        return b->currentScanRow;
+    };
+    auto delayCb = [](uint32_t us) {
+        s_bus->delayCalls++;
+        s_bus->advanceTime(us);
+    };
+
+    for (uint32_t startPhase = 0U; startPhase < 32U; ++startPhase) {
+        bus.reset(startPhase);
+        Hub75SingleDmaScanChaser chaser;
+        chaser.begin(queryCb, &bus, kRpf, delayCb);
+        TEST_ASSERT_TRUE(chaser.active);
+
+        for (uint8_t y = 0U; y < static_cast<uint8_t>(kRpf); ++y) {
+            chaser.syncRow(y);
+            // CPU writes Frame 2 into row `y` (`y` and `y + 32` on 256x64) over 95 us:
+            // if GDMA is currently scanning row `y`, that scan row would tear!
+            TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
+            bus.advanceTime(kCpuRowUs / 2U);
+            TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
+            bus.dmaBufferFrameId[y] = 2U;
+            bus.advanceTime(kCpuRowUs - (kCpuRowUs / 2U));
+        }
+
+        // Total encode + worst-case wrap-plus-chase wait stays well under 7.0 ms (< 42% of a 60 FPS 16.6 ms frame)
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(7000U, bus.simUs);
+
+        // Advance two full scans so Scan S and Scan S+1 complete all 32 rows (0..31)
+        bus.advanceTime(kRpf * kDmaRowUs * 2U);
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2U, bus.currentScanIdx);
+
+        // Every completed scan cycle must be 100% Frame 1 OR 100% Frame 2 across all 32 rows
+        // (especially row 31 `y=31` vs row 0 `y=32` at the vertical center of 256x64!).
+        for (uint32_t s = 0U; s < bus.currentScanIdx; ++s) {
+            const uint8_t expectedFrame = bus.scannedRowFrameId[s][0];
+            TEST_ASSERT_TRUE(expectedFrame == 1U || expectedFrame == 2U);
+            for (int r = 1; r < kRpf; ++r) {
+                TEST_ASSERT_EQUAL_UINT8(expectedFrame, bus.scannedRowFrameId[s][r]);
+            }
+        }
+    }
+
+    // Safety fallback 1: unsupported/double-buffered panel (`queryRow` returns -1) -> zero wait
+    bus.reset(0U);
+    bus.unsupported = true;
+    {
+        Hub75SingleDmaScanChaser chaser;
+        chaser.begin(queryCb, &bus, kRpf, delayCb);
+        for (uint8_t y = 0U; y < 32U; ++y) {
+            chaser.syncRow(y);
+        }
+        TEST_ASSERT_FALSE(chaser.active);
+        TEST_ASSERT_EQUAL_UINT32(0U, bus.delayCalls);
+    }
+
+    // Safety fallback 2: stalled GDMA at row 0 -> bounded exit, never infinite loop
+    bus.reset(0U);
+    bus.stalled = true;
+    {
+        Hub75SingleDmaScanChaser chaser;
+        chaser.begin(queryCb, &bus, kRpf, delayCb);
+        for (uint8_t y = 0U; y < 32U; ++y) {
+            chaser.syncRow(y);
+        }
+        const uint32_t maxPossibleCalls =
+            static_cast<uint32_t>(Hub75SingleDmaScanChaser::kMaxStartWaitSteps) +
+            31U * static_cast<uint32_t>(Hub75SingleDmaScanChaser::kMaxRowWaitSteps);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(maxPossibleCalls, bus.delayCalls);
+    }
+
+    s_bus = nullptr;
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -3660,6 +3802,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_showcase_stream_player_atomic_spsc_raw_rotated_fallback_and_preload);
     RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
     RUN_TEST(test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll);
+    RUN_TEST(test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases);
 
     return UNITY_END();
 }

@@ -49,6 +49,10 @@ public:
                    int requestsPerDay = 10, bool forceRefresh = false);
 
     const GNewsSnapshot& getSnapshot() const;
+    uint32_t getGeneration() const { return _seq.load(std::memory_order_acquire); }
+    bool tryReadMetaLockFree(size_t& outCount, bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const;
+    bool tryReadArticleLockFree(size_t index, GNewsArticle& outArticle, size_t& outCount,
+                                bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const;
     bool hasData() const;
     void purgeArticles();
     void loadFromSd();
@@ -59,7 +63,18 @@ public:
     void releaseArticleStorage();
 
 private:
+    struct SeqWriteGuard {
+        std::atomic<uint32_t>& seq;
+        explicit SeqWriteGuard(std::atomic<uint32_t>& s) : seq(s) {
+            seq.fetch_add(1U, std::memory_order_acq_rel);
+        }
+        ~SeqWriteGuard() {
+            seq.fetch_add(1U, std::memory_order_release);
+        }
+    };
+
     mutable std::mutex _mutex;
+    std::atomic<uint32_t> _seq{0};
     GNewsSnapshot _snapshot;
     String _lastApiKey;
     String _lastCategory;
@@ -80,6 +95,8 @@ private:
 
     bool parseGNewsJson(Stream& stream, const char* defaultCategory);
     bool parseGNewsJson(const String& payload, const char* defaultCategory);
+    bool tryReadLockFreeImpl(size_t index, GNewsArticle* outArticle, size_t& outCount,
+                             bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const;
 
     /**
      * @brief Allocate the article storage on first use, preferring PSRAM.

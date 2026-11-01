@@ -49,6 +49,7 @@ bool GNewsService::ensureArticleStorage() {
 
 void GNewsService::releaseArticleStorage() {
     std::lock_guard<std::mutex> lock(_mutex);
+    SeqWriteGuard seqGuard(_seq);
     if (_snapshot.articles) {
         heap_caps_free(_snapshot.articles);
         _snapshot.articles = nullptr;
@@ -61,12 +62,52 @@ const GNewsSnapshot& GNewsService::getSnapshot() const {
     return _snapshot;
 }
 
+bool GNewsService::tryReadLockFreeImpl(size_t index, GNewsArticle* outArticle, size_t& outCount,
+                                       bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const {
+    const uint32_t s1 = _seq.load(std::memory_order_acquire);
+    if ((s1 & 1U) != 0U) {
+        return false;
+    }
+    const GNewsArticle* arts = _snapshot.articles;
+    const size_t cnt = _snapshot.articles ? _snapshot.count : 0;
+    const bool hd = _snapshot.hasData && (arts != nullptr) && (cnt > 0);
+    const uint8_t st = _snapshot.status;
+    if (hd && outArticle != nullptr) {
+        const size_t safeIdx = (index < cnt) ? index : 0;
+        std::memcpy(outArticle, &arts[safeIdx], sizeof(GNewsArticle));
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const uint32_t s2 = _seq.load(std::memory_order_acquire);
+    if (s1 != s2) {
+        return false;
+    }
+    outCount = hd ? cnt : 0;
+    outHasData = hd;
+    outStatus = st;
+    outSeq = s1;
+    return true;
+}
+
+bool GNewsService::tryReadMetaLockFree(size_t& outCount, bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const {
+    return tryReadLockFreeImpl(0, nullptr, outCount, outHasData, outStatus, outSeq);
+}
+
+bool GNewsService::tryReadArticleLockFree(size_t index, GNewsArticle& outArticle, size_t& outCount,
+                                          bool& outHasData, uint8_t& outStatus, uint32_t& outSeq) const {
+    return tryReadLockFreeImpl(index, &outArticle, outCount, outHasData, outStatus, outSeq);
+}
+
 bool GNewsService::hasData() const {
     return _snapshot.articles && _snapshot.hasData && _snapshot.count > 0;
 }
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize("Os")
+#endif
+
 void GNewsService::purgeArticles() {
     std::lock_guard<std::mutex> lock(_mutex);
+    SeqWriteGuard seqGuard(_seq);
     _snapshot.count = 0;
     _snapshot.hasData = false;
     _snapshot.fetchSuccess = false;
@@ -100,46 +141,42 @@ uint16_t GNewsService::getCategoryColor(const char* category) {
     return 0xDEFB; // Crisp Cool White
 }
 
+static void splitCsvTokens(const String& csv, std::vector<String>& out) {
+    out.clear();
+    int start = 0;
+    while (start <= (int)csv.length()) {
+        int comma = csv.indexOf(',', start);
+        String token = (comma == -1) ? csv.substring(start) : csv.substring(start, comma);
+        token.trim();
+        if (token.length() > 0) {
+            out.push_back(token);
+        }
+        if (comma == -1) break;
+        start = comma + 1;
+    }
+}
+
 static String cleanNewsText(const char* raw) {
     if (!raw) return "";
     String s = String(raw);
-    s.replace("&quot;", "\"");
-    s.replace("&apos;", "'");
-    s.replace("&#39;", "'");
-    s.replace("&amp;", "&");
-    s.replace("&lt;", "<");
-    s.replace("&gt;", ">");
-    s.replace("&nbsp;", " ");
-    s.replace("&#8217;", "'");
-    s.replace("&#8216;", "'");
-    s.replace("&#8220;", "\"");
-    s.replace("&#8221;", "\"");
-    s.replace("&#8211;", "-");
-    s.replace("&#8212;", "-");
-    s.replace("&laquo;", "«");
-    s.replace("&raquo;", "»");
-    s.replace("&#171;", "«");
-    s.replace("&#187;", "»");
-    s.replace("&eacute;", "\xC3\xA9");
-    s.replace("&egrave;", "\xC3\xA8");
-    s.replace("&agrave;", "\xC3\xA0");
-    s.replace("&ccedil;", "\xC3\xA7");
-    s.replace("&ecirc;", "\xC3\xAA");
-    s.replace("&euml;", "\xC3\xAB");
-    s.replace("&ocirc;", "\xC3\xB4");
-    s.replace("&icirc;", "\xC3\xAE");
-    s.replace("&iuml;", "\xC3\xAF");
-    s.replace("&ucirc;", "\xC3\xBB");
-    s.replace("&ugrave;", "\xC3\xB9");
-    s.replace("&Eacute;", "\xC3\x89");
-    s.replace("&Egrave;", "\xC3\x88");
-    s.replace("&Agrave;", "\xC3\x80");
-    s.replace("&Ccedil;", "\xC3\x87");
-    s.replace("&#233;", "\xC3\xA9");
-    s.replace("&#232;", "\xC3\xA8");
-    s.replace("&#224;", "\xC3\xA0");
-    s.replace("&#231;", "\xC3\xA7");
-    s.replace("&#234;", "\xC3\xAA");
+    static constexpr struct { const char* entity; const char* repl; } kEntities[] = {
+        {"&quot;", "\""}, {"&apos;", "'"}, {"&#39;", "'"}, {"&amp;", "&"},
+        {"&lt;", "<"}, {"&gt;", ">"}, {"&nbsp;", " "}, {"&#8217;", "'"},
+        {"&#8216;", "'"}, {"&#8220;", "\""}, {"&#8221;", "\""}, {"&#8211;", "-"},
+        {"&#8212;", "-"}, {"&laquo;", "«"}, {"&raquo;", "»"}, {"&#171;", "«"},
+        {"&#187;", "»"}, {"&eacute;", "\xC3\xA9"}, {"&egrave;", "\xC3\xA8"},
+        {"&agrave;", "\xC3\xA0"}, {"&ccedil;", "\xC3\xA7"}, {"&ecirc;", "\xC3\xAA"},
+        {"&euml;", "\xC3\xAB"}, {"&ocirc;", "\xC3\xB4"}, {"&icirc;", "\xC3\xAE"},
+        {"&iuml;", "\xC3\xAF"}, {"&ucirc;", "\xC3\xBB"}, {"&ugrave;", "\xC3\xB9"},
+        {"&Eacute;", "\xC3\x89"}, {"&Egrave;", "\xC3\x88"}, {"&Agrave;", "\xC3\x80"},
+        {"&Ccedil;", "\xC3\x87"}, {"&#233;", "\xC3\xA9"}, {"&#232;", "\xC3\xA8"},
+        {"&#224;", "\xC3\xA0"}, {"&#231;", "\xC3\xA7"}, {"&#234;", "\xC3\xAA"}
+    };
+    if (s.indexOf('&') >= 0) {
+        for (const auto& e : kEntities) {
+            s.replace(e.entity, e.repl);
+        }
+    }
     s.trim();
     return s;
 }
@@ -240,6 +277,7 @@ void GNewsService::loadFromSd() {
     }
 
     std::lock_guard<std::mutex> lock(_mutex);
+    SeqWriteGuard seqGuard(_seq);
     _snapshot.lastFetchTime = millis();
     _snapshot.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
     _lastFetchDay = doc["last_fetch_day"] | -1;
@@ -382,6 +420,7 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
     if (incoming.empty()) return false;
 
     std::lock_guard<std::mutex> lock(_mutex);
+    SeqWriteGuard seqGuard(_seq);
 
     // Merge incoming into the snapshot articles with title deduplication
     std::vector<GNewsArticle> merged;
@@ -442,6 +481,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     bool needMidnightSave = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        SeqWriteGuard seqGuard(_seq);
         _lastRequestsPerDay = (requestsPerDay > 0) ? std::min(requestsPerDay, 100) : 10;
         uint32_t intervalFromBudgetSec = 86400UL / (uint32_t)_lastRequestsPerDay;
         uint32_t intervalFromTtlSec = (cacheTtlMin > 0) ? ((uint32_t)cacheTtlMin * 60UL) : 1800UL;
@@ -457,19 +497,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         }
 
         // Parse comma-separated keys
-        _apiKeys.clear();
-        int kStart = 0;
-        int kComma = apiKey.indexOf(',');
-        while (kComma != -1) {
-            String token = apiKey.substring(kStart, kComma);
-            token.trim();
-            if (token.length() > 0) _apiKeys.push_back(token);
-            kStart = kComma + 1;
-            kComma = apiKey.indexOf(',', kStart);
-        }
-        String lastKey = apiKey.substring(kStart);
-        lastKey.trim();
-        if (lastKey.length() > 0) _apiKeys.push_back(lastKey);
+        splitCsvTokens(apiKey, _apiKeys);
 
         while (_keyUsages.size() < _apiKeys.size()) {
             _keyUsages.push_back(0);
@@ -583,18 +611,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     // Split category list if comma-separated
     std::vector<String> cats;
     if (keywords.length() == 0 && category.length() > 0) {
-        int start = 0;
-        int comma = category.indexOf(',');
-        while (comma != -1) {
-            String token = category.substring(start, comma);
-            token.trim();
-            if (token.length() > 0) cats.push_back(token);
-            start = comma + 1;
-            comma = category.indexOf(',', start);
-        }
-        String lastToken = category.substring(start);
-        lastToken.trim();
-        if (lastToken.length() > 0) cats.push_back(lastToken);
+        splitCsvTokens(category, cats);
     }
     if (cats.empty()) {
         cats.push_back(category.length() > 0 ? category : "general");
@@ -657,6 +674,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
             if (parseGNewsJson(payload, targetCat.c_str())) {
                 {
                     std::lock_guard<std::mutex> lock(_mutex);
+                    SeqWriteGuard seqGuard(_seq);
                     _activeKeyIdx = curKeyIdx;
                     _snapshot.status = 0; // OK
                     _snapshot.lastFetchTime = millis();
@@ -676,6 +694,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
             bool saveRateLimit = false;
             {
                 std::lock_guard<std::mutex> lock(_mutex);
+                SeqWriteGuard seqGuard(_seq);
                 _consecutiveFailures++;
                 if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
                     LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Locking out until midnight UTC.", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);

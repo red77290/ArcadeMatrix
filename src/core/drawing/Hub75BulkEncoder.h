@@ -35,6 +35,132 @@ struct Hub75EncodingParams {
     uint8_t rotation = 0;            ///< Physical orientation (0 or 2 for 180 deg)
     DmaRowFlush rowFlush = nullptr;  ///< Optional per-row cache writeback hook while row planes sit hot in L1 DCache
     void* flushCtx = nullptr;        ///< User context passed to `rowFlush`
+    DmaRowSync rowSync = nullptr;    ///< Optional per-row hardware DMA scanline sync hook (single-buffer beam-racing)
+    void* syncCtx = nullptr;         ///< User context passed to `rowSync`
+};
+
+/**
+ * @struct Hub75SingleDmaScanChaser
+ * @brief Tear-free hardware DMA scanline chaser ("beam-racing") for single-DMA-buffer HUB75 panels.
+ *
+ * On 256x64 single-DMA-buffer panels (`ROWS_PER_FRAME = 32`), GDMA scans rows `0..31` in ~5.53 ms
+ * (~173 us/row) while CPU encodes rows `0..31` in ~3.0 ms (~95 us/row). Without scanline chasing,
+ * starting an encode near the end of a DMA scan overwrites `row 0` (`y = 0` & `y = 32`) with Frame N+1
+ * right before GDMA finishes `row 31` (`y = 31` & `y = 63`) with Frame N, creating a visible seam at
+ * the vertical center (`y = 31 / 32`).
+ *
+ * By gating `row 0` to start only when `dmaRow` is inside `[2 .. maxStartRow]` and keeping CPU writes
+ * at least 2 scan rows behind `dmaRow` until the current hardware scan wraps `31 -> 0`, Scan S reads
+ * 100% Frame N across all rows and Scan S+1 reads 100% Frame N+1 across all rows with zero extra RAM.
+ */
+struct Hub75SingleDmaScanChaser {
+    using QueryDmaRowFn = int (*)(void* userCtx);
+    using DelayUsFn = void (*)(uint32_t us);
+
+    QueryDmaRowFn queryRow = nullptr;
+    void* queryCtx = nullptr;
+    DelayUsFn delayFn = nullptr;
+    int rowsPerFrame = 0;
+    int lastDmaRow = -1;
+    bool active = false;
+    bool scanWrapped = false;
+
+    static constexpr uint32_t kStepDelayUs = 12U;
+    static constexpr int kMaxStartWaitSteps = 180; // Hard cap: 2,160 us
+    static constexpr int kMaxRowWaitSteps = 45;    // Hard cap: 540 us/row
+
+    void begin(QueryDmaRowFn query, void* ctx, int rpf, DelayUsFn delayCb = nullptr) {
+        queryRow = query;
+        queryCtx = ctx;
+        delayFn = delayCb;
+        rowsPerFrame = rpf;
+        lastDmaRow = -1;
+        scanWrapped = false;
+        active = (query != nullptr && rpf >= 8);
+    }
+
+    inline void stepDelay() const {
+        if (delayFn) {
+            delayFn(kStepDelayUs);
+        } else {
+            delayMicroseconds(kStepDelayUs);
+        }
+    }
+
+    void syncRow(uint8_t row) {
+        if (!active || !queryRow) return;
+
+        const int rpf = rowsPerFrame;
+        const int y = static_cast<int>(row);
+        if (y < 0 || y >= rpf) return;
+
+        if (y == 0) {
+            int d = queryRow(queryCtx);
+            if (d < 0 || d >= rpf) {
+                active = false;
+                return;
+            }
+            const int minStartRow = 2;
+            const int tailMargin = (rpf / 5 > 4) ? (rpf / 5) : 4; // 6 on rpf=32, 4 on rpf=16
+            const int maxStartRow = (rpf - tailMargin > minStartRow + 1) ? (rpf - tailMargin) : (minStartRow + 1);
+
+            int steps = 0;
+            while ((d < minStartRow || d > maxStartRow) && steps < kMaxStartWaitSteps) {
+                stepDelay();
+                ++steps;
+                d = queryRow(queryCtx);
+                if (d < 0 || d >= rpf) {
+                    active = false;
+                    return;
+                }
+            }
+            lastDmaRow = d;
+            scanWrapped = false;
+            return;
+        }
+
+        if (scanWrapped) {
+            return;
+        }
+
+        int d = queryRow(queryCtx);
+        if (d < 0 || d >= rpf) {
+            active = false;
+            return;
+        }
+        if (d + 1 < lastDmaRow) {
+            scanWrapped = true;
+            return;
+        }
+        if (d > lastDmaRow) {
+            lastDmaRow = d;
+        }
+
+        int steps = 0;
+        while (!scanWrapped && (y + 1) >= d && steps < kMaxRowWaitSteps) {
+            stepDelay();
+            ++steps;
+            d = queryRow(queryCtx);
+            if (d < 0 || d >= rpf) {
+                active = false;
+                return;
+            }
+            if (d + 1 < lastDmaRow) {
+                scanWrapped = true;
+                return;
+            }
+            if (d > lastDmaRow) {
+                lastDmaRow = d;
+            }
+        }
+    }
+
+    static void callback(void* ctx, uint8_t row) {
+        auto* self = static_cast<Hub75SingleDmaScanChaser*>(ctx);
+        if (self) {
+            self->syncRow(row);
+        }
+    }
 };
 
 class Hub75BulkEncoder {

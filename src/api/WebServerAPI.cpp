@@ -2917,7 +2917,7 @@ void WebServerAPI::setupRoutes() {
         bool saved = true;
         if (changed) {
             CompatibilityEvaluator::notifyHardwareCapabilityChanged();
-            uint8_t effectiveMask = (domainMask != 0) ? domainMask : CONFIG_DOMAIN_ALL;
+            uint8_t effectiveMask = (domainMask != 0) ? domainMask : static_cast<uint8_t>(CONFIG_DOMAIN_ALL);
             saved = config.saveDomainsToSD(effectiveMask, "/config.json");
             if (!saved) {
                 willReboot = false;   // a reboot now would discard the change
@@ -3536,30 +3536,6 @@ void WebServerAPI::setupRoutes() {
             return (int)files.size();
         };
 
-        // Rewrite <root>/playlists.json from the real directory contents (same shape as generate_index.sh).
-        static auto writePlaylistsJson = [](const String& root) -> String {
-            String json = "{"; bool first = true;
-            FsFile dir = sd.open(root.c_str(), FILE_OPEN_READ);
-            if (dir && isDirectory(dir)) {
-                FsFile f;
-                while (getNextFile(dir, f)) {
-                    if (!isDirectory(f)) continue;
-                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
-                    if (isMacJunk(name)) continue;
-                    int count = writeFolderIndex(root, name);
-                    if (count <= 0) continue;
-                    if (!first) json += ",";
-                    json += "\"" + jsonEsc(name) + "\":{\"path\":\"" + root + "/" + jsonEsc(name) + "\",\"count\":" + String(count) + "}";
-                    first = false;
-                }
-                dir.close();
-            }
-            json += "}";
-            String plPath = root + "/playlists.json";
-            replaceFile(plPath, [&](FsFile& pl) { return pl.print(json) == json.length(); });
-            return json;
-        };
-
         // ---- incremental index maintenance (no directory walks in request handlers) -------------------------
         // index.txt is the source of truth per folder; playlists.json is rebuilt from the index line counts only.
         static auto indexLineCount = [](const String& root, const String& folder) -> int {
@@ -3645,27 +3621,6 @@ void WebServerAPI::setupRoutes() {
         g_gifBuildPlaylistsFromIndexes = buildPlaylistsFromIndexes;
         g_gifIsMacJunk = [](const String& s) { return isMacJunk(s); };
         g_gifReadPlaylistsJson = readPlaylistsJson;
-
-        // Live library scan (does NOT touch index files).
-        static auto scanLibrary = [](const String& root) -> String {
-            String json = "{"; bool first = true;
-            FsFile dir = sd.open(root.c_str(), FILE_OPEN_READ);
-            if (dir && isDirectory(dir)) {
-                FsFile f;
-                while (getNextFile(dir, f)) {
-                    if (!isDirectory(f)) continue;
-                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
-                    if (isMacJunk(name)) continue;
-                    std::vector<String> files; listFolderFiles(root + "/" + name, files);
-                    if (!first) json += ",";
-                    json += "\"" + jsonEsc(name) + "\":{\"path\":\"" + root + "/" + jsonEsc(name) + "\",\"count\":" + String(files.size()) + "}";
-                    first = false;
-                }
-                dir.close();
-            }
-            json += "}";
-            return json;
-        };
 
         server.on("/api/gifs/library", HTTP_GET, [](AsyncWebServerRequest *request){
             // Served from playlists.json (kept current by the upload/delete/rename handlers); never walks the files here.
@@ -3777,7 +3732,8 @@ void WebServerAPI::setupRoutes() {
                             if (isDirectory(f)) continue;
                             String n = getFileName(f); int ls = n.lastIndexOf('/'); if (ls >= 0) n = n.substring(ls + 1);
                             if (isMacJunk(n) || n == "index.txt" || !hasGifExt(n)) continue;
-                            if (!first) json += ","; first = false;
+                            if (!first) json += ",";
+                            first = false;
                             json += "{\"name\":\"" + jsonEsc(n) + "\",\"bytes\":" + String((unsigned long)f.size()) + "}";
                         }
                         dir.close();

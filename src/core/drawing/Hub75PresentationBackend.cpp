@@ -291,6 +291,25 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(true);
         }
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        Hub75SingleDmaScanChaser scanChaser;
+        FastMatrixPanel* fastPanel = _engine->getFastPanel();
+        if (fastPanel && ! _engine->isDoubleBuffered() && blankStart == 0) {
+            scanChaser.begin(
+                [](void* ctx) -> int {
+                    auto* p = static_cast<FastMatrixPanel*>(ctx);
+                    return p ? p->getActiveDmaScanRow() : -1;
+                },
+                fastPanel,
+                static_cast<int>(target.rowsPerFrame)
+            );
+            if (scanChaser.active) {
+                params.rowSync = &Hub75SingleDmaScanChaser::callback;
+                params.syncCtx = &scanChaser;
+            }
+        }
+#endif
+
         uint32_t t_enc = micros();
         Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
         timing.encodeUs = micros() - t_enc;

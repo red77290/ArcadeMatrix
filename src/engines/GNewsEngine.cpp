@@ -56,22 +56,31 @@ void GNewsEngine::applyConfig(const EngineConfig* config) {
     config_show_description = config->getBool("show_description", false);
     config_show_content = config->getBool("show_content", true);
 
-    if (config_display_mode != prevMode || config_show_title != prevTitle ||
-        config_show_description != prevDesc || config_show_content != prevContent) {
+    const bool contentTogglesChanged =
+        (config_show_title != prevTitle ||
+         config_show_description != prevDesc ||
+         config_show_content != prevContent);
+
+    if (config_display_mode != prevMode || contentTogglesChanged) {
+        uint32_t now = millis();
         scrollPixelOffset = 0;
         scrollState = ScrollState::PauseStart;
-        stateStartTime = millis();
-        lastScrollTick = millis();
+        stateStartTime = now;
+        lastScrollTick = now;
+        lastArticleSwitchTime = now;
         currentPageIndex = 0;
         totalPages = 1;
-        lastPageSwitchTime = millis();
+        lastPageSwitchTime = now;
         cachedArticleIndex = -1;
+        if (contentTogglesChanged) {
+            m_needsArticleReload = true;
+        }
     }
 
     config_scroll_speed = std::max(1, std::min(10, config->getInt("scroll_speed", 3)));
-    config_scroll_pause_start_ms = config->getInt("scroll_pause_start_ms", 1200);
-    config_scroll_pause_end_ms = config->getInt("scroll_pause_end_ms", 1000);
-    config_article_duration_sec = config->getInt("article_duration_sec", 12);
+    config_scroll_pause_start_ms = std::max(0, std::min(4000, config->getInt("scroll_pause_start_ms", 1200)));
+    config_scroll_pause_end_ms = std::max(0, std::min(4000, config->getInt("scroll_pause_end_ms", 1000)));
+    config_article_duration_sec = std::max(5, std::min(60, config->getInt("article_duration_sec", 12)));
     config_theme = config->getString("theme", "category_dynamic");
     config_show_category_badge = config->getBool("show_category_badge", true);
     config_show_source = config->getBool("show_source", true);
@@ -134,18 +143,146 @@ void GNewsEngine::pickNextRandomArticle(size_t count) {
     currentArticleIndex = m_shuffledOrder[m_shufflePos++];
 }
 
-void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
+void GNewsEngine::rebuildLayoutCache(int mW, int mH, uint32_t now) {
+    if (mW <= 0) mW = (_geometry.width > 0) ? _geometry.width : 64;
+    if (mH <= 0) mH = (_geometry.height > 0) ? _geometry.height : 32;
+
+    const bool isTate = (mH > mW);
+    int bodyY = 13;
+    int lineSpacing = 9;
+    int numRows = 2;
+    int linesPerPage = 2;
+
+    if (isTate) {
+        bodyY = 24;
+        lineSpacing = 9;
+        numRows = max(2, (mH - bodyY) / lineSpacing);
+        linesPerPage = numRows;
+    } else if (mH >= 64) {
+        bodyY = 19;
+        lineSpacing = 10;
+        numRows = 4;
+        linesPerPage = 4;
+    }
+
+    if (config_display_mode == "static_paged") {
+        const int maxW = isTate ? (mW - 4) : (mW - 8);
+        wrapTextToLines(formattedHeadline, maxW);
+        cachedMaxScroll = 0;
+        totalPages = (cachedLineCount == 0) ? 1 : ((cachedLineCount + static_cast<size_t>(linesPerPage) - 1) / static_cast<size_t>(linesPerPage));
+        if (totalPages < 1) totalPages = 1;
+        currentPageIndex = 0;
+        lastPageSwitchTime = now;
+    } else if (config_display_mode == "vertical_crawl") {
+        const int maxW = isTate ? (mW - 4) : (mW - 8);
+        wrapTextToLines(formattedHeadline, maxW);
+        const int totalH = static_cast<int>(cachedLineCount) * lineSpacing;
+        cachedMaxScroll = (cachedLineCount > 0) ? (totalH + 4) : 0;
+    } else if (config_display_mode == "serpentine") {
+        const int charPx = (!isTate && mH >= 64 && mW >= 256) ? 12 : 6;
+        const int tLen = static_cast<int>(strlen(formattedHeadline));
+        cachedMaxScroll = (tLen > 0) ? max(charPx, tLen * charPx + 8) : 0;
+        cachedLineCount = 0;
+    } else {
+        // "smooth_scroll"
+        if (isTate) {
+            distributeTextToRows(formattedHeadline, numRows);
+            int maxLineW = 0;
+            for (size_t i = 0; i < cachedLineCount; i++) {
+                int w = static_cast<int>(strlen(cachedDisplayLines[i])) * 6;
+                if (w > maxLineW) maxLineW = w;
+            }
+            cachedMaxScroll = (maxLineW > 0) ? (mW + maxLineW + 12) : 0;
+        } else {
+            const int charPx = (mH >= 64 && mW >= 256) ? 12 : 6;
+            const int textW = static_cast<int>(strlen(formattedHeadline)) * charPx;
+            cachedMaxScroll = (textW > 0) ? (textW + 16) : 0;
+            wrapTextToLines(formattedHeadline, mW - 4);
+        }
+    }
+
+    cachedArticleIndex = static_cast<int>(currentArticleIndex);
+}
+
+bool GNewsEngine::latchArticleAtIndex(size_t index, int mW, int mH, uint32_t now) {
+    GNewsArticle art{};
+    size_t count = 0;
+    bool hasData = false;
+    uint8_t status = 1;
+    uint32_t seq = 0;
+
+    if (!gnewsService.tryReadArticleLockFree(index, art, count, hasData, status, seq)) {
+        return false;
+    }
+    m_cachedStatus = status;
+    m_lastSeenSeq = seq;
+    if (!hasData || count == 0) {
+        m_hasActiveArticle = false;
+        m_activeTotalCount = 0;
+        return false;
+    }
+
+    if (index >= count) {
+        index = 0;
+    }
+    currentArticleIndex = index;
+    strncpy(m_activeCategory, art.category[0] != '\0' ? art.category : "News", sizeof(m_activeCategory) - 1);
+    m_activeCategory[sizeof(m_activeCategory) - 1] = '\0';
+    m_activeBadgeColor = (art.badgeColor != 0) ? art.badgeColor : 0xDEFB;
+    m_activeTotalCount = count;
+    m_hasActiveArticle = true;
+    m_needsArticleReload = false;
+
+    prepareHeadlineText(art);
+    rebuildLayoutCache(mW, mH, now);
+    return true;
+}
+
+bool GNewsEngine::latchNextRandomArticle(int mW, int mH, uint32_t now) {
+    size_t count = 0;
+    bool hasData = false;
+    uint8_t status = 1;
+    uint32_t seq = 0;
+
+    if (!gnewsService.tryReadMetaLockFree(count, hasData, status, seq)) {
+        return false;
+    }
+    m_cachedStatus = status;
+    if (!hasData || count == 0) {
+        m_lastSeenSeq = seq;
+        m_hasActiveArticle = false;
+        m_activeTotalCount = 0;
+        return false;
+    }
+
+    if (seq != m_lastSeenSeq) {
+        m_shuffleCount = 0;
+        m_shufflePos = 0;
+    }
+    pickNextRandomArticle(count);
+    return latchArticleAtIndex(currentArticleIndex, mW, mH, now);
+}
+
+void GNewsEngine::advanceToNextArticle(int mW, int mH, uint32_t now) {
     m_articlesShownThisCycle++;
-    pickNextRandomArticle(snap.count);
+    const size_t target = static_cast<size_t>(std::max(1, config_articles_per_rotation));
+    if (m_articlesShownThisCycle >= target) {
+        // Cycle complete: preserve the final completed frame of the last article so render()
+        // on this tick and RotationManager's outgoing transition never flash a phantom extra article.
+        return;
+    }
+
+    if (!latchNextRandomArticle(mW, mH, now)) {
+        m_needsInitialPick = true;
+        cachedArticleIndex = -1;
+    }
     currentPageIndex = 0;
-    totalPages = 1;
-    lastPageSwitchTime = millis();
+    lastPageSwitchTime = now;
     scrollPixelOffset = 0;
-    cachedArticleIndex = -1;
     scrollState = ScrollState::PauseStart;
-    stateStartTime = millis();
-    lastScrollTick = millis();
-    lastArticleSwitchTime = millis();
+    stateStartTime = now;
+    lastScrollTick = now;
+    lastArticleSwitchTime = now;
 }
 
 void GNewsEngine::wrapTextToLines(const char* text, int maxW) {
@@ -263,78 +400,34 @@ void GNewsEngine::formatGNewsText(const char* utf8Input, char* output, size_t ma
             uint32_t cp = ((b1 & 0x1F) << 6) | (b2 & 0x3F);
             inIdx += 2;
 
-            switch (cp) {
-                // French & European lowercase accents
-                case 0x00E9: output[outIdx++] = (char)0x82; break; // é
-                case 0x00E8: output[outIdx++] = (char)0x8A; break; // è
-                case 0x00EA: output[outIdx++] = (char)0x88; break; // ê
-                case 0x00EB: output[outIdx++] = (char)0x89; break; // ë
-                case 0x00E0: output[outIdx++] = (char)0x85; break; // à
-                case 0x00E1: output[outIdx++] = (char)0xA0; break; // á
-                case 0x00E2: output[outIdx++] = (char)0x83; break; // â
-                case 0x00E4: output[outIdx++] = (char)0x84; break; // ä
-                case 0x00E5: output[outIdx++] = (char)0x86; break; // å
-                case 0x00E7: output[outIdx++] = (char)0x87; break; // ç
-                case 0x00EE: output[outIdx++] = (char)0x8C; break; // î
-                case 0x00EF: output[outIdx++] = (char)0x8B; break; // ï
-                case 0x00EC: output[outIdx++] = (char)0x8D; break; // ì
-                case 0x00ED: output[outIdx++] = (char)0xA1; break; // í
-                case 0x00F4: output[outIdx++] = (char)0x93; break; // ô
-                case 0x00F6: output[outIdx++] = (char)0x94; break; // ö
-                case 0x00F2: output[outIdx++] = (char)0x95; break; // ò
-                case 0x00F3: output[outIdx++] = (char)0xA2; break; // ó
-                case 0x00F9: output[outIdx++] = (char)0x97; break; // ù
-                case 0x00FB: output[outIdx++] = (char)0x96; break; // û
-                case 0x00FC: output[outIdx++] = (char)0x81; break; // ü
-                case 0x00FA: output[outIdx++] = (char)0xA3; break; // ú
-                case 0x00F1: output[outIdx++] = (char)0xA4; break; // ñ
-
-                // French & European uppercase accents
-                case 0x00C9: output[outIdx++] = (char)0x90; break; // É
-                case 0x00C8: output[outIdx++] = 'E'; break;        // È
-                case 0x00CA: output[outIdx++] = 'E'; break;        // Ê
-                case 0x00CB: output[outIdx++] = 'E'; break;        // Ë
-                case 0x00C0: output[outIdx++] = 'A'; break;        // À
-                case 0x00C1: output[outIdx++] = 'A'; break;        // Á
-                case 0x00C2: output[outIdx++] = 'A'; break;        // Â
-                case 0x00C4: output[outIdx++] = (char)0x8E; break; // Ä
-                case 0x00C5: output[outIdx++] = (char)0x8F; break; // Å
-                case 0x00C7: output[outIdx++] = (char)0x80; break; // Ç
-                case 0x00CE: output[outIdx++] = 'I'; break;        // Î
-                case 0x00CF: output[outIdx++] = 'I'; break;        // Ï
-                case 0x00D4: output[outIdx++] = 'O'; break;        // Ô
-                case 0x00D6: output[outIdx++] = (char)0x99; break; // Ö
-                case 0x00D9: output[outIdx++] = 'U'; break;        // Ù
-                case 0x00DB: output[outIdx++] = 'U'; break;        // Û
-                case 0x00DC: output[outIdx++] = (char)0x9A; break; // Ü
-                case 0x00D1: output[outIdx++] = (char)0xA5; break; // Ñ
-
-                // Ligatures & Symbols
-                case 0x00E6: output[outIdx++] = (char)0x91; break; // æ
-                case 0x00C6: output[outIdx++] = (char)0x92; break; // Æ
-                case 0x0153: // œ
-                    if (outIdx + 1 < maxLen - 1) {
-                        output[outIdx++] = 'o';
-                        output[outIdx++] = 'e';
+            if (cp == 0x0153 || cp == 0x0152) {
+                if (outIdx + 1 < maxLen - 1) {
+                    output[outIdx++] = (cp == 0x0153) ? 'o' : 'O';
+                    output[outIdx++] = (cp == 0x0153) ? 'e' : 'E';
+                }
+            } else {
+                static constexpr struct { uint16_t cp; uint8_t ch; } kCp437Map[] = {
+                    {0x00E9, 0x82}, {0x00E8, 0x8A}, {0x00EA, 0x88}, {0x00EB, 0x89},
+                    {0x00E0, 0x85}, {0x00E1, 0xA0}, {0x00E2, 0x83}, {0x00E4, 0x84},
+                    {0x00E5, 0x86}, {0x00E7, 0x87}, {0x00EE, 0x8C}, {0x00EF, 0x8B},
+                    {0x00EC, 0x8D}, {0x00ED, 0xA1}, {0x00F4, 0x93}, {0x00F6, 0x94},
+                    {0x00F2, 0x95}, {0x00F3, 0xA2}, {0x00F9, 0x97}, {0x00FB, 0x96},
+                    {0x00FC, 0x81}, {0x00FA, 0xA3}, {0x00F1, 0xA4}, {0x00C9, 0x90},
+                    {0x00C8, 'E'},  {0x00CA, 'E'},  {0x00CB, 'E'},  {0x00C0, 'A'},
+                    {0x00C1, 'A'},  {0x00C2, 'A'},  {0x00C4, 0x8E}, {0x00C5, 0x8F},
+                    {0x00C7, 0x80}, {0x00CE, 'I'},  {0x00CF, 'I'},  {0x00D4, 'O'},
+                    {0x00D6, 0x99}, {0x00D9, 'U'},  {0x00DB, 'U'},  {0x00DC, 0x9A},
+                    {0x00D1, 0xA5}, {0x00E6, 0x91}, {0x00C6, 0x92}, {0x00DF, 0xE1},
+                    {0x00AB, 0xAE}, {0x00BB, 0xAF}, {0x00A0, ' '},  {0x00B0, 0xF8}
+                };
+                uint8_t mapped = ' ';
+                for (const auto& entry : kCp437Map) {
+                    if (entry.cp == cp) {
+                        mapped = entry.ch;
+                        break;
                     }
-                    break;
-                case 0x0152: // Œ
-                    if (outIdx + 1 < maxLen - 1) {
-                        output[outIdx++] = 'O';
-                        output[outIdx++] = 'E';
-                    }
-                    break;
-                case 0x00DF: output[outIdx++] = (char)0xE1; break; // ß
-
-                // Punctuation & Quotes
-                case 0x00AB: output[outIdx++] = (char)0xAE; break; // «
-                case 0x00BB: output[outIdx++] = (char)0xAF; break; // »
-                case 0x00A0: output[outIdx++] = ' '; break;        // NBSP
-                case 0x00B0: output[outIdx++] = (char)0xF8; break; // °
-
-                default:
-                    output[outIdx++] = ' ';
-                    break;
+                }
+                output[outIdx++] = static_cast<char>(mapped);
             }
         } else if ((b1 & 0xF0) == 0xE0) {
             if (inIdx + 2 >= inLen) break;
@@ -343,42 +436,24 @@ void GNewsEngine::formatGNewsText(const char* utf8Input, char* output, size_t ma
             uint32_t cp = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
             inIdx += 3;
 
-            switch (cp) {
-                case 0x2018:
-                case 0x2019:
-                case 0x201A:
-                case 0x2032:
-                    output[outIdx++] = '\'';
-                    break;
-                case 0x201C:
-                case 0x201D:
-                case 0x201E:
-                    output[outIdx++] = '"';
-                    break;
-                case 0x2013:
-                case 0x2014:
-                case 0x2212:
-                    output[outIdx++] = '-';
-                    break;
-                case 0x2026: // …
-                    if (outIdx + 2 < maxLen - 1) {
-                        output[outIdx++] = '.';
-                        output[outIdx++] = '.';
-                        output[outIdx++] = '.';
-                    } else {
-                        output[outIdx++] = '.';
-                    }
-                    break;
-                case 0x202F:
-                case 0x2009:
-                    output[outIdx++] = ' ';
-                    break;
-                case 0x20AC: // €
-                    output[outIdx++] = 'E';
-                    break;
-                default:
-                    output[outIdx++] = ' ';
-                    break;
+            if (cp == 0x2026) {
+                if (outIdx + 2 < maxLen - 1) {
+                    output[outIdx++] = '.';
+                    output[outIdx++] = '.';
+                    output[outIdx++] = '.';
+                } else {
+                    output[outIdx++] = '.';
+                }
+            } else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) {
+                output[outIdx++] = '\'';
+            } else if (cp == 0x201C || cp == 0x201D || cp == 0x201E) {
+                output[outIdx++] = '"';
+            } else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2212) {
+                output[outIdx++] = '-';
+            } else if (cp == 0x20AC) {
+                output[outIdx++] = 'E';
+            } else {
+                output[outIdx++] = ' ';
             }
         } else if ((b1 & 0xF8) == 0xF0) {
             if (inIdx + 3 >= inLen) break;
@@ -450,42 +525,64 @@ void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
 }
 
 void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows) {
+    (void)bodyY;
+    (void)lineSpacing;
+    (void)numRows;
     if (!context || !context->getSurface() || !title || *title == '\0') return;
     auto* matrix = context->getSurface();
+    const int mW = matrix->width();
+    const int mH = matrix->height();
+    const bool isTate = (mH > mW);
 
-    int tLen = strlen(title);
-    if (tLen == 0) return;
+    const int tLen = static_cast<int>(strlen(title));
+    if (tLen <= 0) return;
 
-    int charW = 6;
-    int W = max(1, clipMaxX - clipMinX);
-    if (numRows < 1) numRows = 1;
+    const uint8_t textSize = (!isTate && mW >= 256 && mH >= 64) ? 2U : 1U;
+    const int charW = 6 * static_cast<int>(textSize);
+    const int glyphH = 8 * static_cast<int>(textSize);
 
-    int charsPerRow = max(1, W / charW);
-    int neededRows = (tLen + charsPerRow - 1) / charsPerRow;
-    if (neededRows < 1) neededRows = 1;
-    int activeRows = min(neededRows, numRows);
+    const int minTopY = clipMinY + 1;
+    int maxTopY = clipMaxY - glyphH - 1;
+    if (maxTopY < minTopY) {
+        maxTopY = minTopY;
+    }
 
-    int s = scrollPixelOffset;
-    int charStep = s / charW;
-    int pixelShift = s % charW;
+    const float centerY = 0.5f * static_cast<float>(minTopY + maxTopY);
+    const float amp = 0.5f * static_cast<float>(maxTopY - minTopY);
+    const float wavelength = (textSize == 2U)
+        ? 128.0f
+        : ((mW >= 128) ? 72.0f : 56.0f);
+    const float freq = 6.2831853f / wavelength;
 
-    for (int r = 0; r < activeRows; r++) {
-        int cy = bodyY + r * lineSpacing;
-        if (cy + 7 <= clipMinY || cy >= clipMaxY) continue;
+    const int startX = (clipMinX + 2) - scrollPixelOffset;
+    int firstIdx = 0;
+    if (startX < (clipMinX - charW)) {
+        firstIdx = (clipMinX - charW - startX) / charW;
+        if (firstIdx < 0) firstIdx = 0;
+    }
 
-        int rowBaseChar = r * charsPerRow + charStep;
+    for (int i = firstIdx; i < tLen; ++i) {
+        const int cx = startX + i * charW;
+        if (cx >= clipMaxX) break;
+        if (cx + charW <= clipMinX) continue;
 
-        for (int col = 0; col <= charsPerRow; col++) {
-            int cx = clipMinX + col * charW - pixelShift;
-            if (cx + 5 < clipMinX || cx >= clipMaxX) continue;
+        const unsigned char c = static_cast<unsigned char>(title[i]);
+        if (c == ' ') continue;
 
-            int charIdx = rowBaseChar + col;
-            if (charIdx >= 0 && charIdx < tLen) {
-                unsigned char c = (unsigned char)title[charIdx];
-                if (c != ' ') {
-                    matrix->drawChar(cx, cy, c, 0xFFFF, 0x0000, 1);
-                }
-            }
+        const float phase = static_cast<float>(cx - clipMinX) * freq;
+        const int cy = static_cast<int>(centerY + amp * sinf(phase) + 0.5f);
+        if (cy + glyphH > clipMinY && cy < clipMaxY) {
+            matrix->drawChar(cx, cy, c, 0xFFFF, 0xFFFF, textSize);
+        }
+    }
+
+    const int clipH = clipMaxY - clipMinY;
+    if (clipH > 0) {
+        if (clipMinX > 0) {
+            matrix->fillRect(0, clipMinY, clipMinX, clipH, 0x0000);
+        }
+        if (clipMaxX < mW) {
+            matrix->fillRect(clipMaxX, clipMinY, mW - clipMaxX, clipH, 0x0000);
         }
     }
 }
@@ -546,30 +643,36 @@ void GNewsEngine::fetchWorker() {
 }
 
 void GNewsEngine::activate() {
+    const uint32_t now = millis();
     m_articlesShownThisCycle = 0;
-    m_activateTimeMs = millis();
-    const GNewsSnapshot& snap = gnewsService.getSnapshot();
-    if (snap.hasData && snap.count > 0) {
-        pickNextRandomArticle(snap.count);
+    m_activateTimeMs = now;
+    currentPageIndex = 0;
+    totalPages = 1;
+    lastPageSwitchTime = now;
+    scrollPixelOffset = 0;
+    sourceMarqueeOffset = 0;
+    cachedArticleIndex = -1;
+    cachedLineCount = 0;
+    cachedMaxScroll = 0;
+    formattedHeadline[0] = '\0';
+    formattedSource[0] = '\0';
+    m_hasActiveArticle = false;
+    m_needsArticleReload = false;
+    scrollState = ScrollState::PauseStart;
+    stateStartTime = now;
+    lastUpdateTime = now;
+    lastScrollTick = now;
+    lastSourceTick = now;
+    lastArticleSwitchTime = now;
+
+    const int initW = (lastMatrixW > 0) ? lastMatrixW : ((_geometry.width > 0) ? _geometry.width : 64);
+    const int initH = (lastMatrixH > 0) ? lastMatrixH : ((_geometry.height > 0) ? _geometry.height : 32);
+    if (latchNextRandomArticle(initW, initH, now)) {
         m_needsInitialPick = false;
     } else {
         currentArticleIndex = 0;
         m_needsInitialPick = true;
     }
-    currentPageIndex = 0;
-    totalPages = 1;
-    lastPageSwitchTime = millis();
-    scrollPixelOffset = 0;
-    sourceMarqueeOffset = 0;
-    cachedArticleIndex = -1;
-    formattedHeadline[0] = '\0';
-    formattedSource[0] = '\0';
-    scrollState = ScrollState::PauseStart;
-    stateStartTime = millis();
-    lastUpdateTime = millis();
-    lastScrollTick = millis();
-    lastSourceTick = millis();
-    lastArticleSwitchTime = millis();
     startFetchTask();
 }
 
@@ -580,6 +683,7 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     if (config_force_refresh && !prevForce) {
         m_shuffleCount = 0;
         m_shufflePos = 0;
+        m_hasActiveArticle = false;
         m_needsInitialPick = true;
         m_purgeRequested.store(true, std::memory_order_release);
     }
@@ -599,8 +703,14 @@ bool GNewsEngine::shutdownForDestruction() {
 }
 
 bool GNewsEngine::isFinished() const {
-    const GNewsSnapshot& snap = gnewsService.getSnapshot();
-    if (!snap.hasData || snap.count == 0) {
+    if (!m_hasActiveArticle) {
+        size_t count = 0;
+        bool hasData = false;
+        uint8_t status = 1;
+        uint32_t seq = 0;
+        if (gnewsService.tryReadMetaLockFree(count, hasData, status, seq) && hasData && count > 0) {
+            return false;
+        }
         uint32_t fallbackMs = static_cast<uint32_t>(std::max(5, config_article_duration_sec)) * 1000UL;
         return (millis() - m_activateTimeMs) >= fallbackMs;
     }
@@ -615,15 +725,6 @@ void GNewsEngine::update(EngineContext* context) {
 
     // Smooth sinusoidal pulsing beacon (0.0 to 1.0)
     beaconPulse = (sinf((float)sourceMarqueeOffset * 0.1f) + 1.0f) * 0.5f;
-
-    const GNewsSnapshot& snap = gnewsService.getSnapshot();
-    if (!snap.hasData || snap.count == 0) return;
-
-    if (m_needsInitialPick || currentArticleIndex >= snap.count || m_shuffleCount != snap.count) {
-        pickNextRandomArticle(snap.count);
-        m_needsInitialPick = false;
-    }
-    const GNewsArticle& curArt = snap.articles[currentArticleIndex];
 
     // Smooth discrete source marquee advancement (every 35ms -> 1 pixel)
     if (now - lastSourceTick >= 35) {
@@ -643,121 +744,91 @@ void GNewsEngine::update(EngineContext* context) {
         currentPageIndex = 0;
     }
 
-    bool isTate = (mH > mW);
-
-    int bodyY = 13;
-    int lineSpacing = 9;
-    int numRows = 2;
-    int linesPerPage = 2;
-
-    if (isTate) {
-        bodyY = 24;
-        lineSpacing = 9;
-        numRows = max(2, (mH - bodyY) / lineSpacing);
-        linesPerPage = numRows;
-    } else if (mH >= 64) {
-        bodyY = 19;
-        lineSpacing = 10;
-        numRows = 4;
-        linesPerPage = 4;
-    } else {
-        // Horizontal 32px height (128x32 or 64x32)
-        bodyY = 13;
-        lineSpacing = 9;
-        numRows = 2;
-        linesPerPage = 2;
-    }
-
-    // Refresh cached line buffers if article changed or lines uninitialized
-    if (cachedArticleIndex != (int)currentArticleIndex) {
-        cachedArticleIndex = (int)currentArticleIndex;
-        prepareHeadlineText(curArt);
-
-        if (config_display_mode == "static_paged") {
-            int maxW = isTate ? (mW - 4) : (mW - 8);
-            wrapTextToLines(formattedHeadline, maxW);
-            cachedMaxScroll = 0;
-            totalPages = (cachedLineCount == 0) ? 1 : ((cachedLineCount + linesPerPage - 1) / linesPerPage);
-            if (totalPages < 1) totalPages = 1;
-            currentPageIndex = 0;
-            lastPageSwitchTime = now;
-        } else if (config_display_mode == "vertical_crawl") {
-            int maxW = isTate ? (mW - 4) : (mW - 8);
-            wrapTextToLines(formattedHeadline, maxW);
-            int totalH = (int)cachedLineCount * lineSpacing;
-            int viewH = mH - bodyY;
-            cachedMaxScroll = (totalH > viewH) ? (totalH - viewH + 12) : max(6, totalH + 4);
-        } else if (config_display_mode == "serpentine") {
-            int tLen = strlen(formattedHeadline);
-            int availW = max(1, mW - 4);
-            int charsPerRow = max(1, availW / 6);
-            int neededRows = (tLen + charsPerRow - 1) / charsPerRow;
-            if (neededRows <= numRows) {
-                cachedMaxScroll = max(6, tLen * 6);
-            } else {
-                int overflowChars = tLen - (numRows * charsPerRow);
-                cachedMaxScroll = (overflowChars + 3) * 6;
-            }
-        } else {
-            // "smooth_scroll"
-            if (isTate) {
-                distributeTextToRows(formattedHeadline, numRows);
-                int maxLineW = 0;
-                for (size_t i = 0; i < cachedLineCount; i++) {
-                    int w = (int)strlen(cachedDisplayLines[i]) * 6;
-                    if (w > maxLineW) maxLineW = w;
-                }
-                cachedMaxScroll = mW + maxLineW + 12;
-            } else {
-                int charPx = (mH >= 64 && mW >= 256) ? 12 : 6;
-                int textW = (int)strlen(formattedHeadline) * charPx;
-                cachedMaxScroll = textW + 16;
-                wrapTextToLines(formattedHeadline, mW - 4);
-            }
+    size_t metaCount = 0;
+    bool metaHasData = false;
+    uint8_t metaStatus = m_cachedStatus;
+    uint32_t metaSeq = m_lastSeenSeq;
+    if (gnewsService.tryReadMetaLockFree(metaCount, metaHasData, metaStatus, metaSeq)) {
+        m_cachedStatus = metaStatus;
+        if (!metaHasData || metaCount == 0) {
+            m_hasActiveArticle = false;
+            m_activeTotalCount = 0;
+            m_needsInitialPick = true;
+            return;
+        }
+        if (metaSeq != m_lastSeenSeq && m_hasActiveArticle) {
+            // Background refresh completed: reshuffle on the next article boundary without
+            // interrupting or corrupting the article currently scrolling on screen.
+            m_lastSeenSeq = metaSeq;
+            m_activeTotalCount = metaCount;
+            m_shuffleCount = 0;
+            m_shufflePos = 0;
         }
     }
 
-    uint32_t baseTickMs = 55;
-    switch (config_scroll_speed) {
-        case 1: baseTickMs = 100; break;
-        case 2: baseTickMs = 75; break;
-        case 3: baseTickMs = 55; break;
-        case 4: baseTickMs = 42; break;
-        case 5: baseTickMs = 32; break;
-        case 6: baseTickMs = 24; break;
-        case 7: baseTickMs = 18; break;
-        case 8: baseTickMs = 13; break;
-        case 9: baseTickMs = 9; break;
-        case 10: default: baseTickMs = 6; break;
+    if (!m_hasActiveArticle || m_needsInitialPick) {
+        if (!latchNextRandomArticle(mW, mH, now)) {
+            return;
+        }
+        m_needsInitialPick = false;
+        currentPageIndex = 0;
+        lastPageSwitchTime = now;
+        scrollPixelOffset = 0;
+        scrollState = ScrollState::PauseStart;
+        stateStartTime = now;
+        lastScrollTick = now;
+        lastArticleSwitchTime = now;
+    } else if (m_needsArticleReload) {
+        latchArticleAtIndex(currentArticleIndex, mW, mH, now);
+    } else if (cachedArticleIndex != static_cast<int>(currentArticleIndex)) {
+        rebuildLayoutCache(mW, mH, now);
     }
 
-    if (config_display_mode == "static_paged") {
-        totalPages = (cachedLineCount == 0) ? 1 : ((cachedLineCount + linesPerPage - 1) / linesPerPage);
-        if (totalPages < 1) totalPages = 1;
-        if (currentPageIndex >= totalPages) currentPageIndex = 0;
+    const size_t target = static_cast<size_t>(std::max(1, config_articles_per_rotation));
+    if (m_articlesShownThisCycle >= target) {
+        // Hold final completed frame cleanly until RotationManager transitions or re-activates.
+        return;
+    }
 
-        uint32_t totalArticleMs = (uint32_t)config_article_duration_sec * 1000UL;
-        uint32_t basePageMs = max<uint32_t>(2000U, totalArticleMs / (uint32_t)totalPages);
-        uint32_t pageDurationMs = max<uint32_t>(1000U, (basePageMs * baseTickMs) / 55U);
+    const bool isTate = (mH > mW);
+    int linesPerPage = 2;
+    if (isTate) {
+        linesPerPage = max(2, (mH - 24) / 9);
+    } else if (mH >= 64) {
+        linesPerPage = 4;
+    }
+
+    static constexpr uint8_t kScrollTickMs[10] = {100, 75, 55, 42, 32, 24, 18, 13, 9, 6};
+    const int speedIdx = std::max(1, std::min(10, config_scroll_speed)) - 1;
+    const uint32_t baseTickMs = kScrollTickMs[speedIdx];
+
+    if (config_display_mode == "static_paged") {
+        totalPages = (cachedLineCount == 0) ? 1 : ((cachedLineCount + static_cast<size_t>(linesPerPage) - 1) / static_cast<size_t>(linesPerPage));
+        if (totalPages < 1) totalPages = 1;
+        if (currentPageIndex >= totalPages) currentPageIndex = totalPages - 1;
+
+        const uint32_t totalArticleMs = static_cast<uint32_t>(std::max(5, config_article_duration_sec)) * 1000UL;
+        const uint32_t pageDurationMs = std::max<uint32_t>(2000U, totalArticleMs / static_cast<uint32_t>(totalPages));
 
         if (now - lastPageSwitchTime >= pageDurationMs) {
             lastPageSwitchTime = now;
-            currentPageIndex++;
-            if (currentPageIndex >= totalPages) {
-                advanceToNextArticle(snap);
+            if (currentPageIndex + 1 < totalPages) {
+                currentPageIndex++;
+            } else {
+                advanceToNextArticle(mW, mH, now);
             }
         }
     } else {
-        uint32_t tickMs = (config_display_mode == "vertical_crawl") ? (baseTickMs * 4U) : baseTickMs;
+        const uint32_t tickMs = (config_display_mode == "vertical_crawl") ? (baseTickMs * 2U) : baseTickMs;
 
         switch (scrollState) {
             case ScrollState::PauseStart:
                 if (cachedMaxScroll == 0) {
-                    uint32_t durationMs = (uint32_t)config_article_duration_sec * 1000UL;
+                    const uint32_t durationMs = static_cast<uint32_t>(std::max(5, config_article_duration_sec)) * 1000UL;
                     if (now - lastArticleSwitchTime >= durationMs) {
-                        advanceToNextArticle(snap);
+                        advanceToNextArticle(mW, mH, now);
                     }
-                } else if (now - stateStartTime >= (uint32_t)config_scroll_pause_start_ms) {
+                } else if (now - stateStartTime >= static_cast<uint32_t>(std::max(0, config_scroll_pause_start_ms))) {
                     scrollState = ScrollState::Scrolling;
                     stateStartTime = now;
                     lastScrollTick = now;
@@ -766,17 +837,18 @@ void GNewsEngine::update(EngineContext* context) {
             case ScrollState::Scrolling:
                 if (now - lastScrollTick >= tickMs) {
                     uint32_t steps = (now - lastScrollTick) / tickMs;
-                    scrollPixelOffset += (int)steps;
+                    scrollPixelOffset += static_cast<int>(steps);
                     lastScrollTick += steps * tickMs;
                     if (scrollPixelOffset >= cachedMaxScroll) {
+                        scrollPixelOffset = cachedMaxScroll;
                         scrollState = ScrollState::PauseEnd;
                         stateStartTime = now;
                     }
                 }
                 break;
             case ScrollState::PauseEnd:
-                if (now - stateStartTime >= (uint32_t)config_scroll_pause_end_ms) {
-                    advanceToNextArticle(snap);
+                if (now - stateStartTime >= static_cast<uint32_t>(std::max(0, config_scroll_pause_end_ms))) {
+                    advanceToNextArticle(mW, mH, now);
                 }
                 break;
         }
@@ -792,15 +864,21 @@ void GNewsEngine::render(EngineContext* context) {
     matrix->cp437(true);
     matrix->fillScreen(0x0000);
 
-    const GNewsSnapshot& snap = gnewsService.getSnapshot();
-    if (!snap.hasData || snap.count == 0) {
-        const char* statusMsg = I18n::getGNewsStatusLabel(snap.status);
+    if (!m_hasActiveArticle) {
+        size_t metaCount = 0;
+        bool metaHasData = false;
+        uint8_t metaStatus = m_cachedStatus;
+        uint32_t metaSeq = 0;
+        if (gnewsService.tryReadMetaLockFree(metaCount, metaHasData, metaStatus, metaSeq)) {
+            m_cachedStatus = metaStatus;
+        }
+        const char* statusMsg = I18n::getGNewsStatusLabel(m_cachedStatus);
         uint16_t msgColor = matrix->color565(0, 229, 255);
-        if (snap.status == 2) { // INVALID_KEY
+        if (m_cachedStatus == 2) { // INVALID_KEY
             msgColor = matrix->color565(255, 50, 50); // Red
-        } else if (snap.status == 1) { // EMPTY_KEY
+        } else if (m_cachedStatus == 1) { // EMPTY_KEY
             msgColor = matrix->color565(255, 170, 0); // Amber
-        } else if (snap.status == 3 || snap.status == 4) { // RATE_LIMITED or NETWORK_ERROR
+        } else if (m_cachedStatus == 3 || m_cachedStatus == 4) { // RATE_LIMITED or NETWORK_ERROR
             msgColor = matrix->color565(255, 140, 0); // Orange
         }
 
@@ -814,30 +892,72 @@ void GNewsEngine::render(EngineContext* context) {
 
         if (config_show_beacon) {
             uint8_t br = (uint8_t)(beaconPulse * 255.0f);
-            uint16_t bCol = (snap.status == 2) ? matrix->color565(br, 20, 20) : matrix->color565(br, 30, 30);
+            uint16_t bCol = (m_cachedStatus == 2) ? matrix->color565(br, 20, 20) : matrix->color565(br, 30, 30);
             matrix->fillCircle(mW - 6, mH / 2, 2, bCol);
         }
         matrix->cp437(false);
         return;
     }
 
-    if (currentArticleIndex >= snap.count) {
-        currentArticleIndex = 0;
-    }
-    const GNewsArticle& article = snap.articles[currentArticleIndex];
-
+    const size_t totalCount = (m_activeTotalCount > 0) ? m_activeTotalCount : 1;
     bool isTate = (mH > mW);
     if (isTate) {
-        renderVertical(context, article, snap.count);
+        renderVertical(context, m_activeCategory, m_activeBadgeColor, totalCount);
     } else if (mW >= 128) {
-        renderWide(context, article, snap.count);
+        renderWide(context, m_activeCategory, m_activeBadgeColor, totalCount);
     } else {
-        renderCompact(context, article, snap.count);
+        renderCompact(context, m_activeCategory, m_activeBadgeColor, totalCount);
     }
     matrix->cp437(false);
 }
 
-void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
+uint16_t GNewsEngine::resolveBadgeColor(uint16_t badgeColor) const {
+    if (config_theme == "breaking_crimson") return 0xF949;
+    if (config_theme == "cyberpunk") return 0x073F;
+    if (config_theme == "monochrome_paper") return 0xDEFB;
+    return badgeColor;
+}
+
+bool GNewsEngine::renderCommonBodyModes(EngineContext* context, int xPad, int bodyY, int clipTopY, int lineSpacing, int linesPerPage) {
+    auto* matrix = context->getSurface();
+    const int mW = matrix->width();
+    const int mH = matrix->height();
+
+    if (config_display_mode == "static_paged") {
+        const size_t startLine = currentPageIndex * static_cast<size_t>(linesPerPage);
+        const size_t endLine = min(startLine + static_cast<size_t>(linesPerPage), cachedLineCount);
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextWrap(false);
+        for (size_t i = startLine; i < endLine; i++) {
+            const int y = bodyY + static_cast<int>(i - startLine) * lineSpacing;
+            if (y < mH) {
+                matrix->setCursor(xPad, y);
+                matrix->print(cachedDisplayLines[i]);
+            }
+        }
+        return true;
+    }
+    if (config_display_mode == "vertical_crawl") {
+        const int baseY = bodyY - scrollPixelOffset;
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextWrap(false);
+        for (size_t i = 0; i < cachedLineCount; i++) {
+            const int y = baseY + static_cast<int>(i) * lineSpacing;
+            if (y + 8 > clipTopY && y < mH) {
+                matrix->setCursor(xPad, y);
+                matrix->print(cachedDisplayLines[i]);
+            }
+        }
+        return true;
+    }
+    if (config_display_mode == "serpentine") {
+        renderSerpentine(context, formattedHeadline, bodyY, 2, mW - 2, clipTopY + 1, mH, lineSpacing, linesPerPage);
+        return true;
+    }
+    return false;
+}
+
+void GNewsEngine::renderWide(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount) {
     if (!context || !context->getSurface()) return;
     auto* matrix = context->getSurface();
     int mW = matrix->width();
@@ -846,47 +966,21 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
     int divY = (mH >= 64) ? 16 : 11;
     int bodyY = (mH >= 64) ? 19 : 13;
     int lineSpacing = (mH >= 64) ? 10 : 9;
-    int numRows = (mH >= 64) ? 4 : 2;
     int linesPerPage = (mH >= 64) ? 4 : 2;
 
+    matrix->setTextSize(1);
+
     // 1. Headline Content Area rendered FIRST (so header occludes it cleanly when scrolling)
-    if (config_display_mode == "static_paged") {
-        size_t startLine = currentPageIndex * linesPerPage;
-        size_t endLine = min(startLine + (size_t)linesPerPage, cachedLineCount);
-        for (size_t i = startLine; i < endLine; i++) {
-            int lineOnPage = (int)(i - startLine);
-            int y = bodyY + lineOnPage * lineSpacing;
-            if (y < mH) {
-                matrix->setCursor(4, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "vertical_crawl") {
-        int baseY = bodyY - scrollPixelOffset;
-        for (size_t i = 0; i < cachedLineCount; i++) {
-            int y = baseY + (int)i * lineSpacing;
-            if (y + 8 > divY && y < mH) {
-                matrix->setCursor(4, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, formattedHeadline, bodyY, 2, mW - 2, divY + 1, mH, lineSpacing, numRows);
-    } else {
+    if (!renderCommonBodyModes(context, 4, bodyY, divY, lineSpacing, linesPerPage)) {
         int startX = 4 - scrollPixelOffset;
         matrix->setTextWrap(false);
+        matrix->setTextColor(0xFFFF);
         if (mH >= 64 && mW >= 256) {
             matrix->setTextSize(2);
-            matrix->setTextColor(0xFFFF);
             matrix->setCursor(startX, bodyY);
             matrix->print(formattedHeadline);
-        } else {
             matrix->setTextSize(1);
-            matrix->setTextColor(0xFFFF);
+        } else {
             matrix->setCursor(startX, bodyY);
             matrix->print(formattedHeadline);
         }
@@ -896,95 +990,67 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
     matrix->fillRect(0, 0, mW, divY + 1, 0x0000);
 
     // 3. Dynamic Header Bar
-    uint16_t catColor = article.badgeColor;
-    if (config_theme == "breaking_crimson") catColor = 0xF949;
-    else if (config_theme == "cyberpunk") catColor = 0x073F;
-    else if (config_theme == "monochrome_paper") catColor = 0xDEFB;
+    uint16_t catColor = resolveBadgeColor(badgeColor);
+    const int headerY = (mH >= 64) ? 4 : 2;
+    const char* catShort = getCategoryShort(category);
+    const int catW = static_cast<int>(strlen(catShort)) * 6 + 5;
+    const int badgeX = config_show_beacon ? 11 : 4;
+    const int srcSlotX = badgeX + (config_show_category_badge ? (catW + 5) : 0);
+    const size_t dotsCount = (totalCount > 6) ? 6 : totalCount;
+    const int dotsStartX = (config_show_progress_dots && totalCount > 1)
+        ? (mW - (static_cast<int>(dotsCount) * 5 + 3))
+        : (mW - 3);
 
-    int curX = 4;
-    int headerY = (mH >= 64) ? 4 : 2;
-
-    // Pulsing live beacon
-    if (config_show_beacon) {
-        uint8_t br = 120 + (uint8_t)(beaconPulse * 135.0f);
-        uint16_t bCol = matrix->color565(br, 15, 25);
-        matrix->fillCircle(curX + 2, headerY + 4, 2, bCol);
-        curX += 7;
-    }
-
-    // Category Pill Badge (Compact: e.g. "TECH", "SCI", "NEWS")
-    if (config_show_category_badge) {
-        const char* catShort = getCategoryShort(article.category);
-        int catW = strlen(catShort) * 6 + 5;
-        matrix->fillRoundRect(curX, headerY, catW, 9, 2, matrix->color565(20, 25, 35));
-        matrix->drawRoundRect(curX, headerY, catW, 9, 2, catColor);
-        matrix->setTextSize(1);
-        matrix->setTextColor(catColor);
-        matrix->setCursor(curX + 3, headerY + 1);
-        matrix->print(catShort);
-        curX += catW + 5;
-    }
-
-    size_t dotsCount = (totalCount > 6) ? 6 : totalCount;
-    int dotsStartX = (config_show_progress_dots && totalCount > 1) ? (mW - ((int)dotsCount * 5 + 3)) : (mW - 3);
-
-    // News Source Name (with Marquee if long)
+    // News Source Name rendered first so left/right masks never erase badge, beacon, or dots
+    int postSrcX = srcSlotX;
     if (config_show_source) {
-        int maxSrcW = max(20, dotsStartX - curX - 3);
-        int srcW = strlen(formattedSource) * 6;
-
+        const int maxSrcW = max(20, dotsStartX - srcSlotX - 3);
+        const int srcW = static_cast<int>(strlen(formattedSource)) * 6;
         matrix->setTextSize(1);
         matrix->setTextColor(matrix->color565(200, 210, 225));
         matrix->setTextWrap(false);
 
         if (srcW <= maxSrcW) {
-            matrix->setCursor(curX, headerY + 1);
+            matrix->setCursor(srcSlotX, headerY + 1);
             matrix->print(formattedSource);
-            curX += srcW + 5;
+            postSrcX = srcSlotX + srcW + 5;
         } else {
-            int gap = 16;
-            int totalSrcW = srcW + gap;
-            int dx = (int)(sourceMarqueeOffset % totalSrcW);
-            int drawX1 = curX - dx;
+            const int totalSrcW = srcW + 16;
+            const int drawX1 = srcSlotX - static_cast<int>(sourceMarqueeOffset % static_cast<uint32_t>(totalSrcW));
             matrix->setCursor(drawX1, headerY + 1);
             matrix->print(formattedSource);
-            int drawX2 = drawX1 + totalSrcW;
-            if (drawX2 < dotsStartX) {
-                matrix->setCursor(drawX2, headerY + 1);
+            if (drawX1 + totalSrcW < dotsStartX) {
+                matrix->setCursor(drawX1 + totalSrcW, headerY + 1);
                 matrix->print(formattedSource);
             }
-            // Clear side bounds outside the header slot
-            matrix->fillRect(0, headerY, curX, 10, 0x0000);
-            if (config_show_category_badge) {
-                const char* catShort = getCategoryShort(article.category);
-                int catW = strlen(catShort) * 6 + 5;
-                int badgeX = config_show_beacon ? 11 : 4;
-                matrix->fillRoundRect(badgeX, headerY, catW, 9, 2, matrix->color565(20, 25, 35));
-                matrix->drawRoundRect(badgeX, headerY, catW, 9, 2, catColor);
-                matrix->setTextColor(catColor);
-                matrix->setCursor(badgeX + 3, headerY + 1);
-                matrix->print(catShort);
-            }
-            if (config_show_beacon) {
-                uint8_t br = 120 + (uint8_t)(beaconPulse * 135.0f);
-                uint16_t bCol = matrix->color565(br, 15, 25);
-                matrix->fillCircle(6, headerY + 4, 2, bCol);
-            }
+            matrix->fillRect(0, headerY, srcSlotX, 10, 0x0000);
             matrix->fillRect(dotsStartX, headerY, mW - dotsStartX, 10, 0x0000);
-            curX = dotsStartX;
+            postSrcX = dotsStartX - 1;
         }
     }
 
-    // Progress Dots (e.g. ● ○ ○ ○ ○)
-    if (config_show_progress_dots && totalCount > 1) {
-        if (dotsStartX > curX) {
-            for (size_t i = 0; i < dotsCount; i++) {
-                int dx = dotsStartX + (int)i * 5;
-                if (i == currentArticleIndex) {
-                    matrix->fillCircle(dx + 1, headerY + 4, 1, catColor);
-                } else {
-                    matrix->drawPixel(dx + 1, headerY + 4, matrix->color565(70, 75, 85));
-                }
+    if (config_show_beacon) {
+        const uint8_t br = 120 + static_cast<uint8_t>(beaconPulse * 135.0f);
+        matrix->fillCircle(6, headerY + 4, 2, matrix->color565(br, 15, 25));
+    }
+
+    if (config_show_category_badge) {
+        matrix->fillRoundRect(badgeX, headerY, catW, 9, 2, matrix->color565(20, 25, 35));
+        matrix->drawRoundRect(badgeX, headerY, catW, 9, 2, catColor);
+        matrix->setTextSize(1);
+        matrix->setTextColor(catColor);
+        matrix->setCursor(badgeX + 3, headerY + 1);
+        matrix->print(catShort);
+    }
+
+    if (config_show_progress_dots && totalCount > 1 && dotsStartX >= postSrcX) {
+        const size_t activeDot = currentArticleIndex % dotsCount;
+        for (size_t i = 0; i < dotsCount; i++) {
+            const int dx = dotsStartX + static_cast<int>(i) * 5;
+            if (i == activeDot) {
+                matrix->fillCircle(dx + 1, headerY + 4, 1, catColor);
+            } else {
+                matrix->drawPixel(dx + 1, headerY + 4, matrix->color565(70, 75, 85));
             }
         }
     }
@@ -993,46 +1059,20 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
     matrix->drawFastHLine(2, divY, mW - 4, matrix->color565(40, 45, 55));
 }
 
-void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
+void GNewsEngine::renderCompact(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount) {
     if (!context || !context->getSurface()) return;
     auto* matrix = context->getSurface();
     int mW = matrix->width();
-    int mH = matrix->height();
 
     int divY = 10;
     int bodyY = 13;
     int lineSpacing = 9;
-    int numRows = 2;
     int linesPerPage = 2;
 
+    matrix->setTextSize(1);
+
     // 1. Headline content area rendered FIRST
-    if (config_display_mode == "static_paged") {
-        size_t startLine = currentPageIndex * linesPerPage;
-        size_t endLine = min(startLine + (size_t)linesPerPage, cachedLineCount);
-        for (size_t i = startLine; i < endLine; i++) {
-            int lineOnPage = (int)(i - startLine);
-            int y = bodyY + lineOnPage * lineSpacing;
-            if (y < mH) {
-                matrix->setCursor(2, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "vertical_crawl") {
-        int baseY = bodyY - scrollPixelOffset;
-        for (size_t i = 0; i < cachedLineCount; i++) {
-            int y = baseY + (int)i * lineSpacing;
-            if (y + 8 > divY && y < mH) {
-                matrix->setCursor(2, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, formattedHeadline, bodyY, 2, mW - 2, divY + 1, mH, lineSpacing, numRows);
-    } else {
+    if (!renderCommonBodyModes(context, 2, bodyY, divY, lineSpacing, linesPerPage)) {
         matrix->setTextColor(0xFFFF);
         int startX = 2 - scrollPixelOffset;
         matrix->setCursor(startX, 15);
@@ -1044,9 +1084,7 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
     matrix->fillRect(0, 0, mW, divY + 1, 0x0000);
 
     // 3. Compact Header Bar
-    uint16_t catColor = article.badgeColor;
-    if (config_theme == "breaking_crimson") catColor = 0xF949;
-    else if (config_theme == "cyberpunk") catColor = 0x073F;
+    uint16_t catColor = resolveBadgeColor(badgeColor);
 
     if (config_show_beacon) {
         uint8_t br = (uint8_t)(beaconPulse * 255.0f);
@@ -1054,7 +1092,7 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
     }
 
     // Category
-    const char* catShort = getCategoryShort(article.category);
+    const char* catShort = getCategoryShort(category);
     matrix->setTextSize(1);
     matrix->setTextColor(catColor);
     matrix->setCursor(8, 1);
@@ -1062,7 +1100,8 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
 
     // Article index
     char idxBuf[16];
-    int idxLen = snprintf(idxBuf, sizeof(idxBuf), "%u/%u", (unsigned)(currentArticleIndex + 1), (unsigned)totalCount);
+    const unsigned dispIdx = static_cast<unsigned>((currentArticleIndex % totalCount) + 1);
+    int idxLen = snprintf(idxBuf, sizeof(idxBuf), "%u/%u", dispIdx, (unsigned)totalCount);
     if (idxLen < 0) idxLen = 0;
     int idxX = mW - (idxLen * 6 + 2);
     matrix->setTextColor(matrix->color565(140, 150, 160));
@@ -1072,7 +1111,8 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
     matrix->drawFastHLine(0, divY, mW, matrix->color565(35, 40, 50));
 }
 
-void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
+void GNewsEngine::renderVertical(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount) {
+    (void)totalCount;
     if (!context || !context->getSurface()) return;
     auto* matrix = context->getSurface();
     int mW = matrix->width();
@@ -1080,37 +1120,12 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
 
     int bodyY = 24;
     int lineSpacing = 9;
-    int numRows = max(2, (mH - bodyY) / lineSpacing);
-    int linesPerPage = numRows;
+    int linesPerPage = max(2, (mH - bodyY) / lineSpacing);
+
+    matrix->setTextSize(1);
 
     // 1. Headline content area rendered FIRST
-    if (config_display_mode == "static_paged") {
-        size_t startLine = currentPageIndex * linesPerPage;
-        size_t endLine = min(startLine + (size_t)linesPerPage, cachedLineCount);
-        for (size_t i = startLine; i < endLine; i++) {
-            int lineOnPage = (int)(i - startLine);
-            int y = bodyY + lineOnPage * lineSpacing;
-            if (y < mH) {
-                matrix->setCursor(2, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "vertical_crawl") {
-        int baseY = bodyY - scrollPixelOffset;
-        for (size_t i = 0; i < cachedLineCount; i++) {
-            int y = baseY + (int)i * lineSpacing;
-            if (y + 8 > 22 && y < mH) {
-                matrix->setCursor(2, y);
-                matrix->setTextColor(0xFFFF);
-                matrix->setTextWrap(false);
-                matrix->print(cachedDisplayLines[i]);
-            }
-        }
-    } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, formattedHeadline, bodyY, 2, mW - 2, 20, mH, lineSpacing, numRows);
-    } else {
+    if (!renderCommonBodyModes(context, 2, bodyY, 21, lineSpacing, linesPerPage)) {
         int startX = mW - scrollPixelOffset;
         matrix->setTextColor(0xFFFF);
         matrix->setTextWrap(false);
@@ -1127,11 +1142,9 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
     matrix->fillRect(0, 0, mW, 23, 0x0000);
 
     // 3. Top indicator
-    uint16_t catColor = article.badgeColor;
-    if (config_theme == "breaking_crimson") catColor = 0xF949;
-    else if (config_theme == "cyberpunk") catColor = 0x073F;
+    uint16_t catColor = resolveBadgeColor(badgeColor);
 
-    const char* catShort = getCategoryShort(article.category);
+    const char* catShort = getCategoryShort(category);
     matrix->setTextSize(1);
     matrix->setTextColor(catColor);
     matrix->setCursor(2, 2);

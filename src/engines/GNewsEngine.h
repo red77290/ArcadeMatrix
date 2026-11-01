@@ -71,6 +71,13 @@ private:
     size_t m_shufflePos = 0;
     size_t m_shuffleCount = 0;
     bool m_needsInitialPick = true;
+    bool m_needsArticleReload = false;
+    bool m_hasActiveArticle = false;
+    uint32_t m_lastSeenSeq = 0;
+    char m_activeCategory[24] = "News";
+    uint16_t m_activeBadgeColor = 0xDEFB;
+    size_t m_activeTotalCount = 0;
+    uint8_t m_cachedStatus = 1;
     size_t m_articlesShownThisCycle = 0;
     uint32_t m_activateTimeMs = 0;
     size_t currentPageIndex = 0;
@@ -90,7 +97,7 @@ private:
     float beaconPulse = 0.0f;
 
     // Multi-line display pre-allocated static cache (Zero allocation on Core 1 hot path)
-    static constexpr size_t MAX_DISPLAY_ROWS = 24;
+    static constexpr size_t MAX_DISPLAY_ROWS = 32;
     static constexpr size_t MAX_ROW_CHARS = 64;
     char cachedDisplayLines[MAX_DISPLAY_ROWS][MAX_ROW_CHARS];
     size_t cachedLineCount = 0;
@@ -105,13 +112,18 @@ private:
     void prepareHeadlineText(const GNewsArticle& article);
     static void formatGNewsText(const char* utf8Input, char* output, size_t maxLen);
     void pickNextRandomArticle(size_t count);
-    void advanceToNextArticle(const GNewsSnapshot& snap);
+    bool latchArticleAtIndex(size_t index, int mW, int mH, uint32_t now);
+    bool latchNextRandomArticle(int mW, int mH, uint32_t now);
+    void rebuildLayoutCache(int mW, int mH, uint32_t now);
+    void advanceToNextArticle(int mW, int mH, uint32_t now);
     void wrapTextToLines(const char* text, int maxW);
     void distributeTextToRows(const char* text, int numRows);
+    uint16_t resolveBadgeColor(uint16_t badgeColor) const;
+    bool renderCommonBodyModes(EngineContext* context, int xPad, int bodyY, int clipTopY, int lineSpacing, int linesPerPage);
     void renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows);
-    void renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount);
-    void renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount);
-    void renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount);
+    void renderWide(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount);
+    void renderCompact(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount);
+    void renderVertical(EngineContext* context, const char* category, uint16_t badgeColor, size_t totalCount);
 
     // Background fetch task on Core 0 (keeps Core 1 60 FPS lock-free)
     TaskHandle_t m_fetchTask = nullptr;

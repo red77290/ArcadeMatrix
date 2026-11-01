@@ -10,7 +10,7 @@
  *
  * Fonts must first be converted to ArcadeMatrix's ".amf" binary format via
  * tools/bdf_to_amfont/bdf_to_amfont.py from a standard BDF bitmap font (the same
- * font format ArcadeMatrix_RPi already ships in fonts/*.bdf and loads at runtime
+ * font format ArcadeMatrix_RPi already ships in fonts/<name>.bdf and loads at runtime
  * via rgbmatrix's graphics.Font.LoadFont()).
  *
  * Unlike the project's ~7 compiled-in fonts (baked into flash at build time via

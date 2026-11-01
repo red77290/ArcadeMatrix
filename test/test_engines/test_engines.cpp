@@ -6,6 +6,7 @@
 #include "engines/MessageEngine.h"
 #include "engines/MediaShowcaseEngines.h"
 #include "engines/FrontendSyncEngine.h"
+#include "engines/GNewsEngine.h"
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/drawing/IDrawingSurface.h"
 #include "core/net/SecureHttpSession.h"
@@ -1181,6 +1182,31 @@ void test_media_showcase_compact_footprint_zero_copy_atomic_raw_and_rpi_turn_gat
     probe.deactivate();
 }
 
+void test_gnews_seqlock_and_persistent_memory_contract(void) {
+    GNewsEngineDescriptorHandler descHandler;
+    EngineDescriptor desc = descHandler.getDescriptor();
+    TEST_ASSERT_EQUAL_STRING("gnews", desc.metadata.id);
+    // GNewsEngine instance + 8 KB fetch worker stack must fit inside declared persistent DRAM budget
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        desc.requirements.internalPersistentBytes,
+        static_cast<uint32_t>(sizeof(GNewsEngine) + 8192U)
+    );
+
+    GNewsEngine engine;
+    TEST_ASSERT_TRUE(engine.selfPaced());
+    TEST_ASSERT_TRUE(engine.isRealtime());
+
+    size_t cnt = 99U;
+    bool hd = true;
+    uint8_t st = 99U;
+    uint32_t seq = 99U;
+    gnewsService.purgeArticles();
+    TEST_ASSERT_TRUE(gnewsService.tryReadMetaLockFree(cnt, hd, st, seq));
+    TEST_ASSERT_FALSE(hd);
+    TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(cnt));
+    TEST_ASSERT_EQUAL_UINT32(0U, seq & 1U);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1201,6 +1227,7 @@ void setup() {
     RUN_TEST(test_all_four_showcase_descriptors_dynamic_bit_depth_and_long_item_id_capacity);
     RUN_TEST(test_http_chunked_decoder_uvicorn_dmds_stream_and_header_detection);
     RUN_TEST(test_media_showcase_compact_footprint_zero_copy_atomic_raw_and_rpi_turn_gate);
+    RUN_TEST(test_gnews_seqlock_and_persistent_memory_contract);
     UNITY_END();
 }
 

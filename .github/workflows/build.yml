@@ -26,9 +26,9 @@ jobs:
           path: |
             ~/.platformio
             .pio
-          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          key: pio-idf44-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
           restore-keys: |
-            pio-${{ matrix.env }}-
+            pio-idf44-${{ matrix.env }}-
 
       - name: Install dependencies
         run: |

@@ -15,6 +15,7 @@
 #include <time.h>
 #include <lwip/dns.h>
 #if defined(ESP32)
+#include <esp_idf_version.h>
 #include <esp_log.h>
 #include <lwip/sockets.h>
 #include <fcntl.h>
@@ -194,7 +195,17 @@ void AppRuntime::initialize() {
 
     // Hardware watchdog: 30s timeout initialized early to prevent TG1WDT reset during boot
     constexpr uint32_t WDT_TIMEOUT_S = 30;
+#if defined(ESP_IDF_VERSION) && (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
+    esp_task_wdt_config_t wdtCfg = {};
+    wdtCfg.timeout_ms = WDT_TIMEOUT_S * 1000U;
+    wdtCfg.idle_core_mask = (1U << portNUM_PROCESSORS) - 1U;
+    wdtCfg.trigger_panic = true;
+    if (esp_task_wdt_reconfigure(&wdtCfg) != ESP_OK) {
+        esp_task_wdt_init(&wdtCfg);
+    }
+#else
     esp_task_wdt_init(WDT_TIMEOUT_S, true);
+#endif
     esp_task_wdt_add(NULL);
 
 #if defined(USE_RTC) && USE_RTC
@@ -247,8 +258,6 @@ void AppRuntime::initialize() {
     // STEP 2: LOAD & SANITIZE CONFIGURATION
     // =========================================================================
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    uint32_t preConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
         ConfigSanitizer::sanitize(config, true);

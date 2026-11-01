@@ -76,6 +76,13 @@ public:
     inline void flushBackbufferRow(uint8_t) {}
 #endif
     uint16_t* getBackbufferRowPlane(uint8_t row, uint8_t plane);
+    /// Returns the live hardware DMA scan row `[0 .. ROWS_PER_FRAME - 1]` on single-buffered ESP32-S3 LCD_CAM
+    /// panels, or `-1` when unavailable / double-buffered / unsupported target.
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    int getActiveDmaScanRow();
+#else
+    inline int getActiveDmaScanRow() { return -1; }
+#endif
     const uint8_t* getLutR() const { return m_lut_r; }
     const uint8_t* getLutG() const { return m_lut_g; }
     const uint8_t* getLutB() const { return m_lut_b; }
@@ -86,6 +93,12 @@ private:
     uint8_t m_brightness8 = 64;
     uint8_t m_depth = 8;
     uint32_t m_dirtyRows[2] = {0, 0};
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    int8_t m_gdmaTxChan = -1;
+    uintptr_t m_gdmaFirstDescAddr = 0;
+    uintptr_t m_gdmaLastDescAddr = 0;
+    uint32_t m_gdmaTotalDescs = 0;
+#endif
     uint8_t m_lut_r[32];
     uint8_t m_lut_g[64];
     uint8_t m_lut_b[32];

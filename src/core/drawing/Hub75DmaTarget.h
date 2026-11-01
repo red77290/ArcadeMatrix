@@ -10,6 +10,7 @@
 
 using DmaRowAccessor = uint16_t* (*)(void* userCtx, uint8_t row, uint8_t plane);
 using DmaRowFlush = void (*)(void* userCtx, uint8_t row);
+using DmaRowSync = void (*)(void* userCtx, uint8_t row);
 
 struct Hub75DmaTarget {
     uint8_t* buffer = nullptr;       ///< Pointer to physical DMA buffer plane data
@@ -23,6 +24,7 @@ struct Hub75DmaTarget {
 
     DmaRowAccessor rowAccessor = nullptr; ///< Unified row accessor function
     DmaRowFlush rowFlush = nullptr;       ///< Optional per-row cache writeback hook (invoked right as each row finishes encoding)
+    DmaRowSync rowSync = nullptr;         ///< Optional per-row DMA scanline sync hook (invoked right before encoding row)
     void* accessorCtx = nullptr;          ///< User context for row accessor / row flush
 
     const uint8_t* lutR = nullptr;        ///< CIE/gamma red LUT (32 entries)

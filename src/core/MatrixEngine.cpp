@@ -6,6 +6,15 @@
 #if defined(ESP32)
 #include <esp_heap_caps.h>
 #endif
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(UNIT_TEST)
+#if __has_include(<soc/gdma_struct.h>) && __has_include(<soc/gdma_channel.h>) && __has_include(<hal/dma_types.h>)
+#include <soc/gdma_struct.h>
+#include <soc/gdma_channel.h>
+#include <soc/soc.h>
+#include <hal/dma_types.h>
+#define ARCADEMATRIX_HAS_S3_GDMA_SCAN_PROBE 1
+#endif
+#endif
 #include <esp_task_wdt.h>
 
 RenderStats g_renderStats;
@@ -446,8 +455,101 @@ void FastMatrixPanel::flushDirtyRows() {
 void FastMatrixPanel::setBuffering(bool doubleBuffered) {
     m_double = doubleBuffered;
     m_back = doubleBuffered ? 1 : 0;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    m_gdmaTxChan = -1;
+    m_gdmaFirstDescAddr = 0;
+    m_gdmaLastDescAddr = 0;
+    m_gdmaTotalDescs = 0;
+#endif
     initLuts(m_cfg.getPixelColorDepthBits());
 }
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+int FastMatrixPanel::getActiveDmaScanRow() {
+#if defined(ARCADEMATRIX_HAS_S3_GDMA_SCAN_PROBE)
+    if (!initialized || m_double || ROWS_PER_FRAME == 0) {
+        return -1;
+    }
+
+    if (m_gdmaTxChan < 0 || m_gdmaTxChan >= 5) {
+        for (int ch = 0; ch < 5; ++ch) {
+            if (GDMA.channel[ch].out.peri_sel.sel == SOC_GDMA_TRIG_PERIPH_LCD0 &&
+                GDMA.channel[ch].out.link.park == 0U) {
+                m_gdmaTxChan = static_cast<int8_t>(ch);
+                break;
+            }
+        }
+        if (m_gdmaTxChan < 0) {
+            return -1;
+        }
+    }
+
+    const int ch = static_cast<int>(m_gdmaTxChan);
+    if (GDMA.channel[ch].out.peri_sel.sel != SOC_GDMA_TRIG_PERIPH_LCD0 ||
+        GDMA.channel[ch].out.link.park != 0U) {
+        m_gdmaTxChan = -1;
+        m_gdmaTotalDescs = 0;
+        return -1;
+    }
+
+    if (m_gdmaTotalDescs == 0U) {
+        const uintptr_t eofAddr = static_cast<uintptr_t>(GDMA.channel[ch].out.eof_des_addr);
+        if (eofAddr != 0U && esp_ptr_dma_capable(reinterpret_cast<const void*>(eofAddr))) {
+            const auto* lastDesc = reinterpret_cast<const dma_descriptor_t*>(eofAddr);
+            const uintptr_t firstAddr = reinterpret_cast<uintptr_t>(lastDesc->next);
+            if (firstAddr != 0U &&
+                (eofAddr >= firstAddr) &&
+                ((eofAddr - firstAddr) % sizeof(dma_descriptor_t)) == 0U &&
+                esp_ptr_dma_capable(reinterpret_cast<const void*>(firstAddr))) {
+                const uint32_t total = static_cast<uint32_t>((eofAddr - firstAddr) / sizeof(dma_descriptor_t)) + 1U;
+                if (total >= static_cast<uint32_t>(ROWS_PER_FRAME)) {
+                    m_gdmaFirstDescAddr = firstAddr;
+                    m_gdmaLastDescAddr = eofAddr;
+                    m_gdmaTotalDescs = total;
+                }
+            }
+        }
+    }
+
+    uintptr_t curAddr = static_cast<uintptr_t>(GDMA.channel[ch].out.dscr_bf0);
+    if (m_gdmaTotalDescs > 0U) {
+        if (curAddr < m_gdmaFirstDescAddr || curAddr > m_gdmaLastDescAddr) {
+            curAddr = static_cast<uintptr_t>(GDMA.channel[ch].out.dscr);
+        }
+        if (curAddr >= m_gdmaFirstDescAddr && curAddr <= m_gdmaLastDescAddr) {
+            const uint32_t descIdx = static_cast<uint32_t>((curAddr - m_gdmaFirstDescAddr) / sizeof(dma_descriptor_t));
+            const uint32_t row = (descIdx * static_cast<uint32_t>(ROWS_PER_FRAME)) / m_gdmaTotalDescs;
+            return (row < static_cast<uint32_t>(ROWS_PER_FRAME))
+                ? static_cast<int>(row)
+                : static_cast<int>(ROWS_PER_FRAME - 1);
+        }
+    }
+
+    // Fallback during the very first < 5.5 ms scan cycle before `eof_des_addr` latches:
+    // match the active descriptor's payload address against `frame_buffer[0].rowBits`.
+    if (curAddr == 0U) {
+        curAddr = static_cast<uintptr_t>(GDMA.channel[ch].out.dscr);
+    }
+    if (curAddr != 0U && esp_ptr_dma_capable(reinterpret_cast<const void*>(curAddr))) {
+        const auto* desc = reinterpret_cast<const dma_descriptor_t*>(curAddr);
+        const uintptr_t bufAddr = reinterpret_cast<uintptr_t>(desc->buffer);
+        if (bufAddr != 0U) {
+            auto& fb0 = frame_buffer[0];
+            const size_t nRows = fb0.rowBits.size();
+            for (size_t r = 0; r < nRows; ++r) {
+                if (!fb0.rowBits[r]) continue;
+                const uintptr_t rowStart = reinterpret_cast<uintptr_t>(fb0.rowBits[r]->getDataPtr(0));
+                const size_t rowBytes = fb0.rowBits[r]->getColorDepthSize(false);
+                if (bufAddr >= rowStart && bufAddr < (rowStart + rowBytes)) {
+                    return static_cast<int>(r);
+                }
+            }
+        }
+    }
+#endif
+    return -1;
+}
+#endif
 
 uint16_t* FastMatrixPanel::getBackbufferRowPlane(uint8_t row, uint8_t plane) {
     if (!initialized) return nullptr;
@@ -603,6 +705,24 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
         }
         return nullptr;
     };
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    Hub75SingleDmaScanChaser scanChaser;
+    if (!m_double) {
+        scanChaser.begin(
+            [](void* ctx) -> int {
+                auto* self = static_cast<FastMatrixPanel*>(ctx);
+                return self ? self->getActiveDmaScanRow() : -1;
+            },
+            this,
+            rpf
+        );
+        if (scanChaser.active) {
+            params.rowSync = &Hub75SingleDmaScanChaser::callback;
+            params.syncCtx = &scanChaser;
+        }
+    }
+#endif
 
     Hub75BulkEncoder::encode(src, w, rowAccessor, &targetFb, params);
     m_dirtyRows[m_back] = 0;
