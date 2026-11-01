@@ -7,6 +7,7 @@
 #include "engines/MediaShowcaseEngines.h"
 #include "engines/FrontendSyncEngine.h"
 #include "engines/GNewsEngine.h"
+#include "engines/GNewsTickerUtils.h"
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/drawing/IDrawingSurface.h"
 #include "core/net/SecureHttpSession.h"
@@ -1205,6 +1206,10 @@ void test_gnews_seqlock_and_persistent_memory_contract(void) {
     TEST_ASSERT_FALSE(hd);
     TEST_ASSERT_EQUAL_UINT32(0U, static_cast<uint32_t>(cnt));
     TEST_ASSERT_EQUAL_UINT32(0U, seq & 1U);
+
+    char singleLine[128] = {};
+    GNewsTickerUtils::formatSingleLineCp437("Line 1\r\n\nLine 2\twith   tabs\n", singleLine, sizeof(singleLine));
+    TEST_ASSERT_EQUAL_STRING("Line 1 Line 2 with tabs", singleLine);
 }
 
 void setup() {

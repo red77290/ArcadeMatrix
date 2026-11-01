@@ -11,6 +11,7 @@
 #include "core/net/DmdzStreamClient.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "engines/showcase/ShowcaseStreamPlayer.h"
+#include "engines/GNewsTickerUtils.h"
 #include "engines/WebUiSyncEngine.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
@@ -3563,11 +3564,13 @@ void test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll
 }
 
 void test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases(void) {
-    // Simulate a 256x64 single-DMA-buffer panel (`ROWS_PER_FRAME = 32`, 173 us/row GDMA scan,
-    // 95 us/row CPU encode + L1 writeback) across all 32 starting GDMA phases (0..31).
+    // Simulate a 256x64 single-DMA-buffer panel (`ROWS_PER_FRAME = 32`, 173 us/row GDMA scan)
+    // across all 32 starting GDMA phases (0..31) in BOTH hardware timing regimes:
+    //  1) Fast SRAM / low-depth regime (`kCpuRowUs = 95 us < 173 us`): CPU paced >= 2 rows behind Scan S.
+    //  2) Octal PSRAM round-robin contention regime (`kCpuRowUs = 220 us > 173 us`): Scan S pulls ahead
+    //     of CPU (100% Frame 1) and CPU finishes row 31 well before Scan S+1 reaches row 31 (100% Frame 2).
     static constexpr int kRpf = 32;
     static constexpr uint32_t kDmaRowUs = 173U;
-    static constexpr uint32_t kCpuRowUs = 95U;
 
     struct SimBus {
         uint32_t initDmaRow = 0U;
@@ -3638,37 +3641,40 @@ void test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases(
         s_bus->advanceTime(us);
     };
 
-    for (uint32_t startPhase = 0U; startPhase < 32U; ++startPhase) {
-        bus.reset(startPhase);
-        Hub75SingleDmaScanChaser chaser;
-        chaser.begin(queryCb, &bus, kRpf, delayCb);
-        TEST_ASSERT_TRUE(chaser.active);
+    static constexpr uint32_t kCpuRegimesUs[2] = {95U, 220U};
+    for (uint32_t cpuRowUs : kCpuRegimesUs) {
+        for (uint32_t startPhase = 0U; startPhase < 32U; ++startPhase) {
+            bus.reset(startPhase);
+            Hub75SingleDmaScanChaser chaser;
+            chaser.begin(queryCb, &bus, kRpf, delayCb);
+            TEST_ASSERT_TRUE(chaser.active);
 
-        for (uint8_t y = 0U; y < static_cast<uint8_t>(kRpf); ++y) {
-            chaser.syncRow(y);
-            // CPU writes Frame 2 into row `y` (`y` and `y + 32` on 256x64) over 95 us:
-            // if GDMA is currently scanning row `y`, that scan row would tear!
-            TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
-            bus.advanceTime(kCpuRowUs / 2U);
-            TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
-            bus.dmaBufferFrameId[y] = 2U;
-            bus.advanceTime(kCpuRowUs - (kCpuRowUs / 2U));
-        }
+            for (uint8_t y = 0U; y < static_cast<uint8_t>(kRpf); ++y) {
+                chaser.syncRow(y);
+                // CPU writes Frame 2 into row `y` (`y` and `y + 32` on 256x64):
+                // if GDMA is currently scanning row `y`, that scan row would tear!
+                TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
+                bus.advanceTime(cpuRowUs / 2U);
+                TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
+                bus.dmaBufferFrameId[y] = 2U;
+                bus.advanceTime(cpuRowUs - (cpuRowUs / 2U));
+            }
 
-        // Total encode + worst-case wrap-plus-chase wait stays well under 7.0 ms (< 42% of a 60 FPS 16.6 ms frame)
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32(7000U, bus.simUs);
+            // Total encode + worst-case wrap wait stays comfortably under a 60 FPS 16.67 ms frame
+            TEST_ASSERT_LESS_OR_EQUAL_UINT32(13500U, bus.simUs);
 
-        // Advance two full scans so Scan S and Scan S+1 complete all 32 rows (0..31)
-        bus.advanceTime(kRpf * kDmaRowUs * 2U);
-        TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2U, bus.currentScanIdx);
+            // Advance two full scans so Scan S, Scan S+1, and Scan S+2 complete all 32 rows (0..31)
+            bus.advanceTime(kRpf * kDmaRowUs * 2U);
+            TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2U, bus.currentScanIdx);
 
-        // Every completed scan cycle must be 100% Frame 1 OR 100% Frame 2 across all 32 rows
-        // (especially row 31 `y=31` vs row 0 `y=32` at the vertical center of 256x64!).
-        for (uint32_t s = 0U; s < bus.currentScanIdx; ++s) {
-            const uint8_t expectedFrame = bus.scannedRowFrameId[s][0];
-            TEST_ASSERT_TRUE(expectedFrame == 1U || expectedFrame == 2U);
-            for (int r = 1; r < kRpf; ++r) {
-                TEST_ASSERT_EQUAL_UINT8(expectedFrame, bus.scannedRowFrameId[s][r]);
+            // Every completed scan cycle must be 100% Frame 1 OR 100% Frame 2 across all 32 rows
+            // (especially row 31 `y=31` vs row 0 `y=32` at the vertical center of 256x64!).
+            for (uint32_t s = 0U; s < bus.currentScanIdx; ++s) {
+                const uint8_t expectedFrame = bus.scannedRowFrameId[s][0];
+                TEST_ASSERT_TRUE(expectedFrame == 1U || expectedFrame == 2U);
+                for (int r = 1; r < kRpf; ++r) {
+                    TEST_ASSERT_EQUAL_UINT8(expectedFrame, bus.scannedRowFrameId[s][r]);
+                }
             }
         }
     }
@@ -3702,6 +3708,47 @@ void test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases(
     }
 
     s_bus = nullptr;
+}
+
+void test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll(void) {
+    // 1. Multi-paragraph GNews `content` with `\r\n`, `\n\n`, `\t`, NBSP (`U+00A0`), zero-width space (`U+200B`),
+    //    and French UTF-8 punctuation/accents must normalize to a single clean CP437 line with ZERO `\n` or `\r`.
+    char out[256] = {};
+    const char* rawArticle =
+        "  \r\n Alerte\tInfo :\n\nL\xE2\x80\x99\xC3\xA9t\xC3\xA9\xE2\x80\x8B arrive\xC2\xA0\r\n"
+        "sur la console \xC2\xAB RPi \xC2\xBB\n   avec succ\xC3\xA8s !  \n";
+    GNewsTickerUtils::formatSingleLineCp437(rawArticle, out, sizeof(out));
+
+    for (size_t i = 0; out[i] != '\0'; ++i) {
+        TEST_ASSERT_NOT_EQUAL_CHAR('\n', out[i]);
+        TEST_ASSERT_NOT_EQUAL_CHAR('\r', out[i]);
+        TEST_ASSERT_NOT_EQUAL_CHAR('\t', out[i]);
+        if (i > 0) {
+            TEST_ASSERT_FALSE(out[i - 1] == ' ' && out[i] == ' ');
+        }
+    }
+    const char expectedCp437[] =
+        "Alerte Info : L'\x82t\x82 arrive sur la console \xAE RPi \xAF avec succ\x8As !";
+    TEST_ASSERT_EQUAL_STRING(expectedCp437, out);
+
+    // 2. In-place service whitespace sanitizer preserves UTF-8 bytes while collapsing `\r`/`\n`/`\t`
+    char rawServiceBuf[] = " \nPremier paragraphe.\r\n\r\nDeuxi\xC3\xA8me\tligne !  ";
+    GNewsTickerUtils::collapseWhitespaceInPlace(rawServiceBuf);
+    TEST_ASSERT_EQUAL_STRING("Premier paragraphe. Deuxi\xC3\xA8me ligne !", rawServiceBuf);
+
+    // 3. Harmonic scroll speed 10 (`125 px/s`) at `FrameScheduler` `16,000 us` (`62.5 Hz`) advances
+    //    strictly `+2 px` on every single frame (zero `2/3 px` frame-to-frame retinal beat judder).
+    const uint32_t speed10PxPerSec = GNewsTickerUtils::scrollSpeedPxPerSec(10);
+    TEST_ASSERT_EQUAL_UINT32(125U, speed10PxPerSec);
+
+    int offset = 0;
+    uint32_t remUs = 0U;
+    for (int f = 1; f <= 60; ++f) {
+        const int prev = offset;
+        TEST_ASSERT_TRUE(GNewsTickerUtils::advanceScrollSubpixels(offset, remUs, 16000U, speed10PxPerSec));
+        TEST_ASSERT_EQUAL_INT(2, offset - prev);
+    }
+    TEST_ASSERT_EQUAL_INT(120, offset);
 }
 
 // =========================================================================
@@ -3803,6 +3850,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_softened_webui_sync_conditional_304_bypass_and_monotonic_tail_window);
     RUN_TEST(test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll);
     RUN_TEST(test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases);
+    RUN_TEST(test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll);
 
     return UNITY_END();
 }

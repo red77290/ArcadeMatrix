@@ -66,7 +66,7 @@ struct Hub75SingleDmaScanChaser {
     bool scanWrapped = false;
 
     static constexpr uint32_t kStepDelayUs = 12U;
-    static constexpr int kMaxStartWaitSteps = 180; // Hard cap: 2,160 us
+    static constexpr int kMaxStartWaitSteps = 900; // Hard cap: 10,800 us (covers full 90-180 Hz scan wrap)
     static constexpr int kMaxRowWaitSteps = 45;    // Hard cap: 540 us/row
 
     void begin(QueryDmaRowFn query, void* ctx, int rpf, DelayUsFn delayCb = nullptr) {
@@ -100,9 +100,14 @@ struct Hub75SingleDmaScanChaser {
                 active = false;
                 return;
             }
+            // Gate `row 0` to start strictly right after scan wrap (`[2 .. 4]` on 1/32 scan,
+            // `[2 .. 3]` on 1/16 scan). This guarantees tear-free output in BOTH timing regimes:
+            //  1) `T_cpu < T_dma`: per-row guard `(y + 1) >= d` keeps CPU >= 2 rows behind Scan S.
+            //  2) `T_cpu > T_dma` (Octal PSRAM round-robin contention on 256x64 8-bit): Scan S pulls
+            //     ahead of CPU (100% Frame N), wraps `31 -> 0` when CPU is near the end, and CPU
+            //     completes row 31 + cache writeback well before Scan S+1 reaches row 31 (100% Frame N+1).
             const int minStartRow = 2;
-            const int tailMargin = (rpf / 5 > 4) ? (rpf / 5) : 4; // 6 on rpf=32, 4 on rpf=16
-            const int maxStartRow = (rpf - tailMargin > minStartRow + 1) ? (rpf - tailMargin) : (minStartRow + 1);
+            const int maxStartRow = (rpf >= 32) ? 4 : 3;
 
             int steps = 0;
             while ((d < minStartRow || d > maxStartRow) && steps < kMaxStartWaitSteps) {

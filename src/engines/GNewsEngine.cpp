@@ -1,4 +1,5 @@
 #include "GNewsEngine.h"
+#include "GNewsTickerUtils.h"
 #include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
@@ -13,6 +14,28 @@ uint32_t gnewsRandomU32() {
 #else
     return static_cast<uint32_t>(rand());
 #endif
+}
+
+void drawClippedSingleLineText(IDrawingSurface* matrix, const char* text,
+                               int startX, int y, int clipMinX, int clipMaxX,
+                               uint16_t color, uint8_t textSize) {
+    if (!matrix || !text || *text == '\0' || clipMaxX <= clipMinX) return;
+    const int scale = (textSize > 1U) ? static_cast<int>(textSize) : 1;
+    const int charW = 6 * scale;
+    int firstIdx = 0;
+    if (startX < (clipMinX - charW)) {
+        firstIdx = (clipMinX - charW - startX) / charW;
+        if (firstIdx < 0) firstIdx = 0;
+    }
+    const int len = static_cast<int>(strlen(text));
+    for (int i = firstIdx; i < len; ++i) {
+        const int cx = startX + i * charW;
+        if (cx >= clipMaxX) break;
+        if (cx + charW <= clipMinX) continue;
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c <= ' ') continue;
+        matrix->drawChar(static_cast<int16_t>(cx), static_cast<int16_t>(y), c, color, color, textSize);
+    }
 }
 } // namespace
 
@@ -64,9 +87,10 @@ void GNewsEngine::applyConfig(const EngineConfig* config) {
     if (config_display_mode != prevMode || contentTogglesChanged) {
         uint32_t now = millis();
         scrollPixelOffset = 0;
+        m_scrollRemUs = 0;
         scrollState = ScrollState::PauseStart;
         stateStartTime = now;
-        lastScrollTick = now;
+        lastScrollTick = micros();
         lastArticleSwitchTime = now;
         currentPageIndex = 0;
         totalPages = 1;
@@ -197,7 +221,7 @@ void GNewsEngine::rebuildLayoutCache(int mW, int mH, uint32_t now) {
             const int charPx = (mH >= 64 && mW >= 256) ? 12 : 6;
             const int textW = static_cast<int>(strlen(formattedHeadline)) * charPx;
             cachedMaxScroll = (textW > 0) ? (textW + 16) : 0;
-            wrapTextToLines(formattedHeadline, mW - 4);
+            cachedLineCount = 0;
         }
     }
 
@@ -279,9 +303,10 @@ void GNewsEngine::advanceToNextArticle(int mW, int mH, uint32_t now) {
     currentPageIndex = 0;
     lastPageSwitchTime = now;
     scrollPixelOffset = 0;
+    m_scrollRemUs = 0;
     scrollState = ScrollState::PauseStart;
     stateStartTime = now;
-    lastScrollTick = now;
+    lastScrollTick = micros();
     lastArticleSwitchTime = now;
 }
 
@@ -380,90 +405,7 @@ void GNewsEngine::distributeTextToRows(const char* text, int numRows) {
 }
 
 void GNewsEngine::formatGNewsText(const char* utf8Input, char* output, size_t maxLen) {
-    if (!output || maxLen == 0) return;
-    output[0] = '\0';
-    if (!utf8Input) return;
-
-    size_t inIdx = 0;
-    size_t outIdx = 0;
-    size_t inLen = strlen(utf8Input);
-
-    while (inIdx < inLen && outIdx < maxLen - 1) {
-        uint8_t b1 = (uint8_t)utf8Input[inIdx];
-
-        if (b1 < 0x80) {
-            output[outIdx++] = (char)b1;
-            inIdx++;
-        } else if ((b1 & 0xE0) == 0xC0) {
-            if (inIdx + 1 >= inLen) break;
-            uint8_t b2 = (uint8_t)utf8Input[inIdx + 1];
-            uint32_t cp = ((b1 & 0x1F) << 6) | (b2 & 0x3F);
-            inIdx += 2;
-
-            if (cp == 0x0153 || cp == 0x0152) {
-                if (outIdx + 1 < maxLen - 1) {
-                    output[outIdx++] = (cp == 0x0153) ? 'o' : 'O';
-                    output[outIdx++] = (cp == 0x0153) ? 'e' : 'E';
-                }
-            } else {
-                static constexpr struct { uint16_t cp; uint8_t ch; } kCp437Map[] = {
-                    {0x00E9, 0x82}, {0x00E8, 0x8A}, {0x00EA, 0x88}, {0x00EB, 0x89},
-                    {0x00E0, 0x85}, {0x00E1, 0xA0}, {0x00E2, 0x83}, {0x00E4, 0x84},
-                    {0x00E5, 0x86}, {0x00E7, 0x87}, {0x00EE, 0x8C}, {0x00EF, 0x8B},
-                    {0x00EC, 0x8D}, {0x00ED, 0xA1}, {0x00F4, 0x93}, {0x00F6, 0x94},
-                    {0x00F2, 0x95}, {0x00F3, 0xA2}, {0x00F9, 0x97}, {0x00FB, 0x96},
-                    {0x00FC, 0x81}, {0x00FA, 0xA3}, {0x00F1, 0xA4}, {0x00C9, 0x90},
-                    {0x00C8, 'E'},  {0x00CA, 'E'},  {0x00CB, 'E'},  {0x00C0, 'A'},
-                    {0x00C1, 'A'},  {0x00C2, 'A'},  {0x00C4, 0x8E}, {0x00C5, 0x8F},
-                    {0x00C7, 0x80}, {0x00CE, 'I'},  {0x00CF, 'I'},  {0x00D4, 'O'},
-                    {0x00D6, 0x99}, {0x00D9, 'U'},  {0x00DB, 'U'},  {0x00DC, 0x9A},
-                    {0x00D1, 0xA5}, {0x00E6, 0x91}, {0x00C6, 0x92}, {0x00DF, 0xE1},
-                    {0x00AB, 0xAE}, {0x00BB, 0xAF}, {0x00A0, ' '},  {0x00B0, 0xF8}
-                };
-                uint8_t mapped = ' ';
-                for (const auto& entry : kCp437Map) {
-                    if (entry.cp == cp) {
-                        mapped = entry.ch;
-                        break;
-                    }
-                }
-                output[outIdx++] = static_cast<char>(mapped);
-            }
-        } else if ((b1 & 0xF0) == 0xE0) {
-            if (inIdx + 2 >= inLen) break;
-            uint8_t b2 = (uint8_t)utf8Input[inIdx + 1];
-            uint8_t b3 = (uint8_t)utf8Input[inIdx + 2];
-            uint32_t cp = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
-            inIdx += 3;
-
-            if (cp == 0x2026) {
-                if (outIdx + 2 < maxLen - 1) {
-                    output[outIdx++] = '.';
-                    output[outIdx++] = '.';
-                    output[outIdx++] = '.';
-                } else {
-                    output[outIdx++] = '.';
-                }
-            } else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) {
-                output[outIdx++] = '\'';
-            } else if (cp == 0x201C || cp == 0x201D || cp == 0x201E) {
-                output[outIdx++] = '"';
-            } else if (cp == 0x2013 || cp == 0x2014 || cp == 0x2212) {
-                output[outIdx++] = '-';
-            } else if (cp == 0x20AC) {
-                output[outIdx++] = 'E';
-            } else {
-                output[outIdx++] = ' ';
-            }
-        } else if ((b1 & 0xF8) == 0xF0) {
-            if (inIdx + 3 >= inLen) break;
-            inIdx += 4;
-            output[outIdx++] = ' ';
-        } else {
-            inIdx++;
-        }
-    }
-    output[outIdx] = '\0';
+    GNewsTickerUtils::formatSingleLineCp437(utf8Input, output, maxLen);
 }
 
 void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
@@ -471,22 +413,37 @@ void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
 
     auto appendSegment = [this](const char* segment) {
         if (!segment || segment[0] == '\0') return;
-        size_t curLen = strlen(formattedHeadline);
+        const size_t beforeLen = strlen(formattedHeadline);
+        size_t curLen = beforeLen;
         if (curLen > 0) {
             if (curLen + 4 >= sizeof(formattedHeadline)) return;
             strcat(formattedHeadline, " - ");
             curLen += 3;
         }
         formatGNewsText(segment, formattedHeadline + curLen, sizeof(formattedHeadline) - curLen);
+        if (formattedHeadline[curLen] == '\0') {
+            formattedHeadline[beforeLen] = '\0';
+        }
     };
 
     const char* lastAdded = nullptr;
     auto startsWithCi = [](const char* haystack, const char* needle) -> bool {
         if (!haystack || !needle || *needle == '\0') return false;
+        while (static_cast<uint8_t>(*needle) <= 0x20U && *needle != '\0') needle++;
+        while (static_cast<uint8_t>(*haystack) <= 0x20U && *haystack != '\0') haystack++;
+        if (*needle == '\0') return false;
         while (*needle != '\0') {
             if (*haystack == '\0') return false;
-            char c1 = (*haystack >= 'A' && *haystack <= 'Z') ? (*haystack + 32) : *haystack;
-            char c2 = (*needle >= 'A' && *needle <= 'Z') ? (*needle + 32) : *needle;
+            const bool ws1 = (static_cast<uint8_t>(*haystack) <= 0x20U);
+            const bool ws2 = (static_cast<uint8_t>(*needle) <= 0x20U);
+            if (ws1 || ws2) {
+                if (ws1 != ws2) return false;
+                while (static_cast<uint8_t>(*haystack) <= 0x20U && *haystack != '\0') haystack++;
+                while (static_cast<uint8_t>(*needle) <= 0x20U && *needle != '\0') needle++;
+                continue;
+            }
+            const char c1 = (*haystack >= 'A' && *haystack <= 'Z') ? (*haystack + 32) : *haystack;
+            const char c2 = (*needle >= 'A' && *needle <= 'Z') ? (*needle + 32) : *needle;
             if (c1 != c2) return false;
             haystack++;
             needle++;
@@ -650,6 +607,7 @@ void GNewsEngine::activate() {
     totalPages = 1;
     lastPageSwitchTime = now;
     scrollPixelOffset = 0;
+    m_scrollRemUs = 0;
     sourceMarqueeOffset = 0;
     cachedArticleIndex = -1;
     cachedLineCount = 0;
@@ -660,8 +618,7 @@ void GNewsEngine::activate() {
     m_needsArticleReload = false;
     scrollState = ScrollState::PauseStart;
     stateStartTime = now;
-    lastUpdateTime = now;
-    lastScrollTick = now;
+    lastScrollTick = micros();
     lastSourceTick = now;
     lastArticleSwitchTime = now;
 
@@ -721,7 +678,6 @@ bool GNewsEngine::isFinished() const {
 void GNewsEngine::update(EngineContext* context) {
     startFetchTask();
     uint32_t now = millis();
-    lastUpdateTime = now;
 
     // Smooth sinusoidal pulsing beacon (0.0 to 1.0)
     beaconPulse = (sinf((float)sourceMarqueeOffset * 0.1f) + 1.0f) * 0.5f;
@@ -774,9 +730,10 @@ void GNewsEngine::update(EngineContext* context) {
         currentPageIndex = 0;
         lastPageSwitchTime = now;
         scrollPixelOffset = 0;
+        m_scrollRemUs = 0;
         scrollState = ScrollState::PauseStart;
         stateStartTime = now;
-        lastScrollTick = now;
+        lastScrollTick = micros();
         lastArticleSwitchTime = now;
     } else if (m_needsArticleReload) {
         latchArticleAtIndex(currentArticleIndex, mW, mH, now);
@@ -798,9 +755,7 @@ void GNewsEngine::update(EngineContext* context) {
         linesPerPage = 4;
     }
 
-    static constexpr uint8_t kScrollTickMs[10] = {100, 75, 55, 42, 32, 24, 18, 13, 9, 6};
-    const int speedIdx = std::max(1, std::min(10, config_scroll_speed)) - 1;
-    const uint32_t baseTickMs = kScrollTickMs[speedIdx];
+    const uint32_t basePxPerSec = GNewsTickerUtils::scrollSpeedPxPerSec(config_scroll_speed);
 
     if (config_display_mode == "static_paged") {
         totalPages = (cachedLineCount == 0) ? 1 : ((cachedLineCount + static_cast<size_t>(linesPerPage) - 1) / static_cast<size_t>(linesPerPage));
@@ -819,7 +774,9 @@ void GNewsEngine::update(EngineContext* context) {
             }
         }
     } else {
-        const uint32_t tickMs = (config_display_mode == "vertical_crawl") ? (baseTickMs * 2U) : baseTickMs;
+        const uint32_t effPxPerSec = (config_display_mode == "vertical_crawl")
+            ? std::max<uint32_t>(5U, basePxPerSec / 2U)
+            : basePxPerSec;
 
         switch (scrollState) {
             case ScrollState::PauseStart:
@@ -831,14 +788,15 @@ void GNewsEngine::update(EngineContext* context) {
                 } else if (now - stateStartTime >= static_cast<uint32_t>(std::max(0, config_scroll_pause_start_ms))) {
                     scrollState = ScrollState::Scrolling;
                     stateStartTime = now;
-                    lastScrollTick = now;
+                    m_scrollRemUs = 0;
+                    lastScrollTick = micros();
                 }
                 break;
-            case ScrollState::Scrolling:
-                if (now - lastScrollTick >= tickMs) {
-                    uint32_t steps = (now - lastScrollTick) / tickMs;
-                    scrollPixelOffset += static_cast<int>(steps);
-                    lastScrollTick += steps * tickMs;
+            case ScrollState::Scrolling: {
+                const uint32_t nowUs = micros();
+                const uint32_t deltaUs = nowUs - lastScrollTick;
+                lastScrollTick = nowUs;
+                if (GNewsTickerUtils::advanceScrollSubpixels(scrollPixelOffset, m_scrollRemUs, deltaUs, effPxPerSec)) {
                     if (scrollPixelOffset >= cachedMaxScroll) {
                         scrollPixelOffset = cachedMaxScroll;
                         scrollState = ScrollState::PauseEnd;
@@ -846,6 +804,7 @@ void GNewsEngine::update(EngineContext* context) {
                     }
                 }
                 break;
+            }
             case ScrollState::PauseEnd:
                 if (now - stateStartTime >= static_cast<uint32_t>(std::max(0, config_scroll_pause_end_ms))) {
                     advanceToNextArticle(mW, mH, now);
@@ -972,18 +931,10 @@ void GNewsEngine::renderWide(EngineContext* context, const char* category, uint1
 
     // 1. Headline Content Area rendered FIRST (so header occludes it cleanly when scrolling)
     if (!renderCommonBodyModes(context, 4, bodyY, divY, lineSpacing, linesPerPage)) {
-        int startX = 4 - scrollPixelOffset;
-        matrix->setTextWrap(false);
-        matrix->setTextColor(0xFFFF);
-        if (mH >= 64 && mW >= 256) {
-            matrix->setTextSize(2);
-            matrix->setCursor(startX, bodyY);
-            matrix->print(formattedHeadline);
-            matrix->setTextSize(1);
-        } else {
-            matrix->setCursor(startX, bodyY);
-            matrix->print(formattedHeadline);
-        }
+        const int startX = 4 - scrollPixelOffset;
+        const int tickerY = (mH >= 64) ? (divY + 8) : bodyY;
+        const uint8_t tickerScale = (mH >= 64 && mW >= 256) ? 2U : 1U;
+        drawClippedSingleLineText(matrix, formattedHeadline, startX, tickerY, 0, mW, 0xFFFF, tickerScale);
     }
 
     // 2. Clear Header Bar area to occlude any scrolling text
@@ -1073,11 +1024,8 @@ void GNewsEngine::renderCompact(EngineContext* context, const char* category, ui
 
     // 1. Headline content area rendered FIRST
     if (!renderCommonBodyModes(context, 2, bodyY, divY, lineSpacing, linesPerPage)) {
-        matrix->setTextColor(0xFFFF);
-        int startX = 2 - scrollPixelOffset;
-        matrix->setCursor(startX, 15);
-        matrix->setTextWrap(false);
-        matrix->print(formattedHeadline);
+        const int startX = 2 - scrollPixelOffset;
+        drawClippedSingleLineText(matrix, formattedHeadline, startX, 15, 0, mW, 0xFFFF, 1U);
     }
 
     // 2. Clear Header Bar area to occlude any scrolling text
@@ -1126,14 +1074,11 @@ void GNewsEngine::renderVertical(EngineContext* context, const char* category, u
 
     // 1. Headline content area rendered FIRST
     if (!renderCommonBodyModes(context, 2, bodyY, 21, lineSpacing, linesPerPage)) {
-        int startX = mW - scrollPixelOffset;
-        matrix->setTextColor(0xFFFF);
-        matrix->setTextWrap(false);
+        const int startX = mW - scrollPixelOffset;
         for (size_t i = 0; i < cachedLineCount; i++) {
-            int y = bodyY + (int)i * lineSpacing;
+            const int y = bodyY + static_cast<int>(i) * lineSpacing;
             if (y + 8 > 22 && y < mH) {
-                matrix->setCursor(startX, y);
-                matrix->print(cachedDisplayLines[i]);
+                drawClippedSingleLineText(matrix, cachedDisplayLines[i], startX, y, 0, mW, 0xFFFF, 1U);
             }
         }
     }

@@ -7,9 +7,10 @@
 #include <esp_heap_caps.h>
 #endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(UNIT_TEST)
-#if __has_include(<soc/gdma_struct.h>) && __has_include(<soc/gdma_channel.h>) && __has_include(<hal/dma_types.h>)
+#if __has_include(<soc/gdma_struct.h>) && __has_include(<soc/gdma_channel.h>) && __has_include(<soc/lcd_cam_struct.h>) && __has_include(<hal/dma_types.h>)
 #include <soc/gdma_struct.h>
 #include <soc/gdma_channel.h>
+#include <soc/lcd_cam_struct.h>
 #include <soc/soc.h>
 #include <hal/dma_types.h>
 #define ARCADEMATRIX_HAS_S3_GDMA_SCAN_PROBE 1
@@ -467,14 +468,19 @@ void FastMatrixPanel::setBuffering(bool doubleBuffered) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 int FastMatrixPanel::getActiveDmaScanRow() {
 #if defined(ARCADEMATRIX_HAS_S3_GDMA_SCAN_PROBE)
-    if (!initialized || m_double || ROWS_PER_FRAME == 0) {
+    if (!initialized || m_double || ROWS_PER_FRAME == 0 || LCD_CAM.lcd_user.lcd_start == 0U) {
         return -1;
     }
 
     if (m_gdmaTxChan < 0 || m_gdmaTxChan >= 5) {
         for (int ch = 0; ch < 5; ++ch) {
-            if (GDMA.channel[ch].out.peri_sel.sel == SOC_GDMA_TRIG_PERIPH_LCD0 &&
-                GDMA.channel[ch].out.link.park == 0U) {
+            if (GDMA.channel[ch].out.peri_sel.sel != SOC_GDMA_TRIG_PERIPH_LCD0) {
+                continue;
+            }
+            const uintptr_t probeAddr = (GDMA.channel[ch].out.dscr_bf0 != 0U)
+                ? static_cast<uintptr_t>(GDMA.channel[ch].out.dscr_bf0)
+                : static_cast<uintptr_t>(GDMA.channel[ch].out.dscr);
+            if (probeAddr != 0U && esp_ptr_dma_capable(reinterpret_cast<const void*>(probeAddr))) {
                 m_gdmaTxChan = static_cast<int8_t>(ch);
                 break;
             }
@@ -485,8 +491,7 @@ int FastMatrixPanel::getActiveDmaScanRow() {
     }
 
     const int ch = static_cast<int>(m_gdmaTxChan);
-    if (GDMA.channel[ch].out.peri_sel.sel != SOC_GDMA_TRIG_PERIPH_LCD0 ||
-        GDMA.channel[ch].out.link.park != 0U) {
+    if (GDMA.channel[ch].out.peri_sel.sel != SOC_GDMA_TRIG_PERIPH_LCD0) {
         m_gdmaTxChan = -1;
         m_gdmaTotalDescs = 0;
         return -1;

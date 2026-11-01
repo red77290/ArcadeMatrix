@@ -1,4 +1,5 @@
 #include "GNewsService.h"
+#include "../engines/GNewsTickerUtils.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
 #include "../core/NetworkBudget.h"
@@ -120,23 +121,28 @@ void GNewsService::purgeArticles() {
 
 uint16_t GNewsService::getCategoryColor(const char* category) {
     if (!category) return 0xDEFB; // Cool white
-    String cat = String(category);
-    cat.toLowerCase();
+    char lower[32];
+    size_t i = 0;
+    while (i < sizeof(lower) - 1 && category[i] != '\0') {
+        const char c = category[i];
+        lower[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
+        ++i;
+    }
+    lower[i] = '\0';
 
-    if (cat.indexOf("world") >= 0 || cat.indexOf("nation") >= 0 || cat.indexOf("break") >= 0) {
-        return 0xF949; // Crimson Red
-    } else if (cat.indexOf("tech") >= 0) {
-        return 0x073F; // Electric Cyan
-    } else if (cat.indexOf("bus") >= 0 || cat.indexOf("fin") >= 0 || cat.indexOf("econ") >= 0) {
-        return 0x072E; // Emerald Green
-    } else if (cat.indexOf("sport") >= 0) {
-        return 0xFC80; // Amber Orange
-    } else if (cat.indexOf("sci") >= 0) {
-        return 0xD01F; // Cosmic Purple
-    } else if (cat.indexOf("ent") >= 0 || cat.indexOf("art") >= 0) {
-        return 0xFA10; // Hot Pink
-    } else if (cat.indexOf("heal") >= 0) {
-        return 0x1F56; // Seafoam Teal
+    static constexpr struct { const char* token; uint16_t color; } kRules[] = {
+        {"world", 0xF949}, {"nation", 0xF949}, {"break", 0xF949}, // Crimson Red
+        {"tech",  0x073F},                                        // Electric Cyan
+        {"bus",   0x072E}, {"fin",    0x072E}, {"econ",  0x072E}, // Emerald Green
+        {"sport", 0xFC80},                                        // Amber Orange
+        {"sci",   0xD01F},                                        // Cosmic Purple
+        {"ent",   0xFA10}, {"art",    0xFA10},                    // Hot Pink
+        {"heal",  0x1F56},                                        // Seafoam Teal
+    };
+    for (const auto& r : kRules) {
+        if (strstr(lower, r.token) != nullptr) {
+            return r.color;
+        }
     }
     return 0xDEFB; // Crisp Cool White
 }
@@ -170,14 +176,19 @@ static String cleanNewsText(const char* raw) {
         {"&iuml;", "\xC3\xAF"}, {"&ucirc;", "\xC3\xBB"}, {"&ugrave;", "\xC3\xB9"},
         {"&Eacute;", "\xC3\x89"}, {"&Egrave;", "\xC3\x88"}, {"&Agrave;", "\xC3\x80"},
         {"&Ccedil;", "\xC3\x87"}, {"&#233;", "\xC3\xA9"}, {"&#232;", "\xC3\xA8"},
-        {"&#224;", "\xC3\xA0"}, {"&#231;", "\xC3\xA7"}, {"&#234;", "\xC3\xAA"}
+        {"&#224;", "\xC3\xA0"}, {"&#231;", "\xC3\xA7"}, {"&#234;", "\xC3\xAA"},
+        {"&#10;", " "}, {"&#13;", " "}
     };
     if (s.indexOf('&') >= 0) {
         for (const auto& e : kEntities) {
             s.replace(e.entity, e.repl);
         }
     }
-    s.trim();
+    if (s.length() > 0) {
+        char* buf = s.begin();
+        GNewsTickerUtils::collapseWhitespaceInPlace(buf);
+        s.remove(strlen(buf));
+    }
     return s;
 }
 

@@ -90,7 +90,7 @@ private:
     uint32_t sourceMarqueeOffset = 0;
     ScrollState scrollState = ScrollState::PauseStart;
     uint32_t stateStartTime = 0;
-    uint32_t lastUpdateTime = 0;
+    uint32_t m_scrollRemUs = 0;
     uint32_t lastScrollTick = 0;
     uint32_t lastSourceTick = 0;
     uint32_t lastArticleSwitchTime = 0;
