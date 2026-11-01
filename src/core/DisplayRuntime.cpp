@@ -179,54 +179,18 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         return; // Zero lifecycle, sessionId and stack preserved (internal runtime refresh)
     }
 
-    // CASE 2: PREEMPTION (preemptive && not rotation && new source)
-    if (decision.preemptive && decision.sourceId != DisplaySourceId::ROTATION && !sameSource) {
-        if (m_preemptionDepth >= MAX_PREEMPTION_DEPTH) {
-            LOGW("DisplayRuntime", "Preemption stack full (%u), rejecting preemption", (unsigned)m_preemptionDepth);
-            return; // Deterministic rejection: protect baseline session without corruption
-        }
-        if (oldEngine && !sameEngine) {
-            oldEngine->pause();
-        }
-        m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
-            m_session.engineHandle,
-            m_session.sourceId,
-            m_session.priority,
-            m_session.requestId,
-            m_session.sessionId,
-            m_session.startedAtMs,
-            m_session.allowsOverlay,
-            m_session.isRealtime,
-            m_session.requiresClear,
-            m_session.lifecycle
-        };
-        if (targetEngine && !sameEngine) {
-            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
-            targetEngine->activate();
-        }
-        
-        m_session.sessionId = ++m_sessionCounter;
-        m_session.sourceId = decision.sourceId;
-        m_session.priority = decision.priority;
-        m_session.engineHandle = decision.engineHandle;
-        m_session.requestId = decision.requestId;
-        m_session.startedAtMs = millis();
-        m_session.activeEngine = targetEngine;
-        m_session.requiresClear = decision.needsClear;
-        m_session.allowsOverlay = decision.allowsOverlay;
-        m_session.isRealtime = decision.isRealtime;
-        m_session.lifecycle = decision.lifecycle;
-        m_session.lastTransitionMode = TransitionMode::PREEMPT;
-        return;
-    }
-
-    // CASE 3: RESUME (Matches parent in PreemptionStack)
+    // CASE 2: RESUME (Matches stacked parent in PreemptionStack before evaluating new preemption)
     int parentIdx = -1;
     for (int i = (int)m_preemptionDepth - 1; i >= 0; --i) {
-        if (m_preemptionStack[i].sourceId == decision.sourceId &&
-            (decision.sourceId == DisplaySourceId::ROTATION || m_preemptionStack[i].handle == decision.engineHandle)) {
-            parentIdx = i;
-            break;
+        if (m_preemptionStack[i].sourceId == decision.sourceId) {
+            const bool matchesParent =
+                (decision.sourceId == DisplaySourceId::ROTATION) ||
+                (m_preemptionStack[i].handle == decision.engineHandle &&
+                 m_preemptionStack[i].requestId == decision.requestId);
+            if (matchesParent) {
+                parentIdx = i;
+                break;
+            }
         }
     }
 
@@ -269,6 +233,55 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         m_session.isRealtime = parent.isRealtime;
         m_session.lifecycle = parent.lifecycle;
         m_session.lastTransitionMode = TransitionMode::RESUME;
+        return;
+    }
+
+    // CASE 3: PREEMPTION (preemptive && not rotation && new source && outgoing session still active)
+    // If the outgoing non-rotation session was already cancelled in DisplayArbiter (e.g. peer handoff
+    // between GifEngine marquee and MessageEngine fallback banner), fall through to CASE 4 (REPLACE)
+    // so cancelled sessions are deactivated rather than leaked onto PreemptionStack.
+    const bool outgoingStillActive =
+        (m_arbiter == nullptr) ||
+        (m_session.sourceId == DisplaySourceId::ROTATION) ||
+        m_arbiter->hasActiveSource(m_session.sourceId);
+
+    if (decision.preemptive && decision.sourceId != DisplaySourceId::ROTATION && !sameSource && outgoingStillActive) {
+        if (m_preemptionDepth >= MAX_PREEMPTION_DEPTH) {
+            LOGW("DisplayRuntime", "Preemption stack full (%u), rejecting preemption", (unsigned)m_preemptionDepth);
+            return; // Deterministic rejection: protect baseline session without corruption
+        }
+        if (oldEngine && !sameEngine) {
+            oldEngine->pause();
+        }
+        m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
+            m_session.engineHandle,
+            m_session.sourceId,
+            m_session.priority,
+            m_session.requestId,
+            m_session.sessionId,
+            m_session.startedAtMs,
+            m_session.allowsOverlay,
+            m_session.isRealtime,
+            m_session.requiresClear,
+            m_session.lifecycle
+        };
+        if (targetEngine && !sameEngine) {
+            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
+            targetEngine->activate();
+        }
+        
+        m_session.sessionId = ++m_sessionCounter;
+        m_session.sourceId = decision.sourceId;
+        m_session.priority = decision.priority;
+        m_session.engineHandle = decision.engineHandle;
+        m_session.requestId = decision.requestId;
+        m_session.startedAtMs = millis();
+        m_session.activeEngine = targetEngine;
+        m_session.requiresClear = decision.needsClear;
+        m_session.allowsOverlay = decision.allowsOverlay;
+        m_session.isRealtime = decision.isRealtime;
+        m_session.lifecycle = decision.lifecycle;
+        m_session.lastTransitionMode = TransitionMode::PREEMPT;
         return;
     }
 

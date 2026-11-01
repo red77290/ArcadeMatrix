@@ -172,6 +172,16 @@ public:
     // Core 1 consumer: drains command queue and evaluates highest priority decision with ZERO mutex and ZERO allocations
     DisplayDecision evaluate();
 
+    // Core 1 O(1) read-only check on local arbiter slots (ZERO mutex, ZERO allocation)
+    bool hasActiveSource(DisplaySourceId sourceId) const {
+        for (size_t i = 0; i < MAX_REQUESTS; ++i) {
+            if (slots[i].active && slots[i].request.sourceId == sourceId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static DisplaySourceId parseSourceId(const String& name);
     
     /**

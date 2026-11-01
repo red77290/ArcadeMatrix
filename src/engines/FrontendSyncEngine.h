@@ -208,6 +208,7 @@ public:
         String name;
     };
     static String cleanSystemName(const String& rawSystem);
+    static String formatDisplayTitle(const String& rawName);
     static std::vector<SystemVariant> getSystemNameVariants(const String& systemId);
     static std::vector<SystemVariant> getSystemNameVariantsMapped(const std::map<String, std::vector<String>>& mappings, const String& systemId);
     static std::map<String, std::vector<String>> loadMappingsFromSD();
@@ -243,6 +244,13 @@ private:
     bool m_remoteSyncDispatched = false;
     bool m_mappingsLoaded = false;
     unsigned long m_lastBrokerCacheCheckMs = 0;
+
+    static constexpr size_t MISSING_ART_CACHE_SIZE = 32;
+    uint32_t m_missingGameArtHashes[MISSING_ART_CACHE_SIZE] = {0};
+    uint8_t m_missingGameArtWriteIdx = 0;
+    static uint32_t hashArtKey(const String& folder, const String& name);
+    bool isMissingGameArtCached(const String& folder, const String& name) const;
+    void recordMissingGameArt(const String& folder, const String& name);
 
     std::atomic<bool> isReconnecting{false};
     std::atomic<bool> stopReconnectRequested{false};
@@ -348,5 +356,11 @@ private:
 
     void handleGameEvent(const String& jsonPayload, uint32_t reqId);
     void handleSystemEvent(const String& systemId, uint32_t reqId);
-    bool downloadPixelcadeArt(const String& folder, const String& name, String& outPath, uint32_t reqId);
+    bool downloadPixelcadeArt(
+        const String& folder,
+        const String& name,
+        String& outPath,
+        uint32_t reqId,
+        bool* outDefinitiveMiss = nullptr
+    );
 };

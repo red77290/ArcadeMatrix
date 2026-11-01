@@ -875,7 +875,7 @@ bool FrontendSyncEngine::loop() {
         }
     } else if (!hasReceivedAnyEvent && (!waitingDisplayed || (message && !message->isActive())) && message) {
         waitingDisplayed = true;
-        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
+        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0, 0 };
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }
@@ -1734,28 +1734,44 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         return;
     }
 
-    LOGI("RetroFrontend", "No cached artwork for %s, displaying text title and downloading...", game.c_str());
+    LOGI("RetroFrontend", "No cached artwork for %s, displaying cyan game title banner...", game.c_str());
+    if (gif) {
+        gif->stop();
+    }
     if (message) {
-        String clean = cleanSystemName(game);
-        clean.replace("-", " ");
-        clean.replace("_", " ");
-        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
+        String titleSource = (titleRaw[0] != '\0') ? String(titleRaw) : game;
+        String clean = formatDisplayTitle(titleSource);
+        if (clean.length() == 0) {
+            clean = "Unknown";
+        }
+        String textToShow = (clean.length() > 10) ? (String(" ") + clean + " ") : clean;
+        MessageConfig cfg = { textToShow, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0, 0 };
         message->displayMessage(cfg);
+    }
+
+    if (isMissingGameArtCached(folder, game)) {
+        LOGD("RetroFrontend", "Game marquee %s/%s is in negative cache; keeping cyan game title banner.", folder.c_str(), game.c_str());
+        return;
     }
 
     String downloadedPath = "";
     bool downloaded = false;
+    bool allDefinitive404 = true;
     for (const String& nameVar : nameVariants) {
-        if (downloadPixelcadeArt(folder, nameVar + ".png", downloadedPath, reqId)) {
+        bool missPng = false;
+        if (downloadPixelcadeArt(folder, nameVar + ".png", downloadedPath, reqId, &missPng)) {
             downloaded = true;
             break;
         }
+        if (!missPng) allDefinitive404 = false;
         if (reqId != currentRequestId) return;
 
-        if (downloadPixelcadeArt(folder, nameVar + ".gif", downloadedPath, reqId)) {
+        bool missGif = false;
+        if (downloadPixelcadeArt(folder, nameVar + ".gif", downloadedPath, reqId, &missGif)) {
             downloaded = true;
             break;
         }
+        if (!missGif) allDefinitive404 = false;
         if (reqId != currentRequestId) return;
     }
 
@@ -1771,16 +1787,16 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         return;
     }
 
-    // Fallback: If no game marquee is found, fallback to system marquee (e.g. /console/snes.png)
-    if (cleanSystem.length() > 0) {
-        LOGI("RetroFrontend", "No game marquee found for %s (%s), falling back to system marquee...", game.c_str(), cleanSystem.c_str());
-        handleSystemEvent(cleanSystem, reqId);
+    if (allDefinitive404) {
+        recordMissingGameArt(folder, game);
     }
+    LOGI("RetroFrontend", "No game marquee found on Pixelcade for %s (%s), keeping cyan game title banner.", game.c_str(), cleanSystem.c_str());
 }
 
 void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqId) {
     isGamePlaying = true;
     waitingDisplayed = false;
+    m_activeMarqueePath[0] = '\0';
     if (message) message->deactivate();
 
     if (!m_mappingsLoaded) {
@@ -1831,13 +1847,17 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
         return;
     }
 
-    LOGI("RetroFrontend", "No cached artwork for system %s, displaying text title and downloading...", systemId.c_str());
+    LOGI("RetroFrontend", "No cached artwork for system %s, displaying cyan system title and downloading...", systemId.c_str());
+    if (gif) {
+        gif->stop();
+    }
     if (message) {
-        String clean = cleanSystemName(systemId);
-        clean.replace("-", " ");
-        clean.replace("_", " ");
-        clean.toUpperCase();
-        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
+        String clean = formatDisplayTitle(systemId);
+        if (clean.length() == 0) {
+            clean = "Unknown";
+        }
+        String textToShow = (clean.length() > 10) ? (String(" ") + clean + " ") : clean;
+        MessageConfig cfg = { textToShow, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0, 0 };
         message->displayMessage(cfg);
     }
 
@@ -1903,6 +1923,79 @@ String FrontendSyncEngine::cleanSystemName(const String& rawSystem) {
         }
     }
     return s;
+}
+
+String FrontendSyncEngine::formatDisplayTitle(const String& rawName) {
+    String stripped = cleanSystemName(rawName);
+    int idxParen = stripped.indexOf(" (");
+    if (idxParen > 0) {
+        stripped = stripped.substring(0, idxParen);
+    }
+    int idxBrack = stripped.indexOf(" [");
+    if (idxBrack > 0) {
+        stripped = stripped.substring(0, idxBrack);
+    }
+    stripped.replace("-", " ");
+    stripped.replace("_", " ");
+    stripped.trim();
+
+    String out;
+    out.reserve(stripped.length());
+    bool prevSpace = true;
+    for (size_t i = 0; i < stripped.length(); ++i) {
+        char c = stripped[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            if (!prevSpace) {
+                out += ' ';
+                prevSpace = true;
+            }
+        } else {
+            if (prevSpace && c >= 'a' && c <= 'z') {
+                c = static_cast<char>(c - ('a' - 'A'));
+            }
+            out += c;
+            prevSpace = false;
+        }
+    }
+    out.trim();
+    return out;
+}
+
+uint32_t FrontendSyncEngine::hashArtKey(const String& folder, const String& name) {
+    uint32_t h = 2166136261UL;
+    auto feedChar = [&](unsigned char ch) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<unsigned char>(ch + ('a' - 'A'));
+        }
+        h ^= ch;
+        h *= 16777619UL;
+    };
+    for (size_t i = 0; i < folder.length(); ++i) {
+        feedChar(static_cast<unsigned char>(folder[i]));
+    }
+    feedChar('/');
+    for (size_t i = 0; i < name.length(); ++i) {
+        feedChar(static_cast<unsigned char>(name[i]));
+    }
+    return (h == 0U) ? 1U : h;
+}
+
+bool FrontendSyncEngine::isMissingGameArtCached(const String& folder, const String& name) const {
+    const uint32_t needle = hashArtKey(folder, name);
+    for (size_t i = 0; i < MISSING_ART_CACHE_SIZE; ++i) {
+        if (m_missingGameArtHashes[i] == needle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void FrontendSyncEngine::recordMissingGameArt(const String& folder, const String& name) {
+    if (isMissingGameArtCached(folder, name)) {
+        return;
+    }
+    m_missingGameArtHashes[m_missingGameArtWriteIdx % MISSING_ART_CACHE_SIZE] = hashArtKey(folder, name);
+    m_missingGameArtWriteIdx = static_cast<uint8_t>((m_missingGameArtWriteIdx + 1U) % MISSING_ART_CACHE_SIZE);
 }
 
 #include "BuiltinSystemMaps.h"
@@ -2274,7 +2367,16 @@ String FrontendSyncEngine::mapSystemToPixelcadeFolder(const String& systemId) {
     return systemId;
 }
 
-bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String& filename, String& outPath, uint32_t reqId) {
+bool FrontendSyncEngine::downloadPixelcadeArt(
+    const String& folder,
+    const String& filename,
+    String& outPath,
+    uint32_t reqId,
+    bool* outDefinitiveMiss
+) {
+    if (outDefinitiveMiss) {
+        *outDefinitiveMiss = false;
+    }
 
     String baseUrl = "https://raw.githubusercontent.com/red77290/pixelcade/master/" + folder + "/";
     // URL encode the filename spaces if any
@@ -2386,6 +2488,9 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
         if (response.ok()) {
             downloaded = writeStreamToSd(response.stream(), response.contentLength(), dirPath, savePath);
         } else {
+            if (outDefinitiveMiss && response.statusCode() == 404) {
+                *outDefinitiveMiss = true;
+            }
             LOGW("RetroFrontend", "HTTPS GET failed with code %d (%s)", response.statusCode(), response.errorMessage());
         }
     } else {
@@ -2397,6 +2502,8 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
             int httpCode = http.GET();
             if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
                 downloaded = writeStreamToSd(*http.getStreamPtr(), http.getSize(), dirPath, savePath);
+            } else if (outDefinitiveMiss && httpCode == HTTP_CODE_NOT_FOUND) {
+                *outDefinitiveMiss = true;
             }
             http.end();
             plainClient.stop();

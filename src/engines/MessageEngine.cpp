@@ -28,6 +28,18 @@ void MessageEngine::deactivate() {
     active = false;
 }
 
+void MessageEngine::resume() {
+    lastUpdate = millis();
+}
+
+MessageEngine::ScrollDir MessageEngine::parseScrollDir(const String& dir) {
+    if (dir.equalsIgnoreCase("rtl") || dir.equalsIgnoreCase("left")) return ScrollDir::RTL;
+    if (dir.equalsIgnoreCase("ltr") || dir.equalsIgnoreCase("right")) return ScrollDir::LTR;
+    if (dir.equalsIgnoreCase("ttb") || dir.equalsIgnoreCase("down")) return ScrollDir::TTB;
+    if (dir.equalsIgnoreCase("btt") || dir.equalsIgnoreCase("up")) return ScrollDir::BTT;
+    return ScrollDir::STATIC;
+}
+
 void MessageEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentMsg.text = config->getString("text", "ArcadeMatrix");
@@ -81,6 +93,9 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
 
     int matrixW = matrixDisplay ? matrixDisplay->width() : 128;
     int matrixH = matrixDisplay ? matrixDisplay->height() : 64;
+    m_lastSurfaceW = matrixW;
+    m_lastSurfaceH = matrixH;
+    m_configuredDir = parseScrollDir(currentMsg.direction);
 
     if (customFont != nullptr && matrixDisplay != nullptr) {
         int16_t x1 = 0, y1 = 0;
@@ -93,7 +108,7 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
         baselineOffset = (y1 < 0) ? -y1 : textHeight;
 
         // If static text overflows display width with custom font, fall back to default font
-        if ((currentMsg.direction == "static" || currentMsg.direction == "none") && textWidth > matrixW) {
+        if (m_configuredDir == ScrollDir::STATIC && textWidth > matrixW) {
             customFont = nullptr;
             textWidth = currentMsg.text.length() * 6 * currentMsg.size;
             textHeight = 8 * currentMsg.size;
@@ -105,24 +120,27 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
         baselineOffset = 0;
     }
 
-    // If static text still exceeds display width (e.g. 64x32 matrix), auto-switch to scrolling
-    if ((currentMsg.direction == "static" || currentMsg.direction == "none") && textWidth > matrixW) {
+    // If static text still exceeds display width (e.g. 64x32 or rotated portrait matrix), auto-switch to scrolling
+    m_effectiveDir = (m_configuredDir == ScrollDir::STATIC && textWidth > matrixW)
+        ? ScrollDir::RTL
+        : m_configuredDir;
+    if (m_effectiveDir == ScrollDir::RTL && m_configuredDir == ScrollDir::STATIC) {
         currentMsg.direction = "rtl";
     }
 
-    if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
+    if (m_effectiveDir == ScrollDir::RTL) {
         cursorX = (float)matrixW;
         cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
-    } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
+    } else if (m_effectiveDir == ScrollDir::LTR) {
         cursorX = -(float)textWidth;
         cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
-    } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
+    } else if (m_effectiveDir == ScrollDir::TTB) {
         cursorX = (float)((matrixW - textWidth) / 2);
         cursorY = (float)(-textHeight + baselineOffset);
-    } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
+    } else if (m_effectiveDir == ScrollDir::BTT) {
         cursorX = (float)((matrixW - textWidth) / 2);
         cursorY = (float)(matrixH + baselineOffset);
-    } else if (currentMsg.direction == "static" || currentMsg.direction == "none") {
+    } else {
         cursorX = (float)((matrixW - textWidth) / 2);
         cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     }
@@ -151,14 +169,30 @@ void MessageEngine::update(EngineContext* context) {
     if (!matrix) return;
     matrixDisplay = matrix;
 
+    const int curW = matrix->width();
+    const int curH = matrix->height();
+    if (curW != m_lastSurfaceW || curH != m_lastSurfaceH) {
+        m_lastSurfaceW = curW;
+        m_lastSurfaceH = curH;
+        if (m_configuredDir == ScrollDir::STATIC) {
+            const ScrollDir desired = (textWidth > curW) ? ScrollDir::RTL : ScrollDir::STATIC;
+            if (desired != m_effectiveDir) {
+                m_effectiveDir = desired;
+                if (m_effectiveDir == ScrollDir::RTL) {
+                    cursorX = (float)curW;
+                }
+            }
+        }
+    }
+
     if (currentMsg.timeoutSeconds > 0 && millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
         active = false;
         return;
     }
 
-    if (currentMsg.direction == "static" || currentMsg.direction == "none") {
-        cursorX = (float)((matrix->width() - textWidth) / 2);
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
+    if (m_effectiveDir == ScrollDir::STATIC) {
+        cursorX = (float)((curW - textWidth) / 2);
+        cursorY = (float)(((curH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
         lastUpdate = millis();
         return;
     }
@@ -172,22 +206,22 @@ void MessageEngine::update(EngineContext* context) {
     float speedMs = (float)max(1, currentMsg.speed);
     float movePx = dt / speedMs;
 
-    if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
+    if (m_effectiveDir == ScrollDir::RTL) {
         cursorX -= movePx;
-        if (cursorX < -(float)textWidth) cursorX = (float)matrix->width();
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
-    } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
+        if (cursorX < -(float)textWidth) cursorX = (float)curW;
+        cursorY = (float)(((curH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
+    } else if (m_effectiveDir == ScrollDir::LTR) {
         cursorX += movePx;
-        if (cursorX > (float)matrix->width()) cursorX = -(float)textWidth;
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
-    } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
+        if (cursorX > (float)curW) cursorX = -(float)textWidth;
+        cursorY = (float)(((curH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
+    } else if (m_effectiveDir == ScrollDir::TTB) {
         cursorY += movePx;
-        if (cursorY > (float)(matrix->height() + baselineOffset)) cursorY = (float)(-textHeight + baselineOffset);
-        cursorX = (float)((matrix->width() - textWidth) / 2);
-    } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
+        if (cursorY > (float)(curH + baselineOffset)) cursorY = (float)(-textHeight + baselineOffset);
+        cursorX = (float)((curW - textWidth) / 2);
+    } else if (m_effectiveDir == ScrollDir::BTT) {
         cursorY -= movePx;
-        if (cursorY < (float)(-textHeight + baselineOffset)) cursorY = (float)(matrix->height() + baselineOffset);
-        cursorX = (float)((matrix->width() - textWidth) / 2);
+        if (cursorY < (float)(-textHeight + baselineOffset)) cursorY = (float)(curH + baselineOffset);
+        cursorX = (float)((curW - textWidth) / 2);
     }
 }
 

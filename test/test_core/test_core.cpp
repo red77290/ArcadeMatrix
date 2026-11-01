@@ -3895,6 +3895,90 @@ void test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts(void) {
     }
 }
 
+/**
+ * @brief Verifies FrontendSync display title formatting, peer GIF<->MQTT handoff without PreemptionStack
+ *        saturation, and repeated InGameShowcase alternating preemption/resume cycles returning to cyan banner.
+ */
+void test_frontend_sync_title_and_peer_marquee_banner_handoff(void) {
+    TEST_ASSERT_EQUAL_STRING(
+        "Super Mario Bros",
+        FrontendSyncEngine::formatDisplayTitle("super-mario_bros").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "Super Mario World",
+        FrontendSyncEngine::formatDisplayTitle("Super Mario World (USA) [!]").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "STREET FIGHTER II",
+        FrontendSyncEngine::formatDisplayTitle("STREET_FIGHTER_II").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "Metal Slug X",
+        FrontendSyncEngine::formatDisplayTitle("Metal Slug X").c_str()
+    );
+
+    DisplayArbiter arbiter;
+    DisplayRuntime runtime;
+    runtime.begin(nullptr, nullptr, nullptr, nullptr, nullptr, &arbiter);
+
+    TrackingMockEngine rotEng("rot");
+    TrackingMockEngine gifEng("gif");
+    TrackingMockEngine msgEng("msg");
+    TrackingMockEngine inGameEng("ingame");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::GIF, &gifEng, EngineHandle("gifs", "gifs_main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &msgEng, EngineHandle("message", "message_main"));
+    runtime.registerSourceEngine(DisplaySourceId::INGAME_SHOWCASE, &inGameEng, EngineHandle("ingame_showcase", "ingame_showcase_main"));
+
+    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false, 1, EngineHandle("clock", "main")};
+    arbiter.submitRequest(reqRot);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+
+    // Simulate scrolling across 10 games alternating between cached marquee (GIF) and missing marquee (MQTT cyan banner)
+    for (int i = 0; i < 10; ++i) {
+        if ((i % 2) == 0) {
+            arbiter.cancelRequest(DisplaySourceId::GIF);
+            DisplayRequest reqMsg{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(100 + i), EngineHandle("message", "message_main")};
+            arbiter.submitRequest(reqMsg);
+            runtime.transitionSession(arbiter.evaluate());
+            TEST_ASSERT_EQUAL_PTR(&msgEng, runtime.getCurrentSession().activeEngine);
+        } else {
+            arbiter.cancelRequest(DisplaySourceId::MQTT);
+            DisplayRequest reqGif{DisplaySourceId::GIF, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(100 + i), EngineHandle("gifs", "gifs_main")};
+            arbiter.submitRequest(reqGif);
+            runtime.transitionSession(arbiter.evaluate());
+            TEST_ASSERT_EQUAL_PTR(&gifEng, runtime.getCurrentSession().activeEngine);
+        }
+        // Only baseline ROTATION should remain on PreemptionStack (depth == 1)
+        TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    }
+
+    // Launch a game with missing Pixelcade marquee -> cyan banner (MQTT) active, then 6 Alternating InGameShowcase cycles
+    arbiter.cancelRequest(DisplaySourceId::GIF);
+    DisplayRequest reqCyanBanner{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 500, EngineHandle("message", "message_main")};
+    arbiter.submitRequest(reqCyanBanner);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL_PTR(&msgEng, runtime.getCurrentSession().activeEngine);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    for (int cycle = 0; cycle < 6; ++cycle) {
+        DisplayRequest reqInGame{DisplaySourceId::INGAME_SHOWCASE, DisplayPriority::INGAME_SHOWCASE, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(600 + cycle), EngineHandle("ingame_showcase", "ingame_showcase_main")};
+        arbiter.submitRequest(reqInGame);
+        runtime.transitionSession(arbiter.evaluate());
+        TEST_ASSERT_EQUAL_PTR(&inGameEng, runtime.getCurrentSession().activeEngine);
+        TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+        // Showcase cycle finishes / yields -> resumes cyan game title banner cleanly at depth == 1
+        arbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
+        runtime.transitionSession(arbiter.evaluate());
+        TEST_ASSERT_EQUAL_PTR(&msgEng, runtime.getCurrentSession().activeEngine);
+        TEST_ASSERT_EQUAL(TransitionMode::RESUME, runtime.getCurrentSession().lastTransitionMode);
+        TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -4031,6 +4115,7 @@ void setup() {
     RUN_TEST(test_showcase_and_ingame_odd_seqlock_skip_and_rearm);
     RUN_TEST(test_dmdz_http_stream_paths_ring_buffer_and_esp32dev_8bit_admission);
     RUN_TEST(test_dmdz_v2_lossless_decoder_and_spsc_ring_contracts);
+    RUN_TEST(test_frontend_sync_title_and_peer_marquee_banner_handoff);
 
     UNITY_END();
 }

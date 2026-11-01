@@ -26,6 +26,7 @@ public:
     void render(EngineContext* context) override;
     void activate() override;
     void deactivate() override;
+    void resume() override;
     void onConfigChanged(const EngineConfig* engineConfig) override;
     
     void displayMessage(const MessageConfig& config);
@@ -42,12 +43,24 @@ public:
     void setCustomFont(GFXfont* font);
 
 private:
+    enum class ScrollDir : uint8_t {
+        RTL = 0,
+        LTR,
+        TTB,
+        BTT,
+        STATIC
+    };
+    static ScrollDir parseScrollDir(const String& dir);
 
     MessageConfig currentMsg;
     MessageConfig pendingMsg;
     volatile bool pendingFlag = false;
     portMUX_TYPE pendingMux = portMUX_INITIALIZER_UNLOCKED;
     bool active;
+    ScrollDir m_configuredDir = ScrollDir::RTL;
+    ScrollDir m_effectiveDir = ScrollDir::RTL;
+    int m_lastSurfaceW = 0;
+    int m_lastSurfaceH = 0;
     GFXfont* customFont;
     BitmapFontLoader fontLoader;
     
