@@ -199,7 +199,8 @@ public:
         const String& gameQuery,
         uint16_t width,
         uint16_t height,
-        const String& lang
+        const String& lang,
+        const String& fallbackQuery = ""
     );
 
     struct SystemVariant {
@@ -239,6 +240,7 @@ private:
     uint16_t m_activeBrokerPort = 1883;
     char m_activeMarqueePath[128] = "";
     bool m_wasShowingInGame = false;
+    bool m_remoteSyncDispatched = false;
     bool m_mappingsLoaded = false;
     unsigned long m_lastBrokerCacheCheckMs = 0;
 
@@ -282,8 +284,10 @@ private:
     struct InGameJobSlot {
         char system[48] = "";
         char game[128] = "";
+        char title[96] = "";
         uint32_t token = 0;
         bool active = false;
+        bool cancelRemote = false;
     };
 
     std::atomic<uint32_t> m_cfgSeq{0};
@@ -310,8 +314,12 @@ private:
     void stopReconnectTask();
     void applyBrokerTransport(bool fromShowcase, const char* host, uint16_t port);
     void syncWorkerConfigSlot();
-    void startInGameShowcaseSession(const String& cleanSystem, const String& rawGame);
-    void cancelInGameShowcaseSession();
+    void startInGameShowcaseSession(
+        const String& cleanSystem,
+        const String& rawGame,
+        const String& rawTitle = ""
+    );
+    void cancelInGameShowcaseSession(bool allowWorkerSpawn = true);
     bool ensureStreamScratchAllocated();
     void freeStreamBuffersSafely();
     bool streamReadyItemOnce(
@@ -323,10 +331,9 @@ private:
         uint16_t expectedH,
         uint32_t configuredStreamMs
     );
-    static void deleteShowcaseQueueItemHttp(
+    static void deleteAllShowcaseQueueHttp(
         const char* resolvedServerUrl,
-        const char* syncClientId,
-        const char* queueId
+        const char* syncClientId
     );
 
     void reconnect();

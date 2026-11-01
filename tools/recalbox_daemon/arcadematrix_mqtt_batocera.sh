@@ -211,7 +211,12 @@ case "$EVENT" in
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         GAME_CLEAN=$(clean_name "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$5")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: gameStart | Rom: $ROM_PATH | Sys: $SYS_NAME | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;
@@ -262,7 +267,12 @@ case "$EVENT" in
         fi
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$TITLE")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-selected | Rom: $ROM_PATH | Sys: $SYS_NAME | Title: $TITLE | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt_debounced "$PAYLOAD"
         ;;
@@ -296,7 +306,12 @@ case "$EVENT" in
         fi
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$TITLE")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-start | Rom: $ROM_PATH | Sys: $SYS_NAME | Title: $TITLE | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;

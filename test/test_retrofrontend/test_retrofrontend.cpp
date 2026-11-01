@@ -146,6 +146,24 @@ void test_build_showcase_queue_request_json(void) {
     TEST_ASSERT_TRUE(docProfile["async_prepare"].as<bool>());
     TEST_ASSERT_TRUE(docProfile["render_card_in_stream"].as<bool>());
     TEST_ASSERT_FALSE(docProfile.containsKey("card_layout"));
+    TEST_ASSERT_FALSE(docProfile.containsKey("fallback_query"));
+
+    // Distinct human title emitted as fallback_query while identical/case-equal title is deduplicated
+    String fallbackPayload = FrontendSyncEngine::buildShowcaseQueueRequestJson(
+        cfg, "neogeo", "mslugx", 128, 32, "fr", "Metal Slug X"
+    );
+    StaticJsonDocument<1024> docFallback;
+    TEST_ASSERT_FALSE(deserializeJson(docFallback, fallbackPayload));
+    TEST_ASSERT_EQUAL_STRING("mslugx", docFallback["query"] | "");
+    TEST_ASSERT_EQUAL_STRING("Metal Slug X", docFallback["fallback_query"] | "");
+
+    String dedupPayload = FrontendSyncEngine::buildShowcaseQueueRequestJson(
+        cfg, "neogeo", "mslugx", 128, 32, "fr", "  MSLUGX  "
+    );
+    StaticJsonDocument<1024> docDedup;
+    TEST_ASSERT_FALSE(deserializeJson(docDedup, dedupPayload));
+    TEST_ASSERT_EQUAL_STRING("mslugx", docDedup["query"] | "");
+    TEST_ASSERT_FALSE(docDedup.containsKey("fallback_query"));
 
     // Custom presentation overrides on DMD
     cfg.card_style_source = "custom";

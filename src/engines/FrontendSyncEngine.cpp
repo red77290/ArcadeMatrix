@@ -468,7 +468,8 @@ String FrontendSyncEngine::buildShowcaseQueueRequestJson(
     const String& gameQuery,
     uint16_t width,
     uint16_t height,
-    const String& lang
+    const String& lang,
+    const String& fallbackQuery
 ) {
     StaticJsonDocument<1024> doc;
     doc["domain"] = "games";
@@ -481,6 +482,11 @@ String FrontendSyncEngine::buildShowcaseQueueRequestJson(
     String trimmedGame = gameQuery;
     trimmedGame.trim();
     doc["query"] = trimmedGame;
+    String trimmedFallback = fallbackQuery;
+    trimmedFallback.trim();
+    if (trimmedFallback.length() > 0 && !trimmedFallback.equalsIgnoreCase(trimmedGame)) {
+        doc["fallback_query"] = trimmedFallback;
+    }
     doc["mode"] = "play_now";
     doc["mark_seen"] = false;
     doc["async_prepare"] = true;
@@ -609,6 +615,7 @@ void FrontendSyncEngine::begin() {
     m_activeBrokerHost[0] = '\0';
     m_activeMarqueePath[0] = '\0';
     m_wasShowingInGame = false;
+    m_remoteSyncDispatched = false;
     lastReconnectAttempt = 0;
     m_lastBrokerCacheCheckMs = 0;
     m_beginMs = millis();
@@ -688,7 +695,7 @@ void FrontendSyncEngine::reconnectTaskFunc(void* param) {
 }
 
 void FrontendSyncEngine::stop() {
-    cancelInGameShowcaseSession();
+    cancelInGameShowcaseSession(false);
     isGamePlaying = false;
     waitingDisplayed = false;
     hasPendingEvent = false;
@@ -924,11 +931,14 @@ void FrontendSyncEngine::handleMessage(String topic, String msg) {
     }
 
     if (topic.startsWith("dmd_showcase/clients/") && topic.endsWith("/command")) {
+        if (!topic.endsWith("_sync/command")) {
+            return;
+        }
         char hwPrefix[20] = "";
         char hwId[8] = "";
         net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
         snprintf(hwPrefix, sizeof(hwPrefix), "esp32_%s_", hwId);
-        // Only wake up for commands targeting this board's hardware ID (or legacy broadcast slot)
+        // Only wake up for commands targeting this board's companion *_sync slot (or legacy broadcast *_sync slot)
         if ((topic.indexOf(hwPrefix) != -1 || topic.indexOf("/esp32_games_") != -1) &&
             msg.indexOf("\"play_now\"") != -1) {
             m_readyWakeupHint.store(true, std::memory_order_release);
@@ -937,7 +947,16 @@ void FrontendSyncEngine::handleMessage(String topic, String msg) {
     }
 }
 
-void FrontendSyncEngine::startInGameShowcaseSession(const String& cleanSystem, const String& rawGame) {
+void FrontendSyncEngine::startInGameShowcaseSession(
+    const String& cleanSystem,
+    const String& rawGame,
+    const String& rawTitle
+) {
+    if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled || rawGame.length() == 0) {
+        cancelInGameShowcaseSession();
+        return;
+    }
+
     uint32_t tok = m_playSessionToken.fetch_add(1, std::memory_order_acq_rel) + 1;
     m_wantsInGameDisplay.store(false, std::memory_order_release);
     m_readyWakeupHint.store(false, std::memory_order_release);
@@ -945,40 +964,45 @@ void FrontendSyncEngine::startInGameShowcaseSession(const String& cleanSystem, c
         m_inGameEngine->clearFrame();
     }
 
-    if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled || rawGame.length() == 0) {
-        m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
-        m_jobSlot.token = tok;
-        m_jobSlot.active = false;
-        m_jobSlot.system[0] = '\0';
-        m_jobSlot.game[0] = '\0';
-        m_jobSeq.fetch_add(1, std::memory_order_release);
-        return;
-    }
-
+    m_remoteSyncDispatched = true;
     m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
     copySafeCStr(m_jobSlot.system, sizeof(m_jobSlot.system), cleanSystem.c_str());
     copySafeCStr(m_jobSlot.game, sizeof(m_jobSlot.game), rawGame.c_str());
+    copySafeCStr(m_jobSlot.title, sizeof(m_jobSlot.title), rawTitle.c_str());
     m_jobSlot.token = tok;
     m_jobSlot.active = true;
+    m_jobSlot.cancelRemote = false;
     m_jobSeq.fetch_add(1, std::memory_order_release);
 
     m_workerWakeLatch.store(true, std::memory_order_release);
     ensureShowcaseWorkerRunning();
 }
 
-void FrontendSyncEngine::cancelInGameShowcaseSession() {
-    uint32_t tok = m_playSessionToken.fetch_add(1, std::memory_order_acq_rel) + 1;
+void FrontendSyncEngine::cancelInGameShowcaseSession(bool allowWorkerSpawn) {
     m_wantsInGameDisplay.store(false, std::memory_order_release);
     m_readyWakeupHint.store(false, std::memory_order_release);
+    if (!m_remoteSyncDispatched) {
+        return;
+    }
+    m_remoteSyncDispatched = false;
+
+    uint32_t tok = m_playSessionToken.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (m_inGameEngine) {
         m_inGameEngine->clearFrame();
     }
     m_jobSeq.fetch_add(1, std::memory_order_acq_rel);
     m_jobSlot.token = tok;
     m_jobSlot.active = false;
+    m_jobSlot.cancelRemote = true;
     m_jobSlot.system[0] = '\0';
     m_jobSlot.game[0] = '\0';
+    m_jobSlot.title[0] = '\0';
     m_jobSeq.fetch_add(1, std::memory_order_release);
+
+    if (allowWorkerSpawn) {
+        m_workerWakeLatch.store(true, std::memory_order_release);
+        ensureShowcaseWorkerRunning();
+    }
 }
 
 bool FrontendSyncEngine::ensureStreamScratchAllocated() {
@@ -1045,32 +1069,29 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
     m_streamIoScratchCap = 0U;
 }
 
-void FrontendSyncEngine::deleteShowcaseQueueItemHttp(
+void FrontendSyncEngine::deleteAllShowcaseQueueHttp(
     const char* resolvedServerUrl,
-    const char* syncClientId,
-    const char* queueId
+    const char* syncClientId
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (!resolvedServerUrl || !syncClientId || !queueId || queueId[0] == '\0') return;
+    if (!resolvedServerUrl || !syncClientId || syncClientId[0] == '\0') return;
     char host[96] = "";
     uint16_t port = 8890;
     if (!net::parseEndpointHostAndPort(resolvedServerUrl, 8890, host, sizeof(host), port, nullptr)) return;
     if (!net::ShowcaseDiscovery::resolveHostInPlace(host, sizeof(host), port)) return;
 
-    char deletePath[160];
+    char deletePath[128];
     const int n = snprintf(
         deletePath,
         sizeof(deletePath),
-        "/api/v1/clients/%s/queue/%s",
-        syncClientId,
-        queueId
+        "/api/v1/clients/%s/queue",
+        syncClientId
     );
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(deletePath)) return;
     net::sendHttpDeleteOneShotAbort(host, port, deletePath, 800U, 300U);
 #else
     (void)resolvedServerUrl;
     (void)syncClientId;
-    (void)queueId;
 #endif
 }
 
@@ -1176,20 +1197,25 @@ void FrontendSyncEngine::showcaseWorkerTaskFunc(void* param) {
 
 void FrontendSyncEngine::showcaseWorkerLoop() {
 #if defined(ESP32) && !defined(UNIT_TEST)
+    static constexpr uint32_t INGAME_QUEUE_READY_TIMEOUT_MS = 120000U;
     uint32_t lastHealthProbeMs = 0;
     uint32_t lastCheckedCfgGen = 0;
     uint8_t consecutiveHealthFailures = 0;
     bool currentShowcaseOnline = false;
     uint32_t lastProcessedJobToken = 0;
+    uint32_t lastPurgedAtToken = 0;
+    bool remoteSyncDirtyOnWorker = false;
 
     char activeQueueServerUrl[112] = "";
     char activeQueueClientId[48] = "";
     char activeQueueId[48] = "";
 
     auto cleanupActiveQueue = [&]() {
-        if (activeQueueId[0] != '\0') {
-            deleteShowcaseQueueItemHttp(activeQueueServerUrl, activeQueueClientId, activeQueueId);
+        if (remoteSyncDirtyOnWorker && activeQueueClientId[0] != '\0') {
+            deleteAllShowcaseQueueHttp(activeQueueServerUrl, activeQueueClientId);
+            remoteSyncDirtyOnWorker = false;
             activeQueueId[0] = '\0';
+            lastPurgedAtToken = m_playSessionToken.load(std::memory_order_acquire);
         }
     };
 
@@ -1332,8 +1358,6 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
             freeStreamBuffersSafely();
             lastProcessedJobToken = job.token;
 
-            if (job.active && wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.ingameShowcaseEnabled &&
-                WiFi.status() == WL_CONNECTED && job.game[0] != '\0') {
                 uint16_t targetW = m_inGameEngine ? m_inGameEngine->surfaceWidth() : wcfg.panelW;
                 uint16_t targetH = m_inGameEngine ? m_inGameEngine->surfaceHeight() : wcfg.panelH;
                 if (targetW < 32) targetW = 128;
@@ -1341,9 +1365,26 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
 
                 char baseServerUrl[112] = "";
                 char resolvedShowcaseHost[96] = "";
-                if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
-                    char syncClientId[48];
+                char syncClientId[48] = "";
+                const bool targetResolved =
+                    wcfg.mqttEnabled && wcfg.showcaseEnabled &&
+                    WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8 &&
+                    resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost));
+                if (targetResolved) {
                     net::ShowcaseDiscovery::formatClientId("games", targetW, targetH, true, syncClientId, sizeof(syncClientId));
+                }
+
+                if (!job.active && job.cancelRemote && job.token != lastPurgedAtToken && targetResolved) {
+                    deleteAllShowcaseQueueHttp(baseServerUrl, syncClientId);
+                    lastPurgedAtToken = job.token;
+                }
+
+                if (job.active && wcfg.ingameShowcaseEnabled && job.game[0] != '\0' && targetResolved) {
+                    // Arm active queue target BEFORE POST so a quick (<100ms) game exit still purges the sync slot
+                    copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
+                    copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
+                    activeQueueId[0] = '\0';
+                    remoteSyncDirtyOnWorker = true;
 
                     MqttConfig reqMqttCfg;
                     reqMqttCfg.card_style_source = wcfg.cardStyleSource;
@@ -1368,7 +1409,8 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                         String(job.game),
                         targetW,
                         targetH,
-                        String(wcfg.lang)
+                        String(wcfg.lang),
+                        String(job.title)
                     );
 
                     net::SecureHttpOptions qOpts;
@@ -1381,8 +1423,10 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
 
                     char readyItemId[80] = "";
                     bool enqueuedOk = false;
+                    int postHttpStatus = 0;
                     {
                         auto qResp = net::SecureHttpClient::post(endpointUrl, "application/json", postBody, qOpts);
+                        postHttpStatus = qResp.statusCode();
                         if (qResp.ok()) {
                             StaticJsonDocument<192> qFilter;
                             qFilter["queue_id"] = true;
@@ -1402,8 +1446,6 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                                 const char* qItemId = itemVar["item_id"] | "";
 
                                 if (qId[0] != '\0') {
-                                    copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
-                                    copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
                                     copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
                                     if ((strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0) && qItemId[0] != '\0') {
                                         copySafeCStr(readyItemId, sizeof(readyItemId), qItemId);
@@ -1414,18 +1456,26 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                         }
                     }
 
-                    if (enqueuedOk) {
+                    if (!enqueuedOk) {
+                        LOGW("RetroFrontend", "Failed to enqueue In-Game Showcase for '%s' (%s): HTTP %d; keeping marquee.", job.game, job.system, postHttpStatus);
+                        if (postHttpStatus >= 400) {
+                            remoteSyncDirtyOnWorker = false;
+                        } else {
+                            cleanupActiveQueue();
+                        }
+                    } else {
                         if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
                             m_workerStopRequested.load(std::memory_order_acquire)) {
                             cleanupActiveQueue();
                         } else {
                             // Wait for async preparation while marquee stays undisturbed on the DMD
                             uint32_t waitStartMs = millis();
+                            bool endedWithoutStreamableItem = false;
                             snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue", baseServerUrl, syncClientId);
                             while (readyItemId[0] == '\0' &&
                                    !m_workerStopRequested.load(std::memory_order_acquire) &&
                                    m_playSessionToken.load(std::memory_order_acquire) == job.token &&
-                                   (millis() - waitStartMs) < 60000U) {
+                                   (millis() - waitStartMs) < INGAME_QUEUE_READY_TIMEOUT_MS) {
                                 for (int w = 0; w < 15; ++w) {
                                     if (m_workerStopRequested.load(std::memory_order_acquire) ||
                                         m_playSessionToken.load(std::memory_order_acquire) != job.token ||
@@ -1466,11 +1516,35 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                                                     break;
                                                 }
                                             }
-                                            if (!foundInQueue) keepPolling = false;
+                                            if (!foundInQueue) {
+                                                keepPolling = false;
+                                                endedWithoutStreamableItem = true;
+                                            }
                                         }
                                     }
                                 }
                                 if (!keepPolling) break;
+                            }
+
+                            if (readyItemId[0] == '\0' &&
+                                !m_workerStopRequested.load(std::memory_order_acquire) &&
+                                m_playSessionToken.load(std::memory_order_acquire) == job.token) {
+                                if (endedWithoutStreamableItem) {
+                                    LOGW(
+                                        "RetroFrontend",
+                                        "In-Game Showcase preparation ended without streamable package for '%s' (%s); keeping marquee.",
+                                        job.game,
+                                        job.system
+                                    );
+                                } else {
+                                    LOGW(
+                                        "RetroFrontend",
+                                        "In-Game Showcase preparation timed out after %u s for '%s' (%s); aborting remote worker and keeping marquee.",
+                                        static_cast<unsigned>(INGAME_QUEUE_READY_TIMEOUT_MS / 1000U),
+                                        job.game,
+                                        job.system
+                                    );
+                                }
                             }
 
                             // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
@@ -1524,7 +1598,6 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                         }
                     }
                 }
-            }
         }
 
         if (!hasPsram) {
@@ -1534,7 +1607,10 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                 !(wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker) ||
                 currentShowcaseOnline ||
                 (consecutiveHealthFailures >= 2);
+            const bool pendingCancel =
+                latestJob.cancelRemote && (latestJob.token != lastProcessedJobToken);
             if (!latestJob.active &&
+                !pendingCancel &&
                 brokerCheckSettled &&
                 lastCheckedCfgGen == m_cfgGen.load(std::memory_order_acquire) &&
                 !m_workerWakeLatch.exchange(false, std::memory_order_acq_rel)) {
@@ -1560,6 +1636,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     const char* status = doc["status"] | "";
     const char* gameRaw = doc["game"] | "";
+    const char* titleRaw = doc["title"] | "";
     const char* systemRaw = doc["system"] | "";
     const char* typeRaw = doc["type"] | "";
 
@@ -1592,7 +1669,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     if (message) message->deactivate();
 
     if (isPlaying && gameRaw[0] != '\0') {
-        startInGameShowcaseSession(cleanSystem, String(gameRaw));
+        startInGameShowcaseSession(cleanSystem, String(gameRaw), String(titleRaw));
     }
 
     String game = String(gameRaw);
@@ -1921,6 +1998,20 @@ std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
     return mappings;
 }
 
+static void pushUniqueString(std::vector<String>& out, const String& val) {
+    for (const auto& existing : out) {
+        if (existing == val) return;
+    }
+    out.push_back(val);
+}
+
+static void appendPrefixedVariant(std::vector<String>& out, const char* prefix, const String& suffix, const char* tail = nullptr) {
+    String s(prefix);
+    s += suffix;
+    if (tail) s += tail;
+    pushUniqueString(out, s);
+}
+
 static void appendTargetsFromMappingsOrBuiltin(
     const std::map<String, std::vector<String>>& mappings,
     const String& key,
@@ -1931,36 +2022,21 @@ static void appendTargetsFromMappingsOrBuiltin(
     auto it = mappings.find(key);
     if (it != mappings.end()) {
         for (const auto& target : it->second) {
-            bool exists = false;
-            for (const auto& nv : out) {
-                if (nv == target) { exists = true; break; }
-            }
-            if (!exists) out.push_back(target);
+            pushUniqueString(out, target);
         }
     }
 
     // 2. Firmware built-in default mappings in flash (.rodata, zero heap allocation)
     for (size_t i = 0; BUILTIN_SYSTEM_MAPS[i].key != nullptr; i++) {
         if (key.equalsIgnoreCase(BUILTIN_SYSTEM_MAPS[i].key)) {
-            const char* targetsStr = BUILTIN_SYSTEM_MAPS[i].targets;
-            const char* cur = targetsStr;
+            const char* cur = BUILTIN_SYSTEM_MAPS[i].targets;
             while (*cur) {
                 const char* comma = strchr(cur, ',');
-                String t;
-                if (comma) {
-                    t = String(cur).substring(0, comma - cur);
-                    cur = comma + 1;
-                } else {
-                    t = String(cur);
-                    cur += strlen(cur);
-                }
+                String t = comma ? String(cur).substring(0, comma - cur) : String(cur);
+                cur = comma ? (comma + 1) : (cur + strlen(cur));
                 t.trim();
                 if (t.length() > 0) {
-                    bool exists = false;
-                    for (const auto& nv : out) {
-                        if (nv == t) { exists = true; break; }
-                    }
-                    if (!exists) out.push_back(t);
+                    pushUniqueString(out, t);
                 }
             }
             break;
@@ -1991,30 +2067,19 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     sysUnderscore.replace(" ", "_");
 
     // 1. High priority: User / systems.json explicit mappings & flash defaults
-    String lookupKeys[] = { rawLower, sysLower, sysNospace, sysUnderscore };
-    for (const auto& key : lookupKeys) {
-        appendTargetsFromMappingsOrBuiltin(mappings, key, nameVariants);
+    const String* lookupKeys[] = { &rawLower, &sysLower, &sysNospace, &sysUnderscore };
+    for (const String* key : lookupKeys) {
+        appendTargetsFromMappingsOrBuiltin(mappings, *key, nameVariants);
     }
 
     // Check embedded keywords in multi-word names (e.g., "Capcom cps1" -> "cps1", "capcom")
-    const char* embeddedKeywords[] = { "cps1", "cps2", "cps3", "atomiswave", "naomi", "neogeo" };
+    static const char* const embeddedKeywords[] = { "cps1", "cps2", "cps3", "atomiswave", "naomi", "neogeo" };
     for (const char* kw : embeddedKeywords) {
         if (sysNospace.indexOf(kw) != -1) {
-            String kwStr = String(kw);
+            String kwStr(kw);
             appendTargetsFromMappingsOrBuiltin(mappings, kwStr, nameVariants);
-            String defZ = "default-z" + kwStr;
-            bool existsZ = false;
-            for (const auto& nv : nameVariants) {
-                if (nv == defZ) { existsZ = true; break; }
-            }
-            if (!existsZ) nameVariants.push_back(defZ);
-
-            String def = "default-" + kwStr;
-            bool existsDef = false;
-            for (const auto& nv : nameVariants) {
-                if (nv == def) { existsDef = true; break; }
-            }
-            if (!existsDef) nameVariants.push_back(def);
+            appendPrefixedVariant(nameVariants, "default-z", kwStr);
+            appendPrefixedVariant(nameVariants, "default-", kwStr);
         }
     }
 
@@ -2036,22 +2101,11 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     for (int i = (int)words.size() - 1; i >= 0; i--) {
         const String& w = words[i];
         appendTargetsFromMappingsOrBuiltin(mappings, w, nameVariants);
-        String defZ = "default-z" + w;
-        bool existsZ = false;
-        for (const auto& nv : nameVariants) {
-            if (nv == defZ) { existsZ = true; break; }
-        }
-        if (!existsZ) nameVariants.push_back(defZ);
-
-        String def = "default-" + w;
-        bool existsDef = false;
-        for (const auto& nv : nameVariants) {
-            if (nv == def) { existsDef = true; break; }
-        }
-        if (!existsDef) nameVariants.push_back(def);
+        appendPrefixedVariant(nameVariants, "default-z", w);
+        appendPrefixedVariant(nameVariants, "default-", w);
     }
 
-    std::vector<String> baseNames;
+    std::vector<String> uniqueBase;
     String sysUpper = clean;
     sysUpper.toUpperCase();
     String sysSpace = clean;
@@ -2071,81 +2125,56 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
         }
     }
 
-    baseNames.push_back(clean);
-    if (sysLower != clean) baseNames.push_back(sysLower);
-    if (sysNospace != clean && sysNospace != sysLower) baseNames.push_back(sysNospace);
-    if (sysUnderscore != clean && sysUnderscore != sysLower && sysUnderscore != sysNospace) baseNames.push_back(sysUnderscore);
-    if (sysUpper != clean && sysUpper != sysLower) baseNames.push_back(sysUpper);
-    if (sysTitle != clean && sysTitle != sysLower && sysTitle != sysUpper) baseNames.push_back(sysTitle);
-    if (sysSpace != clean && sysSpace != sysLower && sysSpace != sysUpper) baseNames.push_back(sysSpace);
-
-    if (sysLower == "snes" || sysLower == "supernintendo") {
-        baseNames.push_back("Super Nintendo");
-        baseNames.push_back("Super Nintendo Entertainment System");
-        baseNames.push_back("- Super Nintendo");
-    } else if (sysLower == "nes" || sysLower == "famicom") {
-        baseNames.push_back("Nintendo Entertainment System");
-        baseNames.push_back("3dnes");
-    } else if (sysLower == "megadrive" || sysLower == "genesis") {
-        baseNames.push_back("genesis");
-        baseNames.push_back("Genesis");
-        baseNames.push_back("Mega Drive");
-        baseNames.push_back("SEGA Genesis");
-        baseNames.push_back("- Genesis");
-    } else if (sysLower == "mame" || sysLower == "arcade" || sysLower == "fbneo" || sysLower == "fba") {
-        baseNames.push_back("arcade");
-        baseNames.push_back("Arcade");
-        baseNames.push_back("- Arcade");
-        baseNames.push_back("MAME");
-        baseNames.push_back("mame");
-    } else if (sysLower == "n64") {
-        baseNames.push_back("Nintendo 64");
-    } else if (sysLower == "gb" || sysLower == "gameboy") {
-        baseNames.push_back("Game Boy");
-    } else if (sysLower == "gba") {
-        baseNames.push_back("Game Boy Advance");
-    } else if (sysLower == "gbc") {
-        baseNames.push_back("Game Boy Color");
-    } else if (sysLower == "psx" || sysLower == "ps1") {
-        baseNames.push_back("PlayStation");
-        baseNames.push_back("Sony PlayStation");
-    } else if (sysLower == "dreamcast") {
-        baseNames.push_back("Dreamcast");
-        baseNames.push_back("SEGA Dreamcast");
-    } else if (sysLower == "neogeo") {
-        baseNames.push_back("Neo Geo");
-        baseNames.push_back("SNK Neo Geo");
-    } else if (sysLower == "atari" || sysLower == "atari2600" || sysLower == "atari7800" || sysLower == "atari5200" || sysLower == "atari800" || sysLower == "atarilynx" || sysLower == "atarijaguar" || sysLower == "atarist") {
-        baseNames.push_back("atari");
-        baseNames.push_back("Atari");
-        baseNames.push_back("Atari_2600");
-        baseNames.push_back("Atari 2600");
-        baseNames.push_back("Atari_7800");
-        baseNames.push_back("Atari 7800");
-    } else if (sysLower == "mastersystem") {
-        baseNames.push_back("Master System");
-        baseNames.push_back("SEGA Master System");
-    } else if (sysLower == "gamegear") {
-        baseNames.push_back("Game Gear");
-        baseNames.push_back("SEGA Game Gear");
-    } else if (sysLower == "pcengine" || sysLower == "tg16") {
-        baseNames.push_back("NEC PC Engine");
-        baseNames.push_back("PC Engine");
-    } else if (sysLower == "amiga") {
-        baseNames.push_back("Commodore Amiga");
-        baseNames.push_back("Amiga");
-    } else if (sysLower == "c64") {
-        baseNames.push_back("COMMODORE_64");
-        baseNames.push_back("Commodore 64");
+    const String* baseSeeds[] = { &clean, &sysLower, &sysNospace, &sysUnderscore, &sysUpper, &sysTitle, &sysSpace };
+    for (const String* seed : baseSeeds) {
+        pushUniqueString(uniqueBase, *seed);
     }
 
-    std::vector<String> uniqueBase;
-    for (const auto& n : baseNames) {
-        bool found = false;
-        for (const auto& un : uniqueBase) {
-            if (un == n) { found = true; break; }
+    struct SysAliasGroup {
+        const char* keysCsv;
+        const char* aliasesCsv;
+    };
+    static const SysAliasGroup kAliasGroups[] = {
+        { "snes,supernintendo", "Super Nintendo|Super Nintendo Entertainment System|- Super Nintendo" },
+        { "nes,famicom", "Nintendo Entertainment System|3dnes" },
+        { "megadrive,genesis", "genesis|Genesis|Mega Drive|SEGA Genesis|- Genesis" },
+        { "mame,arcade,fbneo,fba", "arcade|Arcade|- Arcade|MAME|mame" },
+        { "n64", "Nintendo 64" },
+        { "gb,gameboy", "Game Boy" },
+        { "gba", "Game Boy Advance" },
+        { "gbc", "Game Boy Color" },
+        { "psx,ps1", "PlayStation|Sony PlayStation" },
+        { "dreamcast", "Dreamcast|SEGA Dreamcast" },
+        { "neogeo", "Neo Geo|SNK Neo Geo" },
+        { "atari,atari2600,atari7800,atari5200,atari800,atarilynx,atarijaguar,atarist", "atari|Atari|Atari_2600|Atari 2600|Atari_7800|Atari 7800" },
+        { "mastersystem", "Master System|SEGA Master System" },
+        { "gamegear", "Game Gear|SEGA Game Gear" },
+        { "pcengine,tg16", "NEC PC Engine|PC Engine" },
+        { "amiga", "Commodore Amiga|Amiga" },
+        { "c64", "COMMODORE_64|Commodore 64" },
+    };
+    for (const auto& grp : kAliasGroups) {
+        bool keyMatched = false;
+        const char* kc = grp.keysCsv;
+        while (*kc) {
+            const char* comma = strchr(kc, ',');
+            size_t klen = comma ? static_cast<size_t>(comma - kc) : strlen(kc);
+            if (sysLower.length() == klen && strncmp(sysLower.c_str(), kc, klen) == 0) {
+                keyMatched = true;
+                break;
+            }
+            kc = comma ? (comma + 1) : (kc + klen);
         }
-        if (!found) uniqueBase.push_back(n);
+        if (keyMatched) {
+            const char* ac = grp.aliasesCsv;
+            while (*ac) {
+                const char* bar = strchr(ac, '|');
+                String alias = bar ? String(ac).substring(0, bar - ac) : String(ac);
+                pushUniqueString(uniqueBase, alias);
+                ac = bar ? (bar + 1) : (ac + strlen(ac));
+            }
+            break;
+        }
     }
 
     String cleanLower = clean;
@@ -2158,33 +2187,25 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     cleanKebab.replace(" ", "-");
 
     // 1. Direct name variants (e.g. cave, atari, capcom, data_east, dataeast)
-    nameVariants.push_back(cleanLower);
-    nameVariants.push_back(clean);
-    nameVariants.push_back(cleanUnderscore);
-    nameVariants.push_back(cleanNospace);
-    nameVariants.push_back(cleanKebab);
+    const String* directForms[] = { &cleanLower, &clean, &cleanUnderscore, &cleanNospace, &cleanKebab };
+    for (const String* f : directForms) pushUniqueString(nameVariants, *f);
 
     // 2. default- prefixed variants
-    nameVariants.push_back("default-" + clean);
-    nameVariants.push_back("default-" + cleanLower);
-    nameVariants.push_back("default-" + cleanUnderscore);
-    nameVariants.push_back("default-" + cleanNospace);
-    nameVariants.push_back("default-" + cleanKebab);
-    nameVariants.push_back("default-_" + clean);
-    nameVariants.push_back("default-_" + cleanLower);
-    nameVariants.push_back("default-_" + cleanUnderscore);
+    for (const String* f : directForms) appendPrefixedVariant(nameVariants, "default-", *f);
+    const String* underForms[] = { &clean, &cleanLower, &cleanUnderscore };
+    for (const String* f : underForms) appendPrefixedVariant(nameVariants, "default-_", *f);
 
     // 3. Pixelcade z-prefixed board/publisher conventions
-    nameVariants.push_back("default-z" + cleanLower);
-    nameVariants.push_back("default-z" + cleanNospace);
-    nameVariants.push_back("z" + cleanLower);
-    nameVariants.push_back("z" + cleanNospace);
+    appendPrefixedVariant(nameVariants, "default-z", cleanLower);
+    appendPrefixedVariant(nameVariants, "default-z", cleanNospace);
+    appendPrefixedVariant(nameVariants, "z", cleanLower);
+    appendPrefixedVariant(nameVariants, "z", cleanNospace);
 
     // 4. Publisher classic collections
-    nameVariants.push_back("default-arcade_" + cleanUnderscore + "_classics");
-    nameVariants.push_back("default-arcade" + cleanNospace + "classics");
-    nameVariants.push_back("default-manufacture_" + cleanUnderscore);
-    nameVariants.push_back("default-manufacture_" + cleanLower);
+    appendPrefixedVariant(nameVariants, "default-arcade_", cleanUnderscore, "_classics");
+    appendPrefixedVariant(nameVariants, "default-arcade", cleanNospace, "classics");
+    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanUnderscore);
+    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanLower);
 
     for (const auto& b : uniqueBase) {
         String bLower = b;
@@ -2194,32 +2215,24 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
         String bUnderscore = bLower;
         bUnderscore.replace(" ", "_");
 
-        nameVariants.push_back(b);
-        nameVariants.push_back(bLower);
-        nameVariants.push_back(bUnderscore);
-        nameVariants.push_back("default-" + b);
-        nameVariants.push_back("default-" + bLower);
-        nameVariants.push_back("default-_" + b);
-        nameVariants.push_back("default-z" + bLower);
-        nameVariants.push_back("default-z" + bNospace);
-        nameVariants.push_back("default-arcade_" + bUnderscore + "_classics");
-        nameVariants.push_back("default-arcade" + bNospace + "classics");
-        nameVariants.push_back("default-manufacture_" + bUnderscore);
-        nameVariants.push_back("default-manufacture_" + bLower);
-    }
-
-    std::vector<String> finalNames;
-    for (const auto& n : nameVariants) {
-        bool found = false;
-        for (const auto& fn : finalNames) {
-            if (fn == n) { found = true; break; }
-        }
-        if (!found) finalNames.push_back(n);
+        pushUniqueString(nameVariants, b);
+        pushUniqueString(nameVariants, bLower);
+        pushUniqueString(nameVariants, bUnderscore);
+        appendPrefixedVariant(nameVariants, "default-", b);
+        appendPrefixedVariant(nameVariants, "default-", bLower);
+        appendPrefixedVariant(nameVariants, "default-_", b);
+        appendPrefixedVariant(nameVariants, "default-z", bLower);
+        appendPrefixedVariant(nameVariants, "default-z", bNospace);
+        appendPrefixedVariant(nameVariants, "default-arcade_", bUnderscore, "_classics");
+        appendPrefixedVariant(nameVariants, "default-arcade", bNospace, "classics");
+        appendPrefixedVariant(nameVariants, "default-manufacture_", bUnderscore);
+        appendPrefixedVariant(nameVariants, "default-manufacture_", bLower);
     }
 
     // Folder search is exclusively /console/
     std::vector<SystemVariant> list;
-    for (const auto& n : finalNames) {
+    list.reserve(nameVariants.size());
+    for (const auto& n : nameVariants) {
         list.push_back({ "console", n });
     }
 

@@ -165,19 +165,21 @@ def publish_mqtt(topic, payload):
         _cached_broker_ts = 0.0
 
 def parse_statefile():
-    game, system, state = None, None, "browsing"
+    game, title, system, state = None, None, None, "browsing"
     try:
         with open("/tmp/es_state.inf", "r") as f:
             for line in f:
                 if line.startswith("GamePath="):
                     game = line.split("=", 1)[1].strip()
+                elif line.startswith("Game="):
+                    title = line.split("=", 1)[1].strip()
                 elif line.startswith("SystemId="):
                     system = line.split("=", 1)[1].strip()
                 elif line.startswith("State="):
                     state = line.split("=", 1)[1].strip()
     except Exception:
         pass
-    return game, system, state
+    return game, title, system, state
 
 def clean_system_name(s):
     if not s:
@@ -215,7 +217,7 @@ def main():
 
     while True:
         try:
-            rom_path, system, state = parse_statefile()
+            rom_path, game_title, system, state = parse_statefile()
             if not system and not rom_path:
                 time.sleep(0.1)
                 continue
@@ -223,16 +225,16 @@ def main():
             system = clean_system_name(system)
 
             if state == "stopped":
-                current_key = (None, None, "stopped")
+                current_key = (None, None, None, "stopped")
             else:
                 is_system = True
                 if rom_path and not os.path.isdir(rom_path):
                     is_system = False
                 
                 if is_system:
-                    current_key = (None, system, "browsing")
+                    current_key = (None, None, system, "browsing")
                 else:
-                    current_key = (rom_path, system, state)
+                    current_key = (rom_path, game_title, system, state)
 
             if current_key != last_state_key:
                 last_state_key = current_key
@@ -242,14 +244,19 @@ def main():
             if elapsed >= 0.15 and current_key != last_sent_key:
                 last_sent_key = current_key
 
-                if current_key[2] == "stopped":
+                if current_key[3] == "stopped":
                     msg = '{"status": "stopped"}'
                 elif current_key[0] is None:
-                    msg = json.dumps({"status": "browsing", "system": str(current_key[1]), "type": "system"})
+                    msg = json.dumps({"status": "browsing", "system": str(current_key[2]), "type": "system"})
                 else:
                     gbase = os.path.splitext(os.path.basename(current_key[0]))[0]
                     gbase = clean_system_name(gbase)
-                    msg = json.dumps({"status": current_key[2], "game": gbase, "system": str(current_key[1])})
+                    payload_obj = {"status": current_key[3], "game": gbase, "system": str(current_key[2])}
+                    if current_key[1]:
+                        tclean = clean_system_name(current_key[1])
+                        if tclean and tclean.lower() != gbase.lower():
+                            payload_obj["title"] = tclean
+                    msg = json.dumps(payload_obj)
 
                 publish_mqtt(TOPIC, msg)
         except Exception as e:
@@ -492,7 +499,12 @@ case "$EVENT" in
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         GAME_CLEAN=$(clean_name "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$5")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: gameStart | Rom: $ROM_PATH | Sys: $SYS_NAME | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;
@@ -525,7 +537,12 @@ case "$EVENT" in
         fi
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$TITLE")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-selected | Rom: $ROM_PATH | Sys: $SYS_NAME | Title: $TITLE | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt_debounced "$PAYLOAD"
         ;;
@@ -559,7 +576,12 @@ case "$EVENT" in
         fi
         SYS_NAME=$(extract_system "$SYS_NAME" "$ROM_PATH" "$GAME_BASENAME")
         SYS_CLEAN=$(clean_name "$SYS_NAME")
-        PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        TITLE_CLEAN=$(clean_name "$TITLE")
+        if [ -n "$TITLE_CLEAN" ] && [ "$TITLE_CLEAN" != "$GAME_CLEAN" ]; then
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"title\": \"$TITLE_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        else
+            PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-start | Rom: $ROM_PATH | Sys: $SYS_NAME | Title: $TITLE | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;
@@ -705,19 +727,21 @@ def publish_mqtt(topic, payload):
         _cached_broker_ts = 0.0
 
 def parse_statefile():
-    game, system, state = None, None, "browsing"
+    game, title, system, state = None, None, None, "browsing"
     try:
         with open("/tmp/es_state.inf", "r") as f:
             for line in f:
                 if line.startswith("GamePath="):
                     game = line.split("=", 1)[1].strip()
+                elif line.startswith("Game="):
+                    title = line.split("=", 1)[1].strip()
                 elif line.startswith("SystemId="):
                     system = line.split("=", 1)[1].strip()
                 elif line.startswith("State="):
                     state = line.split("=", 1)[1].strip()
     except Exception:
         pass
-    return game, system, state
+    return game, title, system, state
 
 def clean_system_name(s):
     if not s:
@@ -755,7 +779,7 @@ def main():
 
     while True:
         try:
-            rom_path, system, state = parse_statefile()
+            rom_path, game_title, system, state = parse_statefile()
             if not system and not rom_path:
                 time.sleep(0.1)
                 continue
@@ -763,16 +787,16 @@ def main():
             system = clean_system_name(system)
 
             if state == "stopped":
-                current_key = (None, None, "stopped")
+                current_key = (None, None, None, "stopped")
             else:
                 is_system = True
                 if rom_path and not os.path.isdir(rom_path):
                     is_system = False
                 
                 if is_system:
-                    current_key = (None, system, "browsing")
+                    current_key = (None, None, system, "browsing")
                 else:
-                    current_key = (rom_path, system, state)
+                    current_key = (rom_path, game_title, system, state)
 
             if current_key != last_state_key:
                 last_state_key = current_key
@@ -782,14 +806,19 @@ def main():
             if elapsed >= 0.15 and current_key != last_sent_key:
                 last_sent_key = current_key
 
-                if current_key[2] == "stopped":
+                if current_key[3] == "stopped":
                     msg = '{"status": "stopped"}'
                 elif current_key[0] is None:
-                    msg = json.dumps({"status": "browsing", "system": str(current_key[1]), "type": "system"})
+                    msg = json.dumps({"status": "browsing", "system": str(current_key[2]), "type": "system"})
                 else:
                     gbase = os.path.splitext(os.path.basename(current_key[0]))[0]
                     gbase = clean_system_name(gbase)
-                    msg = json.dumps({"status": current_key[2], "game": gbase, "system": str(current_key[1])})
+                    payload_obj = {"status": current_key[3], "game": gbase, "system": str(current_key[2])}
+                    if current_key[1]:
+                        tclean = clean_system_name(current_key[1])
+                        if tclean and tclean.lower() != gbase.lower():
+                            payload_obj["title"] = tclean
+                    msg = json.dumps(payload_obj)
 
                 publish_mqtt(TOPIC, msg)
         except Exception as e:
