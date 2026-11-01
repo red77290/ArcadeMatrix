@@ -25,13 +25,15 @@ message over MQTT on topic `system/playing/<os>` (`system/playing/recalbox`, `sy
 > **Batocera version requirement:** Dynamic marquee switching while browsing games and systems requires **Batocera v33 or newer** (Batocera introduced the EmulationStation `game-selected` and `system-selected` script hooks in v33). On Batocera v32 and earlier, only game launch and stop events are supported. Recalbox is fully supported across all versions.
 
 ```json
-{"status": "playing", "game": "pacman", "system": "mame"}
+{"status": "playing", "game": "mslugx", "title": "Metal Slug X", "system": "neogeo"}
+{"status": "browsing", "game": "pacman", "system": "mame"}
+{"status": "browsing", "system": "neogeo", "type": "system"}
+{"status": "stopped"}
 ```
 
-`src/engines/FrontendSyncEngine.cpp` (firmware) receives this, looks for
-`/pixelcade/mame/pacman.png` on the SD card (see `../pixelcade_sync/` for how to populate that
-folder ahead of time), and displays it immediately - falling back to scrolling the game name as
-text if no matching artwork is cached.
+- **Instant Local Marquee (`0 ms`)**: `src/engines/FrontendSyncEngine.cpp` (firmware) receives the event, looks up `/pixelcade/<system>/<game>.png` on the SD card (see `../pixelcade_sync/` for how to populate that folder ahead of time), and displays it immediately — falling back to scrolling the game name as text or downloading Pixelcade artwork if uncached.
+- **In-Game Showcase Dual Lookup (`title` → `fallback_query`)**: When `"status": "playing"` is received and DMD Media Showcase In-Game mode is enabled, the firmware dispatches `game` (ROM basename, e.g. `"mslugx"`) as `query` and the optional `"title"` (extracted from Recalbox `Game=` in `/tmp/es_state.inf` or Batocera's `$5` `gameStart` / `$3` `game-start` hook argument whenever distinct from `game`, e.g. `"Metal Slug X"`) as `fallback_query` with `mode: "play_now"` and `mark_seen: false` to `POST /api/v1/clients/{sync_id}/queue/async` (`esp32_<MAC6>_games_<WxH>_sync`).
+- **Deterministic Server Process Abort on Exit (`0` HTTP Traffic While Browsing)**: Scrolling through console menus (`"browsing"`) triggers **`0` HTTP requests** to Showcase. As soon as an active game exits (`"browsing"` or `"stopped"`), is superseded by another game launch, or hits the `120 s` preparation deadline, Core 0 sends `DELETE /api/v1/clients/{sync_id}/queue` (`SO_LINGER {1, 0}`) once to cancel queued jobs and immediately kill any running server conversion worker process trees (`dmd_show_converter`, `ffmpeg`, `yt-dlp`).
 
 ## Usage
 
@@ -85,9 +87,9 @@ installers do, so you can do it by hand:
 
 | File | Purpose |
 |---|---|
-| `arcadematrix_daemon.py` | Recalbox: polls `/tmp/es_state.inf` in a loop, publishes MQTT on change. |
+| `arcadematrix_daemon.py` | Recalbox: polls `/tmp/es_state.inf` (`GamePath=`, `Game=`, `SystemId=`, `State=`) in a loop, publishes MQTT on change. |
 | `arcadematrix_launcher(permanent).sh` | Recalbox: EmulationStation startup hook that launches the daemon above. |
-| `arcadematrix_mqtt_batocera.sh` | Batocera: one-shot hook invoked directly by EmulationStation per game event (no polling needed - Batocera calls this with `$1`=action `$2`=rom path `$3`=system). |
+| `arcadematrix_mqtt_batocera.sh` | Batocera: one-shot hook invoked directly by system runner (`gameStart`/`gameStop`, including `$5` game title) and EmulationStation (`game-selected`, `system-selected`, `game-start`, `game-end`, including `$3` game title). |
 | `install.sh` | macOS/Linux automated installer. |
 | `install.ps1` | Windows automated installer. |
 

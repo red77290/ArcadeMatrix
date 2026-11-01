@@ -219,15 +219,15 @@ The 4 Showcase engines (`retro_games`, `movie_showcase`, `series_showcase`, `ani
 ArcadeMatrix synchronizes in real time with **Recalbox**, **Batocera** (`v33+` for menu browsing), and **RetroPie** consoles to bring your arcade cabinet or gameroom to life:
 
 ### ✨ How It Works in Practice
-1. **Menu Browsing (`0 ms` Instant Marquee)**: While scrolling through systems and games on your console, ArcadeMatrix immediately displays the corresponding Pixelcade marquee artwork from local storage with zero delay.
+1. **Menu Browsing (`0 ms` Instant Marquee, Zero Showcase Traffic)**: While scrolling through systems and games on your console, ArcadeMatrix immediately displays the corresponding Pixelcade marquee artwork from local storage with zero delay and **`0` HTTP requests** to Showcase.
 2. **Launching a Game (Seamless In-Game Showcase)**:
    - The moment you launch a game, the **classic marquee appears immediately** (no black screen or `"Waiting for content"` message).
-   - If **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** is enabled on your network and **In-Game Showcase** is turned on, Showcase prepares the launched game's full presentation in the background (**Animated Info Card** + **Boxart/Marquee/Screenshot Panoramas** + **Gameplay Video**) and smoothly takes over the DMD as soon as the first frame is ready.
+   - If **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** is enabled on your network and **In-Game Showcase** is turned on, Showcase prepares the launched game's full presentation on an isolated `{dmd_id}_sync` slot using dual lookup (`game` ROM basename + console `title` `fallback_query`, without disturbing autonomous `retro_games` rotation) — **Animated Info Card** + **Boxart/Marquee/Screenshot Panoramas** + **Gameplay Video** — and smoothly takes over the DMD as soon as Frame 0 is ready.
    - Choose how the display behaves while you keep playing:
      - **Play Once then Keep Marquee**: Plays the Showcase presentation once, then leaves the game's static marquee on screen.
      - **Alternate Marquee & Showcase**: Alternates between the Showcase sequence and a configurable pause on the classic marquee (e.g. `45s`).
      - **Loop Showcase Continuously**: Repeats the Showcase presentation while the game is running.
-3. **Exiting a Game**: Returning to the console menu immediately stops any in-game video and switches back to live menu marquees (or normal idle rotation).
+3. **Exiting a Game (Instant Marquee Resume & Automatic Server Process Abort)**: Returning to the console menu (`browsing`/`stopped`) immediately stops any in-game video, switches back to live menu marquees in `0 ms`, and automatically sends `DELETE /api/v1/clients/{sync_id}/queue` to cancel queued jobs and terminate any running server conversion processes (`dmd_show_converter`, `ffmpeg`, `yt-dlp`).
 4. **Automatic Shared MQTT Broker (Zero Re-install & Extra Free RAM)**:
    - Console sync scripts store **only your DMD's IP address** (`DMD_HOST`) and ask the DMD dynamically which MQTT broker to use.
    - When **Share Showcase MQTT Broker** is enabled and Showcase is running, ArcadeMatrix automatically switches to Showcase's MQTT broker and turns off its internal ESP32 MQTT broker to free precious RAM — and falls back to its built-in broker automatically if Showcase is turned off. **You never need to re-install the script on Recalbox/Batocera!**

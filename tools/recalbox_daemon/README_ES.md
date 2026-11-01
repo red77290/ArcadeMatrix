@@ -23,12 +23,15 @@ JSON por MQTT en el topic estandarizado `system/playing/<os>` (`system/playing/r
 > **Requisito de versión de Batocera:** La sincronización dinámica de marquesinas durante la navegación por los juegos y sistemas requiere **Batocera v33 o superior** (Batocera introdujo los hooks de script de EmulationStation `game-selected` y `system-selected` en la versión 33). En Batocera v32 y versiones anteriores, solo se admiten los eventos de inicio y parada del juego (`game-start`, `game-end`). Recalbox es totalmente compatible en todas sus versiones a través de su daemon de monitorización de estado nativo.
 
 ```json
-{"status": "playing", "game": "pacman", "system": "mame"}
+{"status": "playing", "game": "mslugx", "title": "Metal Slug X", "system": "neogeo"}
+{"status": "browsing", "game": "pacman", "system": "mame"}
+{"status": "browsing", "system": "neogeo", "type": "system"}
+{"status": "stopped"}
 ```
 
-`src/engines/FrontendSyncEngine.cpp` (firmware) lo recibe, busca
-`/pixelcade/mame/pacman.png` en la tarjeta SD (consulta `../pixelcade_sync/README_ES.md` para ver cómo rellenar esa
-carpeta por adelantado) y lo muestra inmediatamente, con fallback a texto desplazable con el nombre del juego si no hay artwork correspondiente cacheado.
+- **Marquesina Local Instantánea (`0 ms`)**: `src/engines/FrontendSyncEngine.cpp` (firmware) recibe el evento, busca `/pixelcade/<system>/<game>.png` en la tarjeta SD (consulta `../pixelcade_sync/README_ES.md` para ver cómo rellenar esa carpeta por adelantado) y lo muestra inmediatamente, con respaldo a texto desplazable o descarga del artwork Pixelcade si no está en caché.
+- **Doble Búsqueda Showcase en Juego (`title` → `fallback_query`)**: Al recibir `"status": "playing"` con el modo Showcase en Juego activo, el firmware envía `game` (nombre base de la ROM, p. ej. `"mslugx"`) como `query` y el campo opcional `"title"` (extraído de `Game=` en `/tmp/es_state.inf` en Recalbox o del argumento `$5` `gameStart` / `$3` `game-start` en Batocera cuando difiere de `game`, p. ej. `"Metal Slug X"`) como `fallback_query` con `mode: "play_now"` y `mark_seen: false` a `POST /api/v1/clients/{sync_id}/queue/async` (`esp32_<MAC6>_games_<WxH>_sync`).
+- **Aborto Determinista de Conversiones en Servidor al Salir (`0` Tráfico HTTP al Navegar)**: Desplazarse por los menús de la consola (`"browsing"`) genera **`0` peticiones HTTP** hacia Showcase. En cuanto una partida activa termina (`"browsing"` o `"stopped"`), es sustituida por otro juego o alcanza el límite de preparación de `120 s`, Core 0 envía una sola vez `DELETE /api/v1/clients/{sync_id}/queue` (`SO_LINGER {1, 0}`) para cancelar la cola y terminar al instante cualquier árbol de procesos de conversión activo en el servidor (`dmd_show_converter`, `ffmpeg`, `yt-dlp`).
 
 ## Uso
 
@@ -79,9 +82,9 @@ Si prefieres no ejecutar un script de terceros contra tu dispositivo, aquí tien
 
 | Archivo | Propósito |
 |---|---|
-| `arcadematrix_daemon.py` | Recalbox: sondea `/tmp/es_state.inf` en bucle y publica por MQTT cuando detecta cambios. |
+| `arcadematrix_daemon.py` | Recalbox: sondea `/tmp/es_state.inf` (`GamePath=`, `Game=`, `SystemId=`, `State=`) en bucle y publica por MQTT cuando detecta cambios. |
 | `arcadematrix_launcher(permanent).sh` | Recalbox: hook de arranque de EmulationStation que lanza el daemon anterior. |
-| `arcadematrix_mqtt_batocera.sh` | Batocera: hook one-shot invocado directamente por EmulationStation en cada evento de juego (sin polling; Batocera lo llama con `$1`=action `$2`=rom path `$3`=system). |
+| `arcadematrix_mqtt_batocera.sh` | Batocera: hook one-shot invocado directamente por el ejecutor del sistema (`gameStart`/`gameStop`, incluyendo el título `$5`) y EmulationStation (`game-selected`, `system-selected`, `game-start`, `game-end`, incluyendo el título `$3`). |
 | `install.sh` | Instalador automatizado para macOS/Linux. |
 | `install.ps1` | Instalador automatizado para Windows. |
 

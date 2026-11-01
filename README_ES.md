@@ -218,15 +218,15 @@ Los 4 motores Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `ani
 ArcadeMatrix se sincroniza en tiempo real con **Recalbox**, **Batocera** (`v33+` para navegación por menús) y **RetroPie** para dar vida a tu recreativa o sala de juegos:
 
 ### ✨ Cómo Funciona en la Práctica
-1. **Navegación por Menús (`0 ms` — Marquesina Instantánea)**: Al desplazarte por sistemas y juegos en la consola, ArcadeMatrix muestra al instante la marquesina Pixelcade local correspondiente sin esperas de red.
+1. **Navegación por Menús (`0 ms` — Marquesina Instantánea, Cero Tráfico Showcase)**: Al desplazarte por sistemas y juegos en la consola, ArcadeMatrix muestra al instante la marquesina Pixelcade local correspondiente sin esperas y con **`0` peticiones HTTP** hacia Showcase.
 2. **Al Iniciar un Juego (Showcase en Juego Fluido)**:
    - En cuanto lanzas una partida, la **marquesina clásica aparece de inmediato** (sin pantalla negra ni mensajes de espera).
-   - Si **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** está activo en tu red local y **Showcase en Juego** está habilitado, Showcase prepara en segundo plano la presentación completa del juego (**Ficha Informativa Animada** + **Panoramas de Carátula/Marquee/Capturas** + **Vídeo de Gameplay**) y toma el relevo suavemente en cuanto el primer fotograma está listo.
+   - Si **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** está activo en tu red local y **Showcase en Juego** está habilitado, Showcase prepara la presentación completa del juego en una ranura aislada `{dmd_id}_sync` mediante doble búsqueda (nombre base ROM `game` + `title` de consola como `fallback_query`, sin alterar la rotación autónoma de `retro_games`) — **Ficha Informativa Animada** + **Panoramas de Carátula/Marquee/Capturas** + **Vídeo de Gameplay** — y toma el relevo suavemente en cuanto el Cuadro 0 está listo.
    - Elige el ciclo de reproducción durante la partida:
      - **Reproducir una vez y mantener Marquesina**: muestra la secuencia Showcase una vez y vuelve a dejar fija la marquesina del juego.
      - **Alternar Marquesina y Showcase**: alterna entre la presentación Showcase y una pausa configurable en la marquesina clásica (ej. `45s`).
      - **Bucle continuo de Showcase**: repite la presentación Showcase mientras dure la partida.
-3. **Al Salir del Juego**: Volver al menú de la consola cancela al instante el vídeo en curso y recupera las marquesinas del menú (o la rotación habitual).
+3. **Al Salir del Juego (Reanudación Instantánea y Aborto Automático de Conversiones en Servidor)**: Volver al menú de la consola (`browsing`/`stopped`) detiene al instante el vídeo en curso, recupera las marquesinas del menú en `0 ms` y envía automáticamente `DELETE /api/v1/clients/{sync_id}/queue` para cancelar la cola y terminar de inmediato cualquier proceso de conversión activo en el servidor (`dmd_show_converter`, `ffmpeg`, `yt-dlp`).
 4. **Broker MQTT Compartido Automático (Cero Reinstalación y Más RAM Libre)**:
    - Los scripts de consola guardan **únicamente la IP de tu DMD** (`DMD_HOST`) y consultan dinámicamente al DMD qué broker MQTT usar.
    - Cuando **Usar Broker MQTT de Showcase si está activo** está habilitado y Showcase está encendido, el ESP32 usa automáticamente el broker MQTT de Showcase y apaga su broker interno para liberar RAM — volviendo solo a su broker local si Showcase se apaga. **¡Nunca tendrás que reinstalar los scripts en Recalbox o Batocera!**
