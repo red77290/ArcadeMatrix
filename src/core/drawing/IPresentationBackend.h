@@ -127,4 +127,23 @@ public:
      * @brief Attaches a hardware presentation synchronizer (e.g. V-Blank or scanline pause).
      */
     virtual void setSynchronizer(IPresentationSynchronizer* synchronizer) { (void)synchronizer; }
+
+    /**
+     * @brief Provides the bitmask of dirty multiplexed scan rows (`0..31`) accumulated on the off-screen
+     *        canvas since the previous successful hardware commit (`CANVAS_BURST_SINGLE` optimization).
+     */
+    inline void setPendingDirtyScanRows(uint32_t mask) noexcept { _pendingDirtyScanRows = mask; }
+
+    /**
+     * @brief Consumes the pending dirty scan-row mask and resets the default to all-rows-dirty (`0xFFFFFFFFU`)
+     *        so direct `presentCanvas()` callers remain unaffected.
+     */
+    inline uint32_t consumePendingDirtyScanRows() noexcept {
+        const uint32_t mask = _pendingDirtyScanRows;
+        _pendingDirtyScanRows = 0xFFFFFFFFU;
+        return mask;
+    }
+
+private:
+    uint32_t _pendingDirtyScanRows = 0xFFFFFFFFU;
 };

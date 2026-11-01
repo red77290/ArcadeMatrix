@@ -134,6 +134,7 @@ PresentationTiming Hub75PresentationBackend::commitFirstFrame() {
     uint32_t t0 = micros();
 
     // 1. Clear active drawing backbuffer to black (Frame 0)
+    panel->invalidateFastEncodeState();
     panel->clearScreen();
 
     // 2. Writeback CPU cache lines if SPIRAM DMA
@@ -156,6 +157,7 @@ PresentationTiming Hub75PresentationBackend::commitFirstFrame() {
         }
 #endif
     }
+    panel->invalidateFastEncodeState();
 
     timing.result = PresentationResult::Ok;
     timing.totalPresentUs = micros() - t0;
@@ -170,6 +172,7 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
     const PresentationPolicy& policy)
 {
     PresentationTiming timing;
+    const uint32_t dirtyScanRows = consumePendingDirtyScanRows();
     if (!canvas) {
         timing.result = PresentationResult::EncodingError;
         return timing;
@@ -210,9 +213,20 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         // 2. Safe-window synchronization
         // 3. Swap buffers
         // =========================================================================
-        uint32_t t_enc = micros();
-        Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
-        timing.encodeUs = micros() - t_enc;
+        bool fastEncoded = false;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+        FastMatrixPanel* fastPanel = _engine->getFastPanel();
+        if (fastPanel && canvasWidth == target.width && canvasHeight == target.height) {
+            fastEncoded = fastPanel->tryFastEncodeCanvas(
+                canvas, canvasWidth, 0xFFFFFFFFU, nullptr, nullptr, timing.encodeUs
+            );
+        }
+#endif
+        if (!fastEncoded) {
+            uint32_t t_enc = micros();
+            Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
+            timing.encodeUs = micros() - t_enc;
+        }
 
         uint32_t estimatedTransferUs = PresentationTimingModel::estimateTransferUs(_width, _height, _colorDepth, false);
         if (_synchronizer) {
@@ -291,6 +305,8 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(true);
         }
 
+        params.dirtyScanRows = dirtyScanRows;
+
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
         Hub75SingleDmaScanChaser scanChaser;
         FastMatrixPanel* fastPanel = _engine->getFastPanel();
@@ -310,21 +326,31 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         }
 #endif
 
-        uint32_t t_enc = micros();
-        Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
-        timing.encodeUs = micros() - t_enc;
-
-#if defined(SPIRAM_DMA_BUFFER)
-        if (!target.rowFlush) {
-            FastMatrixPanel* panel = _engine->getFastPanel();
-            if (panel) {
-                uint16_t rpf = _height / 2;
-                for (uint8_t y = 0; y < rpf; y++) {
-                    panel->flushBackbufferRow(y);
-                }
-            }
+        bool fastEncoded = false;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+        if (fastPanel && canvasWidth == target.width && canvasHeight == target.height) {
+            fastEncoded = fastPanel->tryFastEncodeCanvas(
+                canvas, canvasWidth, params.dirtyScanRows, params.rowSync, params.syncCtx, timing.encodeUs
+            );
         }
 #endif
+        if (!fastEncoded) {
+            uint32_t t_enc = micros();
+            Hub75BulkEncoder::encode(canvas, canvasWidth, target, params);
+            timing.encodeUs = micros() - t_enc;
+
+#if defined(SPIRAM_DMA_BUFFER)
+            if (!target.rowFlush) {
+                FastMatrixPanel* panel = _engine->getFastPanel();
+                if (panel) {
+                    uint16_t rpf = _height / 2;
+                    for (uint8_t y = 0; y < rpf; y++) {
+                        panel->flushBackbufferRow(y);
+                    }
+                }
+            }
+#endif
+        }
 
         uint32_t t_trans = micros();
         _engine->present();

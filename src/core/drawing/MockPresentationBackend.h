@@ -90,6 +90,7 @@ public:
         const PresentationPolicy& policy) override
     {
         PresentationTiming timing;
+        lastDirtyScanRows = consumePendingDirtyScanRows();
         if (!canvas) {
             timing.result = PresentationResult::EncodingError;
             return timing;
@@ -148,6 +149,7 @@ public:
     void setSynchronizer(IPresentationSynchronizer* synchronizer) override { _synchronizer = synchronizer; }
 
     uint32_t getCommitCount() const { return _commitCount; }
+    bool isDoubleBuffer() const { return _doubleBuffer; }
     const std::vector<uint8_t>& getBuffer() const { return _buffer; }
     std::vector<uint8_t>& getBuffer() { return _buffer; }
 
@@ -156,6 +158,7 @@ public:
     uint32_t simulatedBlankUs = 0;
     uint32_t simulatedTransferUs = 150;
     uint32_t simulatedTotalUs = 150;
+    uint32_t lastDirtyScanRows = 0xFFFFFFFFU;
     bool simulateInvalidTarget = false;
 
 private:

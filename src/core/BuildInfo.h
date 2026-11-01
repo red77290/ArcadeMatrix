@@ -3,8 +3,8 @@
 #define FIRMWARE_VERSION "4.1.0-dev"
 #endif
 #ifndef BUILD_GIT_COMMIT
-#define BUILD_GIT_COMMIT "d2ecd0a"
+#define BUILD_GIT_COMMIT "b78f8c0"
 #endif
 #ifndef BUILD_TIMESTAMP
-#define BUILD_TIMESTAMP "2026-11-01 01:34:46 UTC"
+#define BUILD_TIMESTAMP "2026-11-01 10:01:29 UTC"
 #endif

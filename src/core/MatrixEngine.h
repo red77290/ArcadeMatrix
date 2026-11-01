@@ -7,6 +7,7 @@
  */
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <vector>
 #include <memory>
 
@@ -52,6 +53,9 @@ class Hub75PresentationBackend;
 class FastMatrixPanel : public MatrixPanel_I2S_DMA {
 public:
     using MatrixPanel_I2S_DMA::MatrixPanel_I2S_DMA;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    ~FastMatrixPanel() override;
+#endif
 
     void fillScreen(uint16_t color) override;
     void drawPixel(int16_t x, int16_t y, uint16_t color) override;
@@ -87,7 +91,38 @@ public:
     const uint8_t* getLutG() const { return m_lut_g; }
     const uint8_t* getLutB() const { return m_lut_b; }
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    void invalidateShadow() noexcept {
+        m_shadowGen.fetch_add(1U, std::memory_order_acq_rel);
+    }
+    void invalidateFastEncodeState() noexcept {
+        m_templateGen.fetch_add(1U, std::memory_order_acq_rel);
+        m_shadowGen.fetch_add(1U, std::memory_order_acq_rel);
+    }
+    bool tryFastEncodeCanvas(
+        const uint16_t* canvas,
+        size_t canvasStridePixels,
+        uint32_t dirtyScanRows,
+        DmaRowSync rowSync,
+        void* syncCtx,
+        uint32_t& outEncodeUs
+    );
+#else
+    inline void invalidateShadow() noexcept {}
+    inline void invalidateFastEncodeState() noexcept {}
+#endif
+
 private:
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    struct SramEncodeScratch;
+    void releaseFastEncodeResources() noexcept;
+    SramEncodeScratch* m_sramScratch = nullptr;
+    uint16_t* m_presentedShadow = nullptr;
+    std::atomic<uint32_t> m_templateGen{1U};
+    std::atomic<uint32_t> m_shadowGen{1U};
+    uint32_t m_cachedTemplateGen = 0U;
+    uint32_t m_cachedShadowGen = 0U;
+#endif
     bool m_double = false;
     int m_back = 0;
     uint8_t m_brightness8 = 64;

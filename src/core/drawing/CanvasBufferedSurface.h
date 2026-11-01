@@ -42,8 +42,18 @@ public:
     bool isDoubleBuffered() const override { return _strategy == PresentationStrategy::CANVAS_BURST_DOUBLE; }
 
     bool isDirty() const override { return _dirty; }
-    void markDirty() override { _dirty = true; }
-    void clearDirty() { _dirty = false; }
+    void markDirty() override { markAllDirty(); }
+    void clearDirty() {
+        _dirty = false;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+        _dirtyScanRows = 0U;
+#endif
+    }
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+    uint32_t dirtyScanRows() const { return _dirtyScanRows; }
+#else
+    uint32_t dirtyScanRows() const { return _dirty ? 0xFFFFFFFFU : 0U; }
+#endif
 
     uint16_t* getRawCanvasBuffer() const { return _canvas; }
 
@@ -53,7 +63,18 @@ public:
     const PresentationPolicy& getPresentationPolicy() const { return _policy; }
 
 private:
-    inline void markModified() noexcept { _dirty = true; }
+    inline void markAllDirty() noexcept {
+        _dirty = true;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+        _dirtyScanRows = 0xFFFFFFFFU;
+#endif
+    }
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+    void markPhysicalSpanDirty(int16_t y0, int16_t y1) noexcept;
+#else
+    inline void markPhysicalSpanDirty(int16_t, int16_t) noexcept { _dirty = true; }
+#endif
 
     uint16_t* _canvas = nullptr;
     CanvasStorage _storage = CanvasStorage::SRAM;
@@ -64,6 +85,9 @@ private:
     size_t _dmaBytes = 0;
     uint32_t _flipCount = 0;
     uint32_t _externalDrawGeneration = 0;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+    uint32_t _dirtyScanRows = 0U;
+#endif
     bool _canvasBorrowed = false;
     bool _canvasPreallocated = false;
     bool _dirty = false;

@@ -8,7 +8,9 @@ public:
     Adafruit_GFX(int16_t w = 0, int16_t h = 0) : _width(w), _height(h) {}
     virtual ~Adafruit_GFX() = default;
     virtual void drawPixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
+    virtual void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) { (void)x; (void)y; (void)h; (void)color; }
     virtual void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) { (void)x; (void)y; (void)w; (void)color; }
+    virtual void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) { (void)x; (void)y; (void)w; (void)h; (void)color; }
     virtual void fillScreen(uint16_t color) { (void)color; }
     void setCursor(int16_t x, int16_t y) { (void)x; (void)y; }
     void setTextColor(uint16_t c) { (void)c; }

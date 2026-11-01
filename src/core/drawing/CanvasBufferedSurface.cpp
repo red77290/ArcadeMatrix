@@ -75,6 +75,33 @@ void CanvasBufferedSurface::clear(uint16_t color) {
     fillScreen(color);
 }
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+inline
+#endif
+void CanvasBufferedSurface::markPhysicalSpanDirty(int16_t y0, int16_t y1) noexcept {
+    _dirty = true;
+    const int16_t rpf = static_cast<int16_t>(m_physH >> 1);
+    const int32_t count = static_cast<int32_t>(y1) - static_cast<int32_t>(y0);
+    if (rpf <= 0 || rpf > 32 || (m_physH & 1) != 0 || count <= 0 || count >= rpf) {
+        _dirtyScanRows = 0xFFFFFFFFU;
+        return;
+    }
+    const int32_t s0 = (y0 >= rpf) ? (y0 - rpf) : y0;
+    if (s0 < 0 || s0 >= rpf) {
+        _dirtyScanRows = 0xFFFFFFFFU;
+        return;
+    }
+    if (s0 + count <= rpf) {
+        _dirtyScanRows |= (((1U << count) - 1U) << s0);
+    } else {
+        const int32_t c1 = rpf - s0;
+        const int32_t c2 = count - c1;
+        _dirtyScanRows |= ((((1U << c1) - 1U) << s0) | ((1U << c2) - 1U));
+    }
+}
+#endif
+
 void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     if (!_canvas) return;
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -82,7 +109,7 @@ void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
         int16_t pw = physicalWidth();
         int16_t ph = physicalHeight();
         if (x < 0 || x >= pw || y < 0 || y >= ph) return;
-        markModified();
+        markPhysicalSpanDirty(y, static_cast<int16_t>(y + 1));
         _canvas[(size_t)y * pw + x] = color;
         return;
     }
@@ -90,13 +117,13 @@ void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     Point p = SurfaceCoordinates::logicalToPhysical(x, y, physicalWidth(), physicalHeight(), getRotation());
     if (p.x < 0 || p.x >= physicalWidth() || p.y < 0 || p.y >= physicalHeight()) return;
 
-    markModified();
+    markPhysicalSpanDirty(p.y, static_cast<int16_t>(p.y + 1));
     _canvas[(size_t)p.y * physicalWidth() + p.x] = color;
 }
 
 void CanvasBufferedSurface::fillScreen(uint16_t color) {
     if (!_canvas) return;
-    markModified();
+    markAllDirty();
     if (color == 0) {
         memset(_canvas, 0, _canvasBytes);
     } else {
@@ -128,7 +155,7 @@ void CanvasBufferedSurface::fillRect(int16_t x, int16_t y, int16_t w, int16_t h,
         if (x1 > pw) x1 = pw;
         if (y1 > ph) y1 = ph;
         if (x0 >= x1 || y0 >= y1) return;
-        markModified();
+        markPhysicalSpanDirty(static_cast<int16_t>(y0), static_cast<int16_t>(y1));
         int32_t span = x1 - x0;
         if (color == 0) {
             size_t rowBytes = (size_t)span * sizeof(uint16_t);
@@ -158,7 +185,6 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
     if (!_canvas || !src || w <= 0 || h <= 0) return;
     if (stridePixels <= 0) stridePixels = w;
 
-    markModified();
     int16_t pw = physicalWidth();
     int16_t ph = physicalHeight();
 
@@ -169,6 +195,7 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
         int16_t x1 = (x + w > pw) ? pw : (x + w);
         int16_t y1 = (y + h > ph) ? ph : (y + h);
         if (x0 < x1 && y0 < y1) {
+            markPhysicalSpanDirty(y0, y1);
             int16_t clippedW = x1 - x0;
             size_t rowBytes = (size_t)clippedW * sizeof(uint16_t);
             for (int16_t row = y0; row < y1; ++row) {
@@ -178,8 +205,8 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
                 uint16_t* dstRow = _canvas + ((size_t)row * pw + x0);
                 memcpy(dstRow, srcRow, rowBytes);
             }
-            return;
         }
+        return;
     }
 
     for (int16_t row = 0; row < h; ++row) {
@@ -192,7 +219,7 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
 
 CanvasView CanvasBufferedSurface::acquireCanvas() {
     _canvasBorrowed = true;
-    markModified();
+    markAllDirty();
     return CanvasView{
         _canvas,
         (uint16_t)physicalWidth(),
@@ -223,12 +250,18 @@ PresentationTiming CanvasBufferedSurface::present() {
         return timing;
     }
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+    _backend->setPendingDirtyScanRows(_dirtyScanRows);
+#endif
     PresentationTiming timing = _backend->presentCanvas(_canvas, physicalWidth(), physicalHeight(), _strategy, _policy);
 
     // Invariant 17 & 20: Only clear dirty state upon successful hardware commit.
     // If presentation failed (SafeWindowTimeout / DMA busy), keep dirty=true to retry on next tick.
     if (timing.result == PresentationResult::Ok) {
         _dirty = false;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32) || defined(UNIT_TEST)
+        _dirtyScanRows = 0U;
+#endif
         _flipCount++;
     }
 
@@ -236,7 +269,7 @@ PresentationTiming CanvasBufferedSurface::present() {
 }
 
 void CanvasBufferedSurface::markExternalDraw() {
-    markModified();
+    markAllDirty();
     _externalDrawGeneration++;
     if (_backend) {
         _backend->markExternalDraw();

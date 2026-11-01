@@ -5,6 +5,8 @@
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
 #include "core/I18n.h"
+#include "core/drawing/CanvasBufferedSurface.h"
+#include "core/drawing/MockPresentationBackend.h"
 #include "core/drawing/Hub75BulkEncoder.h"
 #include "core/drawing/Hub75DmaLayout.h"
 #include "core/drawing/DmdzStreamDecoder.h"
@@ -3654,6 +3656,16 @@ void test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases(
                 // CPU writes Frame 2 into row `y` (`y` and `y + 32` on 256x64):
                 // if GDMA is currently scanning row `y`, that scan row would tear!
                 TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
+                if (cpuRowUs < kDmaRowUs && !chaser.scanWrapped) {
+                    // In beam-racing (`T_cpu < T_dma`), CPU must also stay clear of `y + 1`
+                    // (GDMA + LCD_CAM AFIFO pre-fetch lead) across the active scan.
+                    TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y) + 1, bus.currentScanRow);
+                }
+                if (y == static_cast<uint8_t>(kRpf - 1)) {
+                    // Row 31 (`y_phys = 31 & 63`) must never be overwritten while `d == 0`
+                    // (tail plane of row 31 still draining into LCD_CAM right after `dscr_bf0` wraps).
+                    TEST_ASSERT_NOT_EQUAL_INT(0, bus.currentScanRow);
+                }
                 bus.advanceTime(cpuRowUs / 2U);
                 TEST_ASSERT_NOT_EQUAL_INT(static_cast<int>(y), bus.currentScanRow);
                 bus.dmaBufferFrameId[y] = 2U;
@@ -3749,6 +3761,194 @@ void test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll(voi
         TEST_ASSERT_EQUAL_INT(2, offset - prev);
     }
     TEST_ASSERT_EQUAL_INT(120, offset);
+}
+
+void test_hub75_staged_8bit_encoder_bit_exact_and_dirty_scan_rows(void) {
+    static constexpr uint16_t kW = 256U;
+    static constexpr uint16_t kH = 64U;
+    static constexpr uint8_t kRpf = 32U;
+    static constexpr uint8_t kDepth = 8U;
+
+    uint8_t lutR[32] = {};
+    uint8_t lutG[64] = {};
+    uint8_t lutB[32] = {};
+    Hub75BulkEncoder::generateLuts(kDepth, lutR, lutG, lutB);
+
+    Hub75SpreadLuts64 luts64{};
+    Hub75BulkEncoder::generateSpreadLuts64(lutR, lutG, lutB, luts64);
+
+    std::vector<uint16_t> canvas(static_cast<size_t>(kW) * kH);
+    for (size_t i = 0; i < canvas.size(); ++i) {
+        canvas[i] = static_cast<uint16_t>((i * 40503U) ^ (i >> 3));
+    }
+
+    // Build a realistic 32-row x 8-plane HUB75 TYPE138 reference framebuffer initialized identically
+    // to MatrixPanel_I2S_DMA::clearFrameBuffer() + setBrightnessOE() (non-trivial LAT + OE + ABCDE).
+    alignas(32) uint16_t latOeTemplate[kDepth * kW] = {};
+    for (uint8_t p = 0; p < kDepth; ++p) {
+        for (uint16_t x = 0; x < kW; ++x) {
+            uint16_t ctrl = 0U;
+            if (x == (kW - 1U)) {
+                ctrl |= (1U << 6); // BIT_LAT
+            }
+            const uint16_t activeSpan = static_cast<uint16_t>(16U + p * 28U);
+            const uint16_t minX = static_cast<uint16_t>((kW - activeSpan) >> 1);
+            const uint16_t maxX = static_cast<uint16_t>((kW + activeSpan) >> 1);
+            if (x < 8U || x >= (kW - 8U) || x < minX || x >= maxX) {
+                ctrl |= (1U << 7); // BIT_OE
+            }
+            latOeTemplate[static_cast<size_t>(p) * kW + x] = ctrl;
+        }
+    }
+
+    auto initType138Buffer = [&](std::vector<uint16_t>& fb) {
+        fb.assign(static_cast<size_t>(kRpf) * kDepth * kW, 0U);
+        for (uint8_t r = 0; r < kRpf; ++r) {
+            const uint16_t addr0 = static_cast<uint16_t>(((r == 0U ? (kRpf - 1U) : (r - 1U)) & 0x1FU) << 8);
+            const uint16_t addrN = static_cast<uint16_t>((r & 0x1FU) << 8);
+            for (uint8_t p = 0; p < kDepth; ++p) {
+                const uint16_t addr = (p == 0U) ? addr0 : addrN;
+                uint16_t* dst = fb.data() + (static_cast<size_t>(r) * kDepth + p) * kW;
+                const uint16_t* tpl = latOeTemplate + static_cast<size_t>(p) * kW;
+                for (uint16_t x = 0; x < kW; ++x) {
+                    dst[x] = static_cast<uint16_t>(tpl[x] | addr);
+                }
+            }
+        }
+    };
+
+    for (int rotIdx = 0; rotIdx < 2; ++rotIdx) {
+        const bool rot180 = (rotIdx == 1);
+        std::vector<uint16_t> refFb;
+        initType138Buffer(refFb);
+
+        Hub75EncodingParams params;
+        params.colorDepth = kDepth;
+        params.rowsPerFrame = kRpf;
+        params.width = kW;
+        params.height = kH;
+        params.lutR = lutR;
+        params.lutG = lutG;
+        params.lutB = lutB;
+        params.rotation = rot180 ? 2U : 0U;
+
+        auto refAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+            auto* vec = static_cast<std::vector<uint16_t>*>(ctx);
+            return vec->data() + (static_cast<size_t>(row) * kDepth + plane) * kW;
+        };
+        Hub75BulkEncoder::encode(canvas.data(), kW, refAccessor, &refFb, params);
+
+        alignas(32) uint16_t stagedRowOut[kDepth * kW] = {};
+        for (uint8_t r = 0; r < kRpf; ++r) {
+            const uint16_t* srcTop = rot180
+                ? (canvas.data() + static_cast<size_t>(kH - 1U - r) * kW)
+                : (canvas.data() + static_cast<size_t>(r) * kW);
+            const uint16_t* srcBot = rot180
+                ? (canvas.data() + static_cast<size_t>(kH - 1U - (r + kRpf)) * kW)
+                : (canvas.data() + static_cast<size_t>(r + kRpf) * kW);
+
+            Hub75BulkEncoder::encodeRow8BitStaged(
+                srcTop, srcBot, kW, r, kRpf, rot180, luts64, latOeTemplate, stagedRowOut
+            );
+
+            const uint16_t* refRow = refFb.data() + static_cast<size_t>(r) * kDepth * kW;
+            TEST_ASSERT_EQUAL_MEMORY(refRow, stagedRowOut, sizeof(stagedRowOut));
+        }
+    }
+
+    // 2. CanvasBufferedSurface dirtyScanRows tracking across upper/lower seam (`y = 24..39` -> `0xFF0000FFU`)
+    //    and preservation across failed `present()` (`SafeWindowTimeout`).
+    struct FailingOnceSynchronizer : public IPresentationSynchronizer {
+        bool failNext = true;
+        SafeWindowResult waitForSafeWindow(uint32_t, uint32_t) override {
+            if (failNext) {
+                failNext = false;
+                return SafeWindowResult{false, 1000U, 0U};
+            }
+            return SafeWindowResult{true, 0U, 5000U};
+        }
+    };
+    MockPresentationBackend mockBackend(kW, kH, kDepth, false);
+    FailingOnceSynchronizer syncOnce;
+    mockBackend.setSynchronizer(&syncOnce);
+
+    CanvasBufferedSurface surf(kW, kH, CanvasStorage::SRAM, &mockBackend, true);
+    TEST_ASSERT_FALSE(surf.isDirty());
+    TEST_ASSERT_EQUAL_HEX32(0x00000000U, surf.dirtyScanRows());
+
+    // Exact GNews ticker band on 256x64 (`y = 24..39` = scan rows `24..31` and `0..7`)
+    surf.fillRect(0, 24, kW, 16, 0xF800U);
+    TEST_ASSERT_TRUE(surf.isDirty());
+    TEST_ASSERT_EQUAL_HEX32(0xFF0000FFU, surf.dirtyScanRows());
+
+    // First present times out in safe-window -> dirty mask MUST be preserved for retry!
+    PresentationTiming tFail = surf.present();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PresentationResult::SafeWindowTimeout), static_cast<uint8_t>(tFail.result));
+    TEST_ASSERT_TRUE(surf.isDirty());
+    TEST_ASSERT_EQUAL_HEX32(0xFF0000FFU, surf.dirtyScanRows());
+
+    // Second present succeeds -> backend consumed `0xFF0000FFU` and surface resets dirty mask to `0`
+    PresentationTiming tOk = surf.present();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PresentationResult::Ok), static_cast<uint8_t>(tOk.result));
+    TEST_ASSERT_EQUAL_HEX32(0xFF0000FFU, mockBackend.lastDirtyScanRows);
+    TEST_ASSERT_FALSE(surf.isDirty());
+    TEST_ASSERT_EQUAL_HEX32(0x00000000U, surf.dirtyScanRows());
+
+    // 3. `Hub75BulkEncoder::encode` skips clean scan rows (`0` writes, `0` flushes) while pacing `rowSync`
+    //    monotonically through `lastDirtyRow` (`11` for `0x00000F03U`) and exiting early before `12..31`.
+    std::vector<uint16_t> partialFb;
+    initType138Buffer(partialFb);
+    const std::vector<uint16_t> baselineFb = partialFb;
+
+    struct DirtyTrace {
+        std::vector<uint16_t>* fb = nullptr;
+        uint32_t flushedMask = 0U;
+        uint32_t syncedMask = 0U;
+        int lastSynced = -1;
+    } trace;
+    trace.fb = &partialFb;
+
+    Hub75EncodingParams partialParams;
+    partialParams.colorDepth = kDepth;
+    partialParams.rowsPerFrame = kRpf;
+    partialParams.width = kW;
+    partialParams.height = kH;
+    partialParams.lutR = lutR;
+    partialParams.lutG = lutG;
+    partialParams.lutB = lutB;
+    partialParams.dirtyScanRows = 0x00000F03U; // Rows 0..1 and 8..11 dirty; 2..7 and 12..31 clean
+    partialParams.rowFlush = [](void* ctx, uint8_t row) {
+        static_cast<DirtyTrace*>(ctx)->flushedMask |= (1U << row);
+    };
+    partialParams.flushCtx = &trace;
+    partialParams.rowSync = [](void* ctx, uint8_t row) {
+        auto* t = static_cast<DirtyTrace*>(ctx);
+        TEST_ASSERT_EQUAL_INT(t->lastSynced + 1, static_cast<int>(row));
+        t->lastSynced = static_cast<int>(row);
+        t->syncedMask |= (1U << row);
+    };
+    partialParams.syncCtx = &trace;
+
+    auto traceAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        auto* t = static_cast<DirtyTrace*>(ctx);
+        return t->fb->data() + (static_cast<size_t>(row) * kDepth + plane) * kW;
+    };
+    Hub75BulkEncoder::encode(canvas.data(), kW, traceAccessor, &trace, partialParams);
+
+    TEST_ASSERT_EQUAL_HEX32(0x00000F03U, trace.flushedMask);
+    TEST_ASSERT_EQUAL_HEX32(0x00000FFFU, trace.syncedMask);
+    TEST_ASSERT_EQUAL_INT(11, trace.lastSynced);
+
+    for (uint8_t r = 0; r < kRpf; ++r) {
+        const size_t offset = static_cast<size_t>(r) * kDepth * kW;
+        if (((0x00000F03U >> r) & 1U) == 0U) {
+            TEST_ASSERT_EQUAL_MEMORY(
+                baselineFb.data() + offset,
+                partialFb.data() + offset,
+                kDepth * kW * sizeof(uint16_t)
+            );
+        }
+    }
 }
 
 // =========================================================================
@@ -3851,6 +4051,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_waveshare_s3_256x64_canvas_single_health_parser_and_smooth_card_scroll);
     RUN_TEST(test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases);
     RUN_TEST(test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll);
+    RUN_TEST(test_hub75_staged_8bit_encoder_bit_exact_and_dirty_scan_rows);
 
     return UNITY_END();
 }

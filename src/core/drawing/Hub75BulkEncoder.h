@@ -37,21 +37,36 @@ struct Hub75EncodingParams {
     void* flushCtx = nullptr;        ///< User context passed to `rowFlush`
     DmaRowSync rowSync = nullptr;    ///< Optional per-row hardware DMA scanline sync hook (single-buffer beam-racing)
     void* syncCtx = nullptr;         ///< User context passed to `rowSync`
+    uint32_t dirtyScanRows = 0xFFFFFFFFU; ///< Bitmask of dirty multiplexed scan rows (`0..rowsPerFrame-1`)
 };
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32)
+/**
+ * @struct Hub75SpreadLuts64
+ * @brief Pre-expanded 64-bit bitplane LUTs mapping RGB565 source channels directly to all 8 BCM planes
+ *        at once (byte `p` holds bit `p` of the calibrated CIE 1931 output shifted to R=0, G=1, B=2).
+ */
+struct Hub75SpreadLuts64 {
+    uint64_t r[32];
+    uint64_t g[64];
+    uint64_t b[32];
+};
+#endif
 
 /**
  * @struct Hub75SingleDmaScanChaser
  * @brief Tear-free hardware DMA scanline chaser ("beam-racing") for single-DMA-buffer HUB75 panels.
  *
- * On 256x64 single-DMA-buffer panels (`ROWS_PER_FRAME = 32`), GDMA scans rows `0..31` in ~5.53 ms
- * (~173 us/row) while CPU encodes rows `0..31` in ~3.0 ms (~95 us/row). Without scanline chasing,
- * starting an encode near the end of a DMA scan overwrites `row 0` (`y = 0` & `y = 32`) with Frame N+1
- * right before GDMA finishes `row 31` (`y = 31` & `y = 63`) with Frame N, creating a visible seam at
- * the vertical center (`y = 31 / 32`).
+ * On 256x64 single-DMA-buffer panels (`ROWS_PER_FRAME = 32`), GDMA scans rows `0..31` in ~4.92 ms
+ * (~153.6 us/row) while SRAM-staged CPU encoding writes rows `0..31` in ~1.9-3.8 ms (< 120 us/row).
+ * Without scanline chasing, starting an encode near the end of a DMA scan overwrites `row 0`
+ * (`y = 0` & `y = 32`) with Frame N+1 right before GDMA finishes `row 31` (`y = 31` & `y = 63`)
+ * with Frame N, creating a visible seam at the vertical center (`y = 31 / 32`).
  *
- * By gating `row 0` to start only when `dmaRow` is inside `[2 .. maxStartRow]` and keeping CPU writes
- * at least 2 scan rows behind `dmaRow` until the current hardware scan wraps `31 -> 0`, Scan S reads
- * 100% Frame N across all rows and Scan S+1 reads 100% Frame N+1 across all rows with zero extra RAM.
+ * By gating `row 0` to start only when `dmaRow` is inside `[minStartRow .. maxStartRow]` and keeping
+ * CPU writes `>= 3` scan rows behind `dscr_bf0` on 1/32 scan (`>= 2` rows behind physical HUB75 LAT
+ * after accounting for GDMA + LCD_CAM AFIFO pre-fetch) until the current hardware scan wraps `31 -> 0`,
+ * Scan S reads 100% Frame N across all rows and Scan S+1 reads 100% Frame N+1 across all rows.
  */
 struct Hub75SingleDmaScanChaser {
     using QueryDmaRowFn = int (*)(void* userCtx);
@@ -66,8 +81,8 @@ struct Hub75SingleDmaScanChaser {
     bool scanWrapped = false;
 
     static constexpr uint32_t kStepDelayUs = 12U;
-    static constexpr int kMaxStartWaitSteps = 900; // Hard cap: 10,800 us (covers full 90-180 Hz scan wrap)
-    static constexpr int kMaxRowWaitSteps = 45;    // Hard cap: 540 us/row
+    static constexpr int kMaxStartWaitSteps = 900; // Hard cap: 10,800 us (covers full 90-210 Hz scan wrap)
+    static constexpr int kMaxRowWaitSteps = 64;    // Hard cap: 768 us/row (covers 1-row pacing down to 40 Hz)
 
     void begin(QueryDmaRowFn query, void* ctx, int rpf, DelayUsFn delayCb = nullptr) {
         queryRow = query;
@@ -100,14 +115,11 @@ struct Hub75SingleDmaScanChaser {
                 active = false;
                 return;
             }
-            // Gate `row 0` to start strictly right after scan wrap (`[2 .. 4]` on 1/32 scan,
-            // `[2 .. 3]` on 1/16 scan). This guarantees tear-free output in BOTH timing regimes:
-            //  1) `T_cpu < T_dma`: per-row guard `(y + 1) >= d` keeps CPU >= 2 rows behind Scan S.
-            //  2) `T_cpu > T_dma` (Octal PSRAM round-robin contention on 256x64 8-bit): Scan S pulls
-            //     ahead of CPU (100% Frame N), wraps `31 -> 0` when CPU is near the end, and CPU
-            //     completes row 31 + cache writeback well before Scan S+1 reaches row 31 (100% Frame N+1).
-            const int minStartRow = 2;
-            const int maxStartRow = (rpf >= 32) ? 4 : 3;
+            // Gate `row 0` to start strictly right after scan wrap (`[3 .. 5]` on 1/32 scan,
+            // `[2 .. 3]` on 1/16 scan) so `row 0` and GDMA/LCD_CAM AFIFO pre-fetch have >= 3 rows
+            // of separation in `T_cpu < T_dma` beam-racing AND maximum wrap runway if `T_cpu > T_dma`.
+            const int minStartRow = (rpf >= 32) ? 3 : 2;
+            const int maxStartRow = (rpf >= 32) ? 5 : 3;
 
             int steps = 0;
             while ((d < minStartRow || d > maxStartRow) && steps < kMaxStartWaitSteps) {
@@ -125,6 +137,15 @@ struct Hub75SingleDmaScanChaser {
         }
 
         if (scanWrapped) {
+            if (y == rpf - 1) {
+                int dWrap = queryRow(queryCtx);
+                int wrapSteps = 0;
+                while (dWrap == 0 && wrapSteps < kMaxRowWaitSteps) {
+                    stepDelay();
+                    ++wrapSteps;
+                    dWrap = queryRow(queryCtx);
+                }
+            }
             return;
         }
 
@@ -135,14 +156,23 @@ struct Hub75SingleDmaScanChaser {
         }
         if (d + 1 < lastDmaRow) {
             scanWrapped = true;
+            if (y == rpf - 1) {
+                int wrapSteps = 0;
+                while (d == 0 && wrapSteps < kMaxRowWaitSteps) {
+                    stepDelay();
+                    ++wrapSteps;
+                    d = queryRow(queryCtx);
+                }
+            }
             return;
         }
         if (d > lastDmaRow) {
             lastDmaRow = d;
         }
 
+        const int safetyLead = (rpf >= 32) ? 2 : 1;
         int steps = 0;
-        while (!scanWrapped && (y + 1) >= d && steps < kMaxRowWaitSteps) {
+        while (!scanWrapped && (y + safetyLead) >= d && steps < kMaxRowWaitSteps) {
             stepDelay();
             ++steps;
             d = queryRow(queryCtx);
@@ -152,6 +182,14 @@ struct Hub75SingleDmaScanChaser {
             }
             if (d + 1 < lastDmaRow) {
                 scanWrapped = true;
+                if (y == rpf - 1) {
+                    int wrapSteps = 0;
+                    while (d == 0 && wrapSteps < kMaxRowWaitSteps) {
+                        stepDelay();
+                        ++wrapSteps;
+                        d = queryRow(queryCtx);
+                    }
+                }
                 return;
             }
             if (d > lastDmaRow) {
@@ -205,4 +243,34 @@ public:
      * @param lutB Output array for Blue (32 entries)
      */
     static void generateLuts(uint8_t depth, uint8_t* lutR, uint8_t* lutG, uint8_t* lutB);
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(ESP32)
+    /**
+     * @brief Expands 8-bit CIE 1931 channel LUTs into 64-bit bitplane-spread tables.
+     */
+    static void generateSpreadLuts64(
+        const uint8_t* lutR,
+        const uint8_t* lutG,
+        const uint8_t* lutB,
+        Hub75SpreadLuts64& out
+    );
+
+    /**
+     * @brief Encodes one multiplexed dual-row (`srcTop`, `srcBot`) directly into a contiguous 8-plane
+     *        SRAM staging buffer (`rowOut[8 * width]`) combining a cached `BIT_LAT | BIT_OE` control
+     *        template (`latOeTemplate[8 * width]`) and standard binary `ABCDE` row address bits with
+     *        zero external PSRAM reads or cache-set thrashing.
+     */
+    static void encodeRow8BitStaged(
+        const uint16_t* srcTop,
+        const uint16_t* srcBot,
+        uint16_t width,
+        uint8_t row,
+        uint8_t rowsPerFrame,
+        bool rot180,
+        const Hub75SpreadLuts64& luts64,
+        const uint16_t* latOeTemplate,
+        uint16_t* rowOut
+    );
+#endif
 };

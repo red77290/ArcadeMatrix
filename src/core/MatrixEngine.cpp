@@ -1,5 +1,6 @@
 #include "MatrixEngine.h"
 #include "RenderStats.h"
+#include <cstring>
 #if defined(SPIRAM_DMA_BUFFER)
 #include "rom/cache.h"   // the DMA engine reads PSRAM directly: every write below must be written back
 #endif
@@ -166,6 +167,7 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     m_oePin = _pins.oe;
     m_flipCount = 0;
     m_panel->initLuts(depth);
+    m_panel->invalidateFastEncodeState();
 
     // Initialize Presentation Backend FIRST, purely constructive with zero frame presentation
     LOGI("MatrixEngine", "Initializing Hub75PresentationBackend...");
@@ -293,8 +295,12 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
     }
 
     // Restore brightness
+    if (m_panel) m_panel->invalidateFastEncodeState();
     display->setBrightness8(prevBrightness);
-    if (m_panel) m_panel->rememberBrightness8(prevBrightness);
+    if (m_panel) {
+        m_panel->rememberBrightness8(prevBrightness);
+        m_panel->invalidateFastEncodeState();
+    }
 
     // Invariant P0: Commit Frame 0 to the newly allocated DMA pipeline via PresentationBackend before releasing OE
     bool frame0Committed = false;
@@ -351,15 +357,21 @@ void MatrixEngine::present() {
 
 void MatrixEngine::clear() {
     if (display) {
+        if (m_panel) m_panel->invalidateFastEncodeState();
         display->clearScreen();
+        if (m_panel) m_panel->invalidateFastEncodeState();
     }
 }
 
 void MatrixEngine::setBrightness(uint8_t brightness) {
     if (display) {
         if (brightness == 0) {
+            if (m_panel) m_panel->invalidateFastEncodeState();
             display->setBrightness8(0);
-            if (m_panel) m_panel->rememberBrightness8(0);
+            if (m_panel) {
+                m_panel->rememberBrightness8(0);
+                m_panel->invalidateFastEncodeState();
+            }
             return;
         }
         // brightness is 0-100 (percentage), setBrightness8 expects 0-255
@@ -367,13 +379,18 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
         if (scaledBrightness < 25) {
             scaledBrightness = 25; // Minimum floor to prevent driver chip OE pulse blanking
         }
+        if (m_panel) m_panel->invalidateFastEncodeState();
         display->setBrightness8(scaledBrightness);
-        if (m_panel) m_panel->rememberBrightness8(scaledBrightness);
+        if (m_panel) {
+            m_panel->rememberBrightness8(scaledBrightness);
+            m_panel->invalidateFastEncodeState();
+        }
     }
 }
 
 void MatrixEngine::setBlank(bool blank) {
     if (!display) return;
+    if (m_panel) m_panel->invalidateFastEncodeState();
     if (blank) {
         display->setBrightness8(0);
         m_blanked = true;
@@ -382,6 +399,7 @@ void MatrixEngine::setBlank(bool blank) {
         display->setBrightness8(b);
         m_blanked = false;
     }
+    if (m_panel) m_panel->invalidateFastEncodeState();
 }
 
 MatrixPanel_I2S_DMA* MatrixEngine::getDisplay() {
@@ -398,6 +416,157 @@ size_t FastMatrixPanel::getDmaAllocatedBytes() const {
     return Hub75DmaLayout::calculateBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
 }
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+struct FastMatrixPanel::SramEncodeScratch {
+    alignas(32) uint16_t srcTop[256];
+    alignas(32) uint16_t srcBot[256];
+    alignas(32) uint16_t latOeTemplate[8 * 256];
+    alignas(32) uint16_t rowOut[8 * 256];
+    Hub75SpreadLuts64 luts64;
+};
+
+FastMatrixPanel::~FastMatrixPanel() {
+    releaseFastEncodeResources();
+}
+
+void FastMatrixPanel::releaseFastEncodeResources() noexcept {
+    if (m_sramScratch) {
+        heap_caps_free(m_sramScratch);
+        m_sramScratch = nullptr;
+    }
+    if (m_presentedShadow) {
+        heap_caps_free(m_presentedShadow);
+        m_presentedShadow = nullptr;
+    }
+    m_cachedTemplateGen = 0U;
+    m_cachedShadowGen = 0U;
+}
+
+bool FastMatrixPanel::tryFastEncodeCanvas(
+    const uint16_t* canvas,
+    size_t canvasStridePixels,
+    uint32_t dirtyScanRows,
+    DmaRowSync rowSync,
+    void* syncCtx,
+    uint32_t& outEncodeUs
+) {
+    outEncodeUs = 0U;
+    if (!canvas || !initialized || !m_sramScratch || m_depth != 8U) {
+        return false;
+    }
+    if (m_cfg.line_decoder != HUB75_I2S_CFG::TYPE138) {
+        return false;
+    }
+
+    const int w = PIXELS_PER_ROW;
+    const int rpf = ROWS_PER_FRAME;
+    if (w <= 0 || w > 256 || (w & 1) != 0 || rpf <= 0 || rpf > 32) {
+        return false;
+    }
+    if (static_cast<int>(m_cfg.mx_height) != (rpf * 2)) {
+        return false;
+    }
+
+    auto& targetFb = frame_buffer[m_back];
+    if (static_cast<int>(targetFb.rowBits.size()) < rpf || !targetFb.rowBits[0]) {
+        return false;
+    }
+    if (targetFb.rowBits[0]->colour_depth != 8U || static_cast<int>(targetFb.rowBits[0]->width) != w) {
+        return false;
+    }
+
+    const uint32_t tplGen0 = m_templateGen.load(std::memory_order_acquire);
+    const uint32_t shdGen0 = m_shadowGen.load(std::memory_order_acquire);
+    const size_t planeWords = static_cast<size_t>(w) * 8U;
+    const size_t rowPlaneBytes = planeWords * sizeof(uint16_t);
+    const size_t rowSrcBytes = static_cast<size_t>(w) * sizeof(uint16_t);
+
+    if (m_cachedTemplateGen != tplGen0) {
+        const uint16_t* row0Ptr = targetFb.rowBits[0]->getDataPtr(0);
+        if (!row0Ptr) {
+            return false;
+        }
+        for (size_t i = 0; i < planeWords; ++i) {
+            m_sramScratch->latOeTemplate[i] = static_cast<uint16_t>(row0Ptr[i] & 0x00C0U);
+        }
+    }
+
+    const bool useShadow = (!m_double) && (m_presentedShadow != nullptr);
+    const bool shadowReady = useShadow && (m_cachedShadowGen == shdGen0) && (m_cachedTemplateGen == tplGen0);
+    const uint32_t allRowsMask = (rpf == 32) ? 0xFFFFFFFFU : ((1U << rpf) - 1U);
+    const uint32_t dirtyMask = (m_double || !shadowReady || m_cachedTemplateGen != tplGen0)
+        ? allRowsMask
+        : (dirtyScanRows & allRowsMask);
+
+    if (dirtyMask == 0U) {
+        return true;
+    }
+
+    const int lastDirtyRow = 31 - __builtin_clz(dirtyMask);
+    const size_t stride = (canvasStridePixels > 0U) ? canvasStridePixels : static_cast<size_t>(w);
+    const uint32_t tStart = micros();
+
+    for (int y = 0; y <= lastDirtyRow; ++y) {
+        if (rowSync) {
+            rowSync(syncCtx, static_cast<uint8_t>(y));
+        }
+        if (((dirtyMask >> y) & 1U) == 0U) {
+            continue;
+        }
+        if (!targetFb.rowBits[y]) {
+            continue;
+        }
+        uint16_t* dstRow = targetFb.rowBits[y]->getDataPtr(0);
+        if (!dstRow) {
+            continue;
+        }
+
+        std::memcpy(m_sramScratch->srcTop, canvas + static_cast<size_t>(y) * stride, rowSrcBytes);
+        std::memcpy(m_sramScratch->srcBot, canvas + static_cast<size_t>(y + rpf) * stride, rowSrcBytes);
+
+        if (useShadow) {
+            uint16_t* shTop = m_presentedShadow + static_cast<size_t>(y) * static_cast<size_t>(w);
+            uint16_t* shBot = m_presentedShadow + static_cast<size_t>(y + rpf) * static_cast<size_t>(w);
+            if (shadowReady &&
+                std::memcmp(m_sramScratch->srcTop, shTop, rowSrcBytes) == 0 &&
+                std::memcmp(m_sramScratch->srcBot, shBot, rowSrcBytes) == 0) {
+                continue;
+            }
+            std::memcpy(shTop, m_sramScratch->srcTop, rowSrcBytes);
+            std::memcpy(shBot, m_sramScratch->srcBot, rowSrcBytes);
+        }
+
+        Hub75BulkEncoder::encodeRow8BitStaged(
+            m_sramScratch->srcTop,
+            m_sramScratch->srcBot,
+            static_cast<uint16_t>(w),
+            static_cast<uint8_t>(y),
+            static_cast<uint8_t>(rpf),
+            false,
+            m_sramScratch->luts64,
+            m_sramScratch->latOeTemplate,
+            m_sramScratch->rowOut
+        );
+
+        std::memcpy(dstRow, m_sramScratch->rowOut, rowPlaneBytes);
+        Cache_WriteBack_Addr(reinterpret_cast<uint32_t>(dstRow), static_cast<uint32_t>(rowPlaneBytes));
+    }
+
+    const uint32_t tplGen1 = m_templateGen.load(std::memory_order_acquire);
+    const uint32_t shdGen1 = m_shadowGen.load(std::memory_order_acquire);
+    if (tplGen1 == tplGen0) {
+        m_cachedTemplateGen = tplGen0;
+        if (useShadow && shdGen1 == shdGen0) {
+            m_cachedShadowGen = shdGen0;
+        }
+    }
+
+    m_dirtyRows[m_back] = 0;
+    outEncodeUs = micros() - tStart;
+    return true;
+}
+#endif
+
 #if defined(SPIRAM_DMA_BUFFER)
 void FastMatrixPanel::flushBackbufferRow(uint8_t row) {
     if (!initialized) return;
@@ -412,6 +581,7 @@ void FastMatrixPanel::flushBackbufferRow(uint8_t row) {
 #endif
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
+    invalidateShadow();
     if (color != 0) {
         if (m_depth == 8) {
             MatrixPanel_I2S_DMA::fillScreen(color);
@@ -461,6 +631,36 @@ void FastMatrixPanel::setBuffering(bool doubleBuffered) {
     m_gdmaFirstDescAddr = 0;
     m_gdmaLastDescAddr = 0;
     m_gdmaTotalDescs = 0;
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    releaseFastEncodeResources();
+    if (initialized &&
+        m_cfg.getPixelColorDepthBits() == 8U &&
+        PIXELS_PER_ROW > 0U &&
+        PIXELS_PER_ROW <= 256U &&
+        (PIXELS_PER_ROW & 1U) == 0U &&
+        ROWS_PER_FRAME > 0U &&
+        ROWS_PER_FRAME <= 32U &&
+        m_cfg.line_decoder == HUB75_I2S_CFG::TYPE138) {
+        m_sramScratch = static_cast<SramEncodeScratch*>(
+            heap_caps_aligned_alloc(32, sizeof(SramEncodeScratch), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+        );
+        if (m_sramScratch) {
+            std::memset(m_sramScratch, 0, sizeof(SramEncodeScratch));
+            if (!doubleBuffered) {
+                const size_t rawShadowBytes =
+                    static_cast<size_t>(PIXELS_PER_ROW) * static_cast<size_t>(m_cfg.mx_height) * sizeof(uint16_t);
+                const size_t alignedShadowBytes = (rawShadowBytes + 63U) & ~static_cast<size_t>(63U);
+                m_presentedShadow = static_cast<uint16_t*>(
+                    heap_caps_aligned_alloc(64, alignedShadowBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                );
+                if (m_presentedShadow) {
+                    std::memset(m_presentedShadow, 0, alignedShadowBytes);
+                }
+            }
+        }
+    }
+    invalidateFastEncodeState();
 #endif
     initLuts(m_cfg.getPixelColorDepthBits());
 }
@@ -570,9 +770,16 @@ void FastMatrixPanel::initLuts(uint8_t depth) {
     if (depth > 8) depth = 8;
     m_depth = depth;
     Hub75BulkEncoder::generateLuts(depth, m_lut_r, m_lut_g, m_lut_b);
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    if (m_sramScratch && depth == 8U) {
+        Hub75BulkEncoder::generateSpreadLuts64(m_lut_r, m_lut_g, m_lut_b, m_sramScratch->luts64);
+    }
+    invalidateShadow();
+#endif
 }
 
 void FastMatrixPanel::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
+    invalidateShadow();
     if (m_depth == 8) {
         MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, color);
         return;
@@ -591,6 +798,7 @@ void FastMatrixPanel::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t co
 }
 
 void FastMatrixPanel::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+    invalidateShadow();
     if (m_depth == 8) {
         MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, color);
         return;
@@ -609,6 +817,7 @@ void FastMatrixPanel::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t co
 }
 
 void FastMatrixPanel::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    invalidateShadow();
     if (m_depth == 8) {
         MatrixPanel_I2S_DMA::fillRect(x, y, w, h, color);
         return;
@@ -628,6 +837,7 @@ void FastMatrixPanel::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint1
 }
 
 void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
+    invalidateShadow();
     if (m_depth == 8) {
         MatrixPanel_I2S_DMA::drawPixel(x, y, color);
         return;
@@ -726,6 +936,13 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
             params.rowSync = &Hub75SingleDmaScanChaser::callback;
             params.syncCtx = &scanChaser;
         }
+    }
+#endif
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(SPIRAM_DMA_BUFFER)
+    uint32_t fastEncUs = 0U;
+    if (tryFastEncodeCanvas(src, static_cast<size_t>(w), 0xFFFFFFFFU, params.rowSync, params.syncCtx, fastEncUs)) {
+        return;
     }
 #endif
 
