@@ -218,7 +218,7 @@ def main():
     while True:
         try:
             rom_path, game_title, system, state = parse_statefile()
-            if not system and not rom_path:
+            if state != "stopped" and not system and not rom_path:
                 time.sleep(0.1)
                 continue
 
@@ -780,7 +780,7 @@ def main():
     while True:
         try:
             rom_path, game_title, system, state = parse_statefile()
-            if not system and not rom_path:
+            if state != "stopped" and not system and not rom_path:
                 time.sleep(0.1)
                 continue
 
