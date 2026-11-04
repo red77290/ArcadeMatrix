@@ -12,23 +12,36 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 ---
 
+> [!TIP]
+> ## 🆕 DÉBUTANT ? Par où commencer ? (Matériel, Branchements, Dalles & Alimentation `5V`)
+> **Vous ne savez pas quelle carte acheter, quelles dalles choisir, quel ampérage `5V` prévoir ni comment configurer le Wi-Fi ?**
+>
+> ### 👉 **[📖 OUVRIR LE GUIDE DÉBUTANT COMPLET & SCHÉMAS EN COULEUR (`BEGINNER_GUIDE_FR.md`)](docs/BEGINNER_GUIDE_FR.md)**
+>
+> - 🔌 **3 montages** : sandwich sans soudure ni nappe **[Mortaca](https://www.mortaca.com/)** / **[BenFactory](https://benfactory.fr/categorie-produit/carte-arcade/)** (`128×32` max), tout-en-un **[Waveshare ESP32-S3](https://www.waveshare.com/esp32-s3-rgb-matrix.htm)** *(emboîtée au dos de la dalle + `256×64` HD & fonctions bonus)*, ou **schémas de soudure DIY en couleur** (`ESP32-S3 N16R8` ou `ESP32 Classique`).
+> - 🧩 **Dalles & Puissance `5V`** : équivalences (`128×64 P2` = taille `P4`, `P2.5` = taille `P5`), **USB-C `5V / 3A`** jusqu'en `128×32`, et **ampérage exact (`5A` à `30A`)** selon vos panneaux au-dessus.
+> - 📝 **Premier démarrage** : édition obligatoire du Wi-Fi (`ssid` / `password`) dans `config.json` sur la carte MicroSD, flash Web en 1 clic et pilotage sur `http://arcadematrix.local`.
+
+---
+
 > [!IMPORTANT]
 > ### ⚡ Installation Rapide via Navigateur Web (Web Installer)
 > Flashez votre carte ESP32 directement depuis votre navigateur (Chrome / Edge / Opera) en un clic sans aucun logiciel à installer !
 > 
 > 👉 **[🚀 Lancer ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/)**
 > 
-> | Version Firmware | Carte Matérielle Compatible | Bouton Web Installer |
-> | :--- | :--- | :--- |
-> | **ESP32-DevKit (Classique)** | ESP32-DevKitC, NodeMCU-32S, WROOM-32 (4MB Flash) | Sélectionnez **ESP32 (Standard)** |
-> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (32MB Flash + 16MB PSRAM (N32R16)) | Sélectionnez **ESP32-S3 (Waveshare)** |
+> | Version Firmware | Carte Matérielle Compatible | Résolution Max | Bouton Web Installer |
+> | :--- | :--- | :---: | :--- |
+> | **ESP32 Classique (`esp32dev`)** | ESP32 DevKit V1 / WROOM-32 30 broches (Mortaca, BenFactory ou DIY — sans PSRAM) | **`128×32` max** | **`Standard ESP32`** |
+> | **ESP32-S3 Générique (`esp32s3_n16r8`)** | ESP32-S3-DevKitC-1 44 broches DIY (8/16 Mo Quad Flash + 8 Mo PSRAM Octale) | **Jusqu'à `256×64` HD** | **`ESP32-S3 (N16R8 / N8R8)`** |
+> | **Waveshare ESP32-S3 (`esp32s3_waveshare`)** | Carte tout-en-un Waveshare ESP32-S3-RGB-Matrix (32 Mo Flash + 16 Mo PSRAM `N32R16V`) | **Jusqu'à `256×64` HD** | **`Waveshare ESP32-S3 (N32R16V)`** |
 
 ---
 
 ## 💾 Releases & Carte SD
 
 **[⬇️ Télécharger la dernière Release précompilée & Kit Carte SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
-- **Archives Firmware** : Choisissez `ArcadeMatrix-esp32dev.zip` ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte (contient `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` pour le flash manuel avec `esptool.py` - voir [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release)).
+- **Archives Firmware** : Choisissez `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip` ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte (contient `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` pour le flash manuel avec `esptool.py` - voir [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release)).
 - **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`config.json`, dossiers GIFs/MUGEN, et scripts d'indexation).
 
 
@@ -292,10 +305,39 @@ ArcadeMatrix se synchronise en temps réel avec vos consoles **Recalbox**, **Bat
 - **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, le streaming audio WebRadio, l'auto-rotation gyroscopique, et exploite les capteurs matériels intégrés (Décibelmètre, Température, DAC HP) directement.
 - **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte pleinement les animations, l'interface Web, MUGEN et désormais tous les moteurs cloud HTTPS/TLS (`crypto`, `stock`, `gnews`, `weather`) pour les matrices **128x32 / 64x32**. Les capteurs physiques audio/température sont absents des DevKits standards sauf câblage externe.
 
+---
+
+## 🛠️ Tutoriel Matériel Rapide : Branchements, Dalles & Alimentation `5V`
+
+> 📖 **Guide complet succinct avec tous les schémas en couleur :** **[`docs/BEGINNER_GUIDE_FR.md`](docs/BEGINNER_GUIDE_FR.md)**
+
+![Les 3 montages matériels ArcadeMatrix](docs/assets/guide/board_options_fr.png)
+
+### 1. Choisir et brancher sa carte (3 options) & configurer le Wi-Fi
+- **Option A — ESP32 Classique (30 broches) + Carte fille [Mortaca](https://www.mortaca.com/) ([dmdos.net](https://www.dmdos.net/)) ou [BenFactory](https://benfactory.fr/categorie-produit/carte-arcade/) *(Sans soudure, sans nappe — `128×32` max)* :** s'emboîte directement en sandwich sur le connecteur `HUB75 IN` au dos de la dalle n°1, avec l'ESP32 clipsé par-dessus. Compatible **`64×32` et `128×32` uniquement** *(pas de `128×64`)*.
+- **Option B — [Waveshare ESP32-S3-RGB-Matrix](https://www.waveshare.com/esp32-s3-rgb-matrix.htm) ([Wiki](https://docs.waveshare.com/ESP32-S3-RGB-Matrix)) *(Sans soudure — Jusqu'en `256×64` HD — Recommandée)* :** s'emboîte directement au dos de la dalle LED et ajoute les écrans **`128×64` / `256×64` HD**, les **4 horloges HD exclusives** (*Metal Slug*, *Pokédex*, *World Clock*, *Words*), **micro intégré** (décibels/FFT), **HP WebRadio**, **sonde `SHTC3`**, **gyroscope auto-rotation**, **RTC** et Showcase en PSRAM.
+- **Option C — Soudure DIY :** avec un **`ESP32-S3 (N16R8 / N8R8)` 44 broches** (8 Mo PSRAM → jusqu'en `256×64` HD + module MicroSD `3.3V` en `SD_MMC 1-bit`) ou un **ESP32 Classique 30 broches** (`128×32` max). 👉 **[Voir les 2 schémas de soudure en couleur](docs/BEGINNER_GUIDE_FR.md#option-c--montage-maison-à-souder-diy)**.
+- ⚠️ **Wi-Fi obligatoire dans `config.json` :** le Wi-Fi ne se règle pas depuis l'écran — avant d'insérer la MicroSD (`FAT32`), éditez **`config.json`** au Bloc-notes / TextEdit pour y mettre votre **`ssid` (`2.4 GHz`)** et votre **`password`**.
+
+### 2. Dalles compatibles (`Indoor HUB75`), Résolutions & Ampérage `5V` requis
+> 💡 **Astuce taille :** les dalles **`128×64` en `P2`** (`25,6×12,8 cm`) et **`P2.5`** (`32×16 cm`) sont très faciles à trouver et font **exactement la même taille physique qu'une dalle `P4` et `P5` (`64×32`)**, avec 4× plus de pixels !
+> ⚠️ **Alimentation : toujours `5 Volts (5V)` strictement** (jamais `12V` ni `24V`).
+
+| Résolution | Panneaux utilisés | Dimensions totales | Carte compatible | Alimentation `5V` & Ampérage à prévoir |
+| :--- | :--- | :--- | :--- | :--- |
+| **`64×32` / `128×32`** | `1×` ou **`2× 64×32`** (`P2.5`, `P3`, `P4`, `P5`) | `32×8 cm` (`2× P2.5`) • **`51,2×12,8 cm` (`2× P4`)** • `64×16 cm` (`2× P5`) | ESP32 Classique ou ESP32-S3 | **USB-C `5V / 3A` (15W) OK** en luminosité normale *(ou `5V / 5A` à 100 % sur `P4`/`P5`)* |
+| **`128 × 64`** | **`1× 128×64`** (`P2`, `P2.5`, `P3`) | `25,6×12,8 cm` (`P2`) • `32×16 cm` (`P2.5`) • `38,4×19,2 cm` (`P3`) | **ESP32-S3 uniquement** | Alim dédiée **`5V / 5A à 6A`** (`25W–30W`) |
+| **`256 × 64` HD** | **`2× 128×64`** côte à côte (`P2`, `P2.5`, `P3`) | **`51,2×12,8 cm` (`2× P2` = DMD `2× P4`)** • **`64×16 cm` (`2× P2.5` = `2× P5`)** • `76,8×19,2 cm` (`2× P3`) | **ESP32-S3 uniquement** | • **`2× P2`** : **`5V / 8A à 10A`** (`40–50W`)<br>• **`2× P2.5` / `P3`** : **`5V / 10A à 12A`** (`50–60W`) |
+| **`256 × 64` (8 dalles)** | **`8× 64×32`** (`4×2` en `P2.5`, `P3`, `P4`, `P5`) | `76,8×19,2 cm` (`8× P3`) • **`102,4×25,6 cm` (`8× P4`)** • `128×32 cm` (`8× P5`) | *Raspberry Pi ([ArcadeMatrix_RPi](https://github.com/red77290/ArcadeMatrix_RPi))* | • **`8× P2.5/P3`** : **`5V / 20A`** (`100W`)<br>• **`8× P4/P5`** : **`5V / 25A à 30A`** (`125–150W`) |
+
+👉 **[Consulter le Guide Débutant Complet (Schémas en couleur, `config.json` & Dépannage)](docs/BEGINNER_GUIDE_FR.md)**
+
+---
+
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
-- Pour 128x32 : un ESP32 WROOM standard suffit (`pio run -e esp32dev`).
-- Pour 256x64 : un **ESP32-S3 avec PSRAM** est requis (`pio run -e esp32s3_waveshare`).
+- Pour `128x32` max : un ESP32 WROOM standard suffit (`pio run -e esp32dev`).
+- Pour `128x64` / `256x64` : un **ESP32-S3 avec PSRAM** est requis (`pio run -e esp32s3_waveshare` pour la carte Waveshare `N32R16V`, ou `pio run -e esp32s3_n16r8` pour un DevKit `N16R8 / N8R8`).
 
 Exécutez la commande suivante pour compiler :
 ```bash
@@ -303,6 +345,7 @@ pio run -e esp32s3_waveshare
 ```
 
 ## 📚 Documentation complémentaire
+- **[🆕 Guide Complet Débutant (Cartes Mortaca / BenFactory / Waveshare, Soudure, Dalles P2–P5, Alimentation & Utilisation)](docs/BEGINNER_GUIDE_FR.md)**
 - [Premiers pas (installation de PlatformIO, compilation, flash, logs)](docs/GETTING_STARTED_FR.md)
 - [Web Installer (flash depuis votre navigateur, sans CLI)](https://red77290.github.io/ArcadeMatrix/) ([guide hors-ligne](webinstaller/README_FR.md))
 - [Guide matériel](docs/HARDWARE_FR.md)
