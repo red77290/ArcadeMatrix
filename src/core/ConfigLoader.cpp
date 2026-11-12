@@ -693,8 +693,18 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     if (sdStorage.exists("/config/hardware.json") && sdStorage.exists("/config/system.json")) {
         LOGI("ConfigLoader", "Loading modular configuration from /config/...");
         if (mgr.loadAll(*this)) {
-            if (wifi.ssid.isEmpty()) {
+            if (wifi.ssid.isEmpty() || wifi.ssid == "MyNetwork") {
                 autoHealNetworkFromBackups(sdStorage, mgr, filepath);
+            }
+            if (sdStorage.exists(filepath)) {
+                String bakPath = String(filepath) + ".bak";
+                if (!sdStorage.exists(bakPath.c_str())) {
+                    String legacyContent;
+                    if (sdStorage.readString(filepath, legacyContent) && legacyContent.length() >= 16) {
+                        sdStorage.writeStringAtomic(bakPath.c_str(), legacyContent);
+                    }
+                }
+                sdStorage.remove(filepath);
             }
             bool hadPlaylist = sdStorage.exists("/config/playlist.json");
             ConfigSanitizer::sanitize(*this, !hadPlaylist);
@@ -825,7 +835,7 @@ bool __attribute__((noinline)) ConfigLoader::autoHealNetworkFromBackups(
     ModularConfigManager& mgr,
     const char* filepath
 ) {
-    if (!wifi.ssid.isEmpty()) {
+    if (!wifi.ssid.isEmpty() && wifi.ssid != "MyNetwork") {
         return false;
     }
     String bakPath = String(filepath) + ".bak";
@@ -840,7 +850,7 @@ bool __attribute__((noinline)) ConfigLoader::autoHealNetworkFromBackups(
             break;
         }
         if (!backupCfg->parseFromJson(raw.c_str())) continue;
-        if (!backupCfg->wifi.ssid.isEmpty()) {
+        if (!backupCfg->wifi.ssid.isEmpty() && backupCfg->wifi.ssid != "MyNetwork") {
             LOGW("ConfigLoader", "Auto-healing empty Wi-Fi credentials in /config/network.json from %s (SSID: '%s')",
                  candidates[i], backupCfg->wifi.ssid.c_str());
             wifi = backupCfg->wifi;
@@ -925,14 +935,10 @@ bool ConfigLoader::saveDomainsToSD(uint8_t domainMask, const char* filepath) {
         if (modularOk) {
             LOGI("ConfigLoader", "Modular configuration (mask=0x%02X) saved successfully to /config/.",
                  static_cast<unsigned>(domainMask));
+            return true;
         } else {
             LOGW("ConfigLoader", "Modular configuration save (mask=0x%02X) encountered an error.",
                  static_cast<unsigned>(domainMask));
-        }
-        // For partial domain saves on low-heap devices, avoid rewriting monolithic /config.json
-        // unless plenty of contiguous heap is available; /config/ domain files are authoritative.
-        if (modularOk && domainMask != CONFIG_DOMAIN_ALL && ESP.getMaxAllocHeap() < 16384U) {
-            return true;
         }
     }
 

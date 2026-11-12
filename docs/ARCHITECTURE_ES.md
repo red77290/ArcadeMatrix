@@ -15,7 +15,7 @@ Este documento es la referencia **exhaustiva y profunda** de la arquitectura de 
 3. [El Contrato del Motor (Modelo `IEngine`)](#3-el-contrato-del-motor-modelo-iengine)
 4. [Autodescubrimiento: Registry, Registrar, Handlers y Gating](#4-autodescubrimiento-registry-registrar-handlers-y-gating)
 5. [Ciclo de Vida de Instancia "Lazy-Once"](#5-ciclo-de-vida-de-instancia-lazy-once)
-6. [Modelo de Configuración: `config.json` → Instancias](#6-modelo-de-configuraci%C3%B3n-configjson--instancias)
+6. [Modelo de Configuración: `/config/` → Instancias](#6-modelo-de-configuraci%C3%B3n-config--instancias)
 7. [Autorreparación: El `ConfigSanitizer`](#7-autorreparaci%C3%B3n-el-configsanitizer)
 8. [Propagación y Recarga en Caliente sin Reinicio](#8-propagaci%C3%B3n-y-recarga-en-caliente-sin-reinicio)
 9. [WebUI Dinámica y Endpoints de Opciones](#9-webui-din%C3%A1mica-y-endpoints-de-opciones)
@@ -210,7 +210,7 @@ Las transiciones siguen un ciclo atómico:
 Si la asignación de memoria falla durante `initialize(new)`:
 - El sistema activa un **Safe Fallback calificado estáticamente** (0 PSRAM, 0 audio, 0 red, $\le 2$ KB acotados).
 - Nunca se intenta reasignar el motor pesado descartado, garantizando la permanencia ininterrumpida de la pantalla.
-- La configuración persistente (`config.json`) se guarda únicamente tras la activación exitosa.
+- La configuración persistente (`/config/*.json`) se guarda únicamente tras la activación exitosa.
 
 ---
 
@@ -222,7 +222,9 @@ Si la asignación de memoria falla durante `initialize(new)`:
 
 ---
 
-## 6. Modelo de Configuración: `config.json` → Instancias
+## 6. Modelo de Configuración: `/config/` → Instancias
+
+ArcadeMatrix utiliza una arquitectura de configuración modular aislada por dominio en `/config/` (`network.json`, `hardware.json`, `system.json`, `playlist.json` e `instances/<id>.json`), unificada en memoria en `SystemConfig`:
 
 ```json
 {

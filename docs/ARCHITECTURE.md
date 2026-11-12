@@ -15,7 +15,7 @@ This document is the **deep, exhaustive** reference for the ArcadeMatrix archite
 3. [The Engine Contract (`IEngine` Model)](#3-the-engine-contract-iengine-model)
 4. [Auto-Discovery: Registry, Registrar, Handlers & Gating](#4-auto-discovery-registry-registrar-handlers--gating)
 5. [The "Lazy-Once" Instance Lifecycle](#5-the-lazy-once-instance-lifecycle)
-6. [Configuration Model: `config.json` → Instances](#6-configuration-model-configjson--instances)
+6. [Configuration Model: `/config/` → Instances](#6-configuration-model-config--instances)
 7. [Self-Healing: the `ConfigSanitizer`](#7-self-healing-the-configsanitizer)
 8. [Config Propagation & Zero-Reboot Hot Reload](#8-config-propagation--zero-reboot-hot-reload)
 9. [Schema-Driven Dynamic UI & Options Endpoints](#9-schema-driven-dynamic-ui--options-endpoints)
@@ -256,7 +256,7 @@ Transitions follow an atomic lifecycle:
 If dynamic memory allocation fails during `initialize(new)`:
 - The system activates a **statically qualified Safe Fallback** engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
 - The system never attempts an uncertain re-allocation of the discarded heavy engine, ensuring unbroken display operation.
-- Persistent configuration (`config.json`) is committed only after activation success.
+- Persistent configuration (`/config/*.json`) is committed only after activation success.
 
 ---
 
@@ -283,9 +283,9 @@ stateDiagram-v2
 
 ---
 
-## 6. Configuration Model: `config.json` → Instances
+## 6. Configuration Model: `/config/` → Instances
 
-ArcadeMatrix uses an instance-based architecture:
+ArcadeMatrix uses a modular, domain-isolated configuration architecture under `/config/` (`network.json`, `hardware.json`, `system.json`, `playlist.json`, and `instances/<id>.json`), unified in memory into `SystemConfig`:
 
 ```json
 {
@@ -313,7 +313,7 @@ The `ConfigSanitizer` enforces schema validity at startup and on every REST API 
 
 ```mermaid
 flowchart TD
-    RAW["Raw config.json"] --> SAN["ConfigSanitizer::sanitizeInstances()"]
+    RAW["Raw /config/*.json"] --> SAN["ConfigSanitizer::sanitizeInstances()"]
     SAN --> CHECK_ENG{Engine exists in Registry?}
     CHECK_ENG -->|No| PRUNE["Prune Instance & Rotation Entries"]
     CHECK_ENG -->|Yes| CHECK_FIELDS["Validate Fields against Schema"]

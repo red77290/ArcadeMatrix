@@ -2,7 +2,7 @@
 """
 scripts/package_sdcard.py
 Automates validation and packaging of the ArcadeMatrix SD Card distribution bundle (ArcadeMatrix-sdcard.zip).
-Ensures modular domain configuration (/config/) and legacy fallback (/config.json) are properly formatted.
+Ensures modular domain configuration (/config/) is properly formatted and no legacy monolithic config.json is shipped.
 """
 
 import os
@@ -77,21 +77,11 @@ def validate_sd_configuration():
                 print(f"❌ Failed to parse {ifile}: {e}")
                 errors += 1
 
-    # 2. Validate legacy monolithic fallback (/config.json)
+    # 2. Ensure legacy monolithic /config.json is not bundled in the starter kit
     legacy_file = os.path.join(SD_CARD_DIR, "config.json")
-    if not os.path.isfile(legacy_file):
-        print(f"❌ Missing legacy fallback: {legacy_file}")
+    if os.path.isfile(legacy_file):
+        print(f"❌ Obsolete monolithic config.json found in starter kit (must only ship /config/): {legacy_file}")
         errors += 1
-    else:
-        try:
-            with open(legacy_file, "r", encoding="utf-8") as f:
-                leg_data = json.load(f)
-            if "matrix" in leg_data and "render_pipeline" not in leg_data["matrix"]:
-                print("❌ config.json matrix object is missing 'render_pipeline'")
-                errors += 1
-        except Exception as e:
-            print(f"❌ Failed to parse legacy config.json: {e}")
-            errors += 1
 
     if errors == 0:
         print("  ✓ All SD card configuration files are valid.")
@@ -149,13 +139,15 @@ def package_sdcard_zip(output_zip_path=DEFAULT_ZIP_PATH):
             "config/system.json",
             "config/network.json",
             "config/playlist.json",
-            "config.json",
             "README.md",
         ]
         for exp in expected_entries:
             if exp not in namelist:
                 print(f"❌ Zip missing required file: {exp}")
                 return False
+        if "config.json" in namelist:
+            print("❌ Zip must not contain legacy root config.json")
+            return False
         # Test CRC of all files in zip
         bad_file = zf.testzip()
         if bad_file:

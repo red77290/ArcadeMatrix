@@ -15,7 +15,7 @@ Ce document est la référence **exhaustive et approfondie** de l'architecture A
 3. [Le Contrat Moteur (Modèle `IEngine`)](#3-le-contrat-moteur-modèle-iengine)
 4. [Auto-Découverte : Registry, Registrar, Handlers & Gating](#4-auto-découverte--registry-registrar-handlers--gating)
 5. [Cycle de Vie d'Instance "Lazy-Once"](#5-cycle-de-vie-dinstance-lazy-once)
-6. [Modèle de Configuration : `config.json` → Instances](#6-modèle-de-configuration--configjson--instances)
+6. [Modèle de Configuration : `/config/` → Instances](#6-modèle-de-configuration--config--instances)
 7. [Auto-Réparation : Le `ConfigSanitizer`](#7-auto-réparation--le-configsanitizer)
 8. [Propagation & Rechargement à Chaud sans Reboot](#8-propagation--rechargement-à-chaud-sans-reboot)
 9. [WebUI Dynamique & Endpoints d'Options](#9-webui-dynamique--endpoints-doptions)
@@ -211,7 +211,7 @@ Les transitions obéissent à un cycle de vie transactionnel :
 En cas d'échec d'allocation dynamique lors de `initialize(new)` :
 - Le système bascule automatiquement sur un **Safe Fallback statiquement qualifié** (0 PSRAM, 0 audio, 0 réseau, mémoire bornée $\le 2$ Ko).
 - Le système ne tente jamais une réallocation aléatoire de l'ancien moteur lourd déchargé, garantissant la permanence de l'affichage.
-- La configuration persistée (`config.json`) n'est enregistrée qu'après confirmation du succès d'activation.
+- La configuration persistée (`/config/*.json`) n'est enregistrée qu'après confirmation du succès d'activation.
 
 ---
 
@@ -223,7 +223,9 @@ En cas d'échec d'allocation dynamique lors de `initialize(new)` :
 
 ---
 
-## 6. Modèle de Configuration : `config.json` → Instances
+## 6. Modèle de Configuration : `/config/` → Instances
+
+ArcadeMatrix utilise une architecture de configuration modulaire isolée par domaine dans `/config/` (`network.json`, `hardware.json`, `system.json`, `playlist.json` et `instances/<id>.json`), unifiée en mémoire dans `SystemConfig` :
 
 ```json
 {

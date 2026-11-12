@@ -3,17 +3,16 @@
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
 This folder is a ready-to-use starting point for your SD card: copy its contents to the root of
-a **FAT32**-formatted SD card, edit the modular domain files in `config/` (or legacy `config.json`), and you're ready to boot.
+a **FAT32**-formatted SD card, edit your Wi-Fi credentials in `config/network.json` (and panel geometry in `config/hardware.json` if needed), and you're ready to boot.
 
 ```
 sdCard/
   ├─ config/                <- modular domain settings (v4.0+)
   │    ├─ hardware.json     <- panel dimensions, color depth, driver chip, pin settings
   │    ├─ system.json       <- timezone, night mode, brightness, language
-  │    ├─ network.json      <- Wi-Fi credentials and MQTT settings
+  │    ├─ network.json      <- Wi-Fi credentials (ssid/password) and MQTT/Showcase settings
   │    ├─ playlist.json     <- engine rotation sequence and intervals
   │    └─ instances/        <- individual engine configurations (*.json)
-  ├─ config.json            <- legacy monolithic fallback (auto-migrated to config/ if present)
   ├─ gifs/                  <- sample GIF playlist manifest (see docs/... or gif_indexation/ below)
   ├─ gifs_tate/             <- vertical (Tate) library (e.g. 32x128 sample for rotated panels)
   ├─ fighters_32/           <- sample MUGEN sprite export for 32px-tall matrices

@@ -402,7 +402,7 @@ MyEngine::~MyEngine() {
 
 ```cpp
 struct ConfigField {
-    String id;                          // Clave en config.json
+    String id;                          // Clave en /config/instances/<id>.json
     ConfigType type;                    // BOOLEAN, INTEGER, FLOAT, STRING, ENUM, COLOR, LIST
     String label;                       // Etiqueta en UI
     String description;                 // Información emergente
@@ -862,7 +862,7 @@ CANONICAL_THEMES = [
 ]
 ```
 
-La interfaz Web mostrará automáticamente la nueva opción (con cero sobrecarga de RAM en el ESP32), la guardará en `config.json` y la recargará en caliente sin reiniciar.
+La interfaz Web mostrará automáticamente la nueva opción (con cero sobrecarga de RAM en el ESP32), la guardará en `/config/instances/<id>.json` y la recargará en caliente sin reiniciar.
 
 ---
 

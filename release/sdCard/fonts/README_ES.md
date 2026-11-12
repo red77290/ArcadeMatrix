@@ -25,6 +25,5 @@ desplazante, en lugar de las ~6 fuentes compiladas en el firmware.
 - **Interfaz Web (recomendado)**: Settings > Clock o Date > menú desplegable "Font". Se rellena
   en vivo mediante `GET /api/fonts`, que lista todos los archivos `.amf` encontrados aquí - sin
   necesidad de reiniciar.
-- **`config.json`**: define `CLOCK_FONT_PATH=/fonts/mifuente.amf` bajo `[TIME]` y/o
-  `DATE_FONT_PATH=/fonts/mifuente.amf` bajo `[DATE]`, o `CUSTOM_FONT_PATH=/fonts/mifuente.amf`
-  bajo `[FONTS]` para el motor de mensaje desplazante.
+- **`config/instances/<id>.json`**: define `"font": "/fonts/mifuente.amf"` dentro del bloque `"config"`
+  del archivo de instancia `clock`, `date` o `message`.

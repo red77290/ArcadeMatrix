@@ -20,7 +20,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 >
 > - 🔌 **3 montages** : sandwich sans soudure ni nappe **[Mortaca](https://www.mortaca.com/)** / **[BenFactory](https://benfactory.fr/categorie-produit/carte-arcade/)** (`128×32` max), tout-en-un **[Waveshare ESP32-S3](https://www.waveshare.com/esp32-s3-rgb-matrix.htm)** *(emboîtée au dos de la dalle + `256×64` HD & fonctions bonus)*, ou **schémas de soudure DIY en couleur** (`ESP32-S3 N16R8` ou `ESP32 Classique`).
 > - 🧩 **Dalles & Puissance `5V`** : équivalences (`128×64 P2` = taille `P4`, `P2.5` = taille `P5`), **USB-C `5V / 3A`** jusqu'en `128×32`, et **ampérage exact (`5A` à `30A`)** selon vos panneaux au-dessus.
-> - 📝 **Premier démarrage** : édition obligatoire du Wi-Fi (`ssid` / `password`) dans `config.json` sur la carte MicroSD, flash Web en 1 clic et pilotage sur `http://arcadematrix.local`.
+> - 📝 **Premier démarrage** : édition obligatoire du Wi-Fi (`ssid` / `password`) dans `config/network.json` sur la carte MicroSD, flash Web en 1 clic et pilotage sur `http://arcadematrix.local`.
 
 ---
 
@@ -42,7 +42,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 **[⬇️ Télécharger la dernière Release précompilée & Kit Carte SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Archives Firmware** : Choisissez `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip` ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte (contient `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` pour le flash manuel avec `esptool.py` - voir [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release)).
-- **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`config.json`, dossiers GIFs/MUGEN, et scripts d'indexation).
+- **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (dossier `config/` avec `network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`, dossiers GIFs/MUGEN, et scripts d'indexation).
 
 
 ## 🕹️ Moteurs Intégrés & Simulations Matérielles
@@ -150,23 +150,28 @@ ArcadeMatrix intègre un pipeline d'exécution ultra-optimisé avec gestion inte
 Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressembler à ceci :
 ```
 SD:/
-  ├─ config.json
+  ├─ config/
+  │   ├─ network.json     <- Wi-Fi (ssid/password), MQTT & Showcase
+  │   ├─ hardware.json    <- Taille des dalles (width/height/chainLength), couleur & driver
+  │   ├─ system.json      <- Fuseau horaire, langue, mode nuit & auth API
+  │   ├─ playlist.json    <- Ordre et durées de rotation au repos
+  │   └─ instances/       <- Réglages de chaque moteur (*.json)
   ├─ gifs/
-  │  │   └─ mario.gif
-  └─ fighters_32/
-      ├─ backgrounds/
-      │   └─ stage1.raw
-      └─ ryu/
-          ├─ idle.fgt
-          └─ attack.fgt
+  │   └─ mario.gif
+  ├─ fighters_32/
+  │   ├─ backgrounds/
+  │   │   └─ stage1.raw
+  │   └─ ryu/
+  │       ├─ idle.fgt
+  │       └─ attack.fgt
   └─ fighters_64/
       └─ (même structure pour les panneaux de 64px de haut)
 ```
-*Remarque : le dossier `www/` n'est plus nécessaire sur la carte SD, car l'interface Web est désormais directement intégrée au firmware ESP32 !*
+*Remarque : le dossier `www/` n'est plus nécessaire sur la carte SD, car l'interface Web est désormais directement intégrée au firmware ESP32 ! Si vous migrez depuis la v3 avec un ancien `config.json` à la racine, il est automatiquement converti vers `config/` au démarrage.*
 
-## Configuration (`config.json`)
-Le fichier `config.json` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres liés à la taille de la matrice, à la profondeur de couleur, aux thèmes d'horloge, à l'ordre de rotation au repos et aux arrière-plans des sprites MUGEN.
-Ouvrez le `config.json` fourni dans le dossier `release/sdCard/` pour voir toutes les valeurs possibles.
+## Configuration (`config/`)
+Le dossier `config/` situé à la racine de votre carte SD répartit les réglages par domaine : `config/network.json` (identifiants Wi-Fi, MQTT, Showcase), `config/hardware.json` (taille de la matrice, profondeur de couleur, driver), `config/system.json` (fuseau horaire, langue, mode nuit), `config/playlist.json` (ordre de rotation au repos) et `config/instances/*.json` (configurations des moteurs).
+Ouvrez les fichiers fournis dans le dossier `release/sdCard/config/` (ou consultez `docs/CONFIGURATION_FR.md`) pour voir toutes les valeurs possibles.
 
 ## Extraction des sprites MUGEN (script `mugen_extractor.py`)
 Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichiers bruts `.fgt`. Comme l'ESP32 n'est pas assez puissant pour décoder nativement les formats complexes de personnages MUGEN, nous fournissons un script Python sur mesure pour les convertir et générer un manifeste `index.txt` contenant des boîtes englobantes parfaites et les valeurs de sol virtuel.
@@ -186,7 +191,7 @@ Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichi
 Pour tous les détails, consultez la documentation dans `tools/mugen_extractor/README_FR.md`.
 
 ### Arrière-plans des sprites
-Les combattants et le module Date peuvent afficher un décor d'arène en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/` et en le sélectionnant via l'option `bg_sprite` de votre instance `date` dans `config.json` (ou depuis la Web UI) :
+Les combattants et le module Date peuvent afficher un décor d'arène en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/` et en le sélectionnant via l'option `bg_sprite` de votre instance `date` dans `config/instances/date_main.json` (ou depuis la Web UI) :
 ```json
 {
   "instance_id": "date_main",
@@ -317,7 +322,7 @@ ArcadeMatrix se synchronise en temps réel avec vos consoles **Recalbox**, **Bat
 - **Option A — ESP32 Classique (30 broches) + Carte fille [Mortaca](https://www.mortaca.com/) ([dmdos.net](https://www.dmdos.net/)) ou [BenFactory](https://benfactory.fr/categorie-produit/carte-arcade/) *(Sans soudure, sans nappe — `128×32` max)* :** s'emboîte directement en sandwich sur le connecteur `HUB75 IN` au dos de la dalle n°1, avec l'ESP32 clipsé par-dessus. Compatible **`64×32` et `128×32` uniquement** *(pas de `128×64`)*.
 - **Option B — [Waveshare ESP32-S3-RGB-Matrix](https://www.waveshare.com/esp32-s3-rgb-matrix.htm) ([Wiki](https://docs.waveshare.com/ESP32-S3-RGB-Matrix)) *(Sans soudure — Jusqu'en `256×64` HD — Recommandée)* :** s'emboîte directement au dos de la dalle LED et ajoute les écrans **`128×64` / `256×64` HD**, les **4 horloges HD exclusives** (*Metal Slug*, *Pokédex*, *World Clock*, *Words*), **micro intégré** (décibels/FFT), **HP WebRadio**, **sonde `SHTC3`**, **gyroscope auto-rotation**, **RTC** et Showcase en PSRAM.
 - **Option C — Soudure DIY :** avec un **`ESP32-S3 (N16R8 / N8R8)` 44 broches** (8 Mo PSRAM → jusqu'en `256×64` HD + module MicroSD `3.3V` en `SD_MMC 1-bit`) ou un **ESP32 Classique 30 broches** (`128×32` max). 👉 **[Voir les 2 schémas de soudure en couleur](docs/BEGINNER_GUIDE_FR.md#option-c--montage-maison-à-souder-diy)**.
-- ⚠️ **Wi-Fi obligatoire dans `config.json` :** le Wi-Fi ne se règle pas depuis l'écran — avant d'insérer la MicroSD (`FAT32`), éditez **`config.json`** au Bloc-notes / TextEdit pour y mettre votre **`ssid` (`2.4 GHz`)** et votre **`password`**.
+- ⚠️ **Wi-Fi obligatoire dans `config/network.json` :** le Wi-Fi ne se règle pas depuis l'écran — avant d'insérer la MicroSD (`FAT32`), éditez **`config/network.json`** au Bloc-notes / TextEdit pour y mettre votre **`ssid` (`2.4 GHz`)** et votre **`password`**.
 
 ### 2. Dalles compatibles (`Indoor HUB75`), Résolutions & Ampérage `5V` requis
 > 💡 **Astuce taille :** les dalles **`128×64` en `P2`** (`25,6×12,8 cm`) et **`P2.5`** (`32×16 cm`) sont très faciles à trouver et font **exactement la même taille physique qu'une dalle `P4` et `P5` (`64×32`)**, avec 4× plus de pixels !
@@ -330,7 +335,7 @@ ArcadeMatrix se synchronise en temps réel avec vos consoles **Recalbox**, **Bat
 | **`256 × 64` HD** | **`2× 128×64`** côte à côte (`P2`, `P2.5`, `P3`) | **`51,2×12,8 cm` (`2× P2` = DMD `2× P4`)** • **`64×16 cm` (`2× P2.5` = `2× P5`)** • `76,8×19,2 cm` (`2× P3`) | **ESP32-S3 uniquement** | • **`2× P2`** : **`5V / 8A à 10A`** (`40–50W`)<br>• **`2× P2.5` / `P3`** : **`5V / 10A à 12A`** (`50–60W`) |
 | **`256 × 64` (8 dalles)** | **`8× 64×32`** (`4×2` en `P2.5`, `P3`, `P4`, `P5`) | `76,8×19,2 cm` (`8× P3`) • **`102,4×25,6 cm` (`8× P4`)** • `128×32 cm` (`8× P5`) | *Raspberry Pi ([ArcadeMatrix_RPi](https://github.com/red77290/ArcadeMatrix_RPi))* | • **`8× P2.5/P3`** : **`5V / 20A`** (`100W`)<br>• **`8× P4/P5`** : **`5V / 25A à 30A`** (`125–150W`) |
 
-👉 **[Consulter le Guide Débutant Complet (Schémas en couleur, `config.json` & Dépannage)](docs/BEGINNER_GUIDE_FR.md)**
+👉 **[Consulter le Guide Débutant Complet (Schémas en couleur, `config/network.json` & Dépannage)](docs/BEGINNER_GUIDE_FR.md)**
 
 ---
 

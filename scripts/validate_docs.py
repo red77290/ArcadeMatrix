@@ -5,7 +5,6 @@ import re
 import json
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SD_CONF_PATH = os.path.join(ROOT_DIR, "release", "sdCard", "config.json")
 
 REQUIRED_DOC_FILES = [
     "README.md",
@@ -74,43 +73,12 @@ def check_doc_file(rel_path):
         return True
     return False
 
-def check_sd_config_json():
-    if not os.path.exists(SD_CONF_PATH):
-        print(f"❌ SD Card config.json file missing: {SD_CONF_PATH}")
-        return False
-
-    try:
-        with open(SD_CONF_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"❌ release/sdCard/config.json parsing error: {e}")
-        return False
-
-    errors = 0
-    for section, req_keys in EXPECTED_CONFIG_SCHEMA.items():
-        if section not in data:
-            print(f"❌ release/sdCard/config.json: Missing expected object '{section}'.")
-            errors += 1
-            continue
-        for k in req_keys:
-            if k not in data[section]:
-                print(f"❌ release/sdCard/config.json: Missing required key '{k}' in object '{section}'.")
-                errors += 1
-
-    if "instances" not in data or not isinstance(data["instances"], list):
-        print(f"❌ release/sdCard/config.json: Missing or invalid 'instances' array.")
-        errors += 1
-
-    if "rotation" not in data or not isinstance(data["rotation"], list):
-        print(f"❌ release/sdCard/config.json: Missing or invalid 'rotation' array.")
-        errors += 1
-
-    if errors == 0:
-        print("  ✓ release/sdCard/config.json structure valid.")
-        return True
-    return False
-
 def check_modular_sd_config():
+    legacy_conf = os.path.join(ROOT_DIR, "release", "sdCard", "config.json")
+    if os.path.exists(legacy_conf):
+        print(f"❌ Obsolete monolithic config.json must not exist in release/sdCard/: {legacy_conf}")
+        return False
+
     conf_dir = os.path.join(ROOT_DIR, "release", "sdCard", "config")
     if not os.path.isdir(conf_dir):
         print(f"❌ Modular SD Card config directory missing: {conf_dir}")
@@ -125,9 +93,28 @@ def check_modular_sd_config():
         try:
             with open(p, "r", encoding="utf-8") as f:
                 d = json.load(f)
-            if req == "hardware.json" and "render_pipeline" not in d and "renderPipeline" not in d:
-                print(f"❌ {p} missing required 'render_pipeline' key")
-                return False
+            if req == "hardware.json":
+                if "render_pipeline" not in d and "renderPipeline" not in d:
+                    print(f"❌ {p} missing required 'render_pipeline' key")
+                    return False
+                if "width" not in d or "height" not in d:
+                    print(f"❌ {p} missing required 'width'/'height' keys")
+                    return False
+            elif req == "system.json":
+                if "timezone" not in d or "night_mode_enabled" not in d:
+                    print(f"❌ {p} missing required system keys")
+                    return False
+                if d.get("api_token", "") != "":
+                    print(f"❌ {p} must ship with an empty 'api_token'")
+                    return False
+            elif req == "network.json":
+                if "wifi" not in d or "ssid" not in d["wifi"] or "password" not in d["wifi"]:
+                    print(f"❌ {p} missing required 'wifi.ssid' / 'wifi.password' keys")
+                    return False
+            elif req == "playlist.json":
+                if not isinstance(d, list):
+                    print(f"❌ {p} must be a JSON array")
+                    return False
         except Exception as e:
             print(f"❌ {p} JSON error: {e}")
             return False
@@ -185,14 +172,11 @@ def check_build_info():
     return True
 
 def main():
-    print("🔍 Validating Documentation files & SD config.json...")
+    print("🔍 Validating Documentation files & SD modular config/...")
     all_ok = True
     for doc in REQUIRED_DOC_FILES:
         if not check_doc_file(doc):
             all_ok = False
-
-    if not check_sd_config_json():
-        all_ok = False
 
     if not check_modular_sd_config():
         all_ok = False

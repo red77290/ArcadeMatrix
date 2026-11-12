@@ -1054,7 +1054,7 @@ paths:
       tags:
         - Configuration
       summary: List all configured engine instances
-      description: Returns instances currently loaded in config.json.
+      description: Returns instances currently loaded from /config/instances/*.json.
       responses:
         '200':
           description: List of instances

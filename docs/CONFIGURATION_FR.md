@@ -1,36 +1,30 @@
 🇬🇧 [English](CONFIGURATION.md) | 🇫🇷 Français | 🇪🇸 [Español](CONFIGURATION_ES.md)
 
-# Configuration Détaillée (config.json) — ESP32
+# Configuration Détaillée (Domaines Modulaires `/config/`) — ESP32
 
-Le système de configuration repose exclusivement sur un fichier unique `config.json` situé sur le stockage LittleFS / SD. Il pilote le driver DMA de la matrice, le réseau, MQTT, le système, l'orientation de l'affichage, la sécurité API, et les instances indépendantes de chaque moteur.
+Le système de configuration repose sur des fichiers modulaires par domaine situés dans `/config/` sur la carte SD (`network.json`, `hardware.json`, `system.json`, `playlist.json` et `instances/*.json`). Il pilote le driver DMA de la matrice, le réseau, MQTT, le système, l'orientation de l'affichage, la sécurité API, et les instances indépendantes de chaque moteur.
 
-> `config.json` est l'**unique source de vérité**. Au démarrage, le fichier est validé et auto-réparé par `ConfigSanitizer`, garantissant que toute clé manquante est automatiquement recréée avec ses valeurs par défaut.
+> `/config/` est l'**unique source de vérité**. Au démarrage, chaque fichier est validé et auto-réparé par `ConfigSanitizer`, garantissant que toute clé manquante est automatiquement recréée avec ses valeurs par défaut (et qu'un éventuel ancien `/config.json` v3 est automatiquement migré vers `/config/`).
 
 ---
 
-## 1. Structure Globale
+## 1. Structure Globale (`/config/`)
 
-```json
-{
-  "matrix": { ... },
-  "wifi": { ... },
-  "mqtt": { ... },
-  "data_mqtt": { ... },
-  "system": {
-    "api_auth_enabled": false,
-    "api_token": "",
-    ...
-  },
-  "display": { ... },
-  "audio": { ... },
-  "instances": [ ... ],
-  "rotation": [ ... ]
-}
+```text
+/config/
+  ├─ hardware.json       <- Dimensions de la matrice, profondeur de couleur, driver & transitions
+  ├─ network.json        <- Blocs "wifi", "mqtt", "data_mqtt" et "showcase"
+  ├─ system.json         <- Fuseau horaire, langue, mode nuit & authentification API
+  ├─ playlist.json       <- Ordre de rotation au repos, durées & overlays
+  └─ instances/
+       ├─ clock_main.json
+       ├─ gifs_main.json
+       └─ <instance_id>.json
 ```
 
 ---
 
-## 2. Le Bloc `"matrix"` (Driver Matériel)
+## 2. `/config/hardware.json` (Driver Matériel)
 
 Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixPanel-I2S-DMA`. La modification des paramètres matériels critiques recharge automatiquement le driver.
 
@@ -57,7 +51,7 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 
 ### 2.1 Options du Pipeline de Rendu & Buffering (`render_pipeline: auto`)
 
-ArcadeMatrix v4 introduit le SPI graphique matériellement agnostique (`IDrawingSurface`), découplant la rasterisation des pixels des contrôleurs DMA physiques. Vous pouvez configurer le pipeline directement dans `config.json` ou depuis l'onglet **Paramètres Système → Matériel** de la Web UI :
+ArcadeMatrix v4 introduit le SPI graphique matériellement agnostique (`IDrawingSurface`), découplant la rasterisation des pixels des contrôleurs DMA physiques. Vous pouvez configurer le pipeline directement dans `config/hardware.json` ou depuis l'onglet **Paramètres Système → Matériel** de la Web UI :
 
 - **`auto`** *(Recommandé)* : Résout automatiquement le pipeline optimal selon le profil matériel et le palier de mémoire vive :
   - **ESP32-S3 / Cartes avec PSRAM** : Alloue un canvas intermédiaire 16 bits RGB565 en PSRAM externe avec double buffer DMA (`canvas_double`) pour un débit maximal et une animation 60 FPS sans déchirement.
@@ -192,17 +186,15 @@ Ces paramètres déterminent si les points d'entrée (endpoints) mutatifs et adm
 2. Rendez-vous dans l'onglet **Système** (`sys-tab-hardware`) et repérez la carte **Authentification API**.
 3. Réglez **Exiger l'authentification API** sur **Activé** (`Enabled`).
 4. Saisissez le jeton secret de votre choix dans le champ **Jeton API (Token)**.
-5. Cliquez sur **Enregistrer l'auth API**. Le jeton est enregistré immédiatement dans `/config.json` sur la carte SD et mis en cache automatiquement dans le `localStorage` de votre navigateur.
+5. Cliquez sur **Enregistrer l'auth API**. Le jeton est enregistré immédiatement dans `/config/system.json` sur la carte SD et mis en cache automatiquement dans le `localStorage` de votre navigateur.
 6. Pour **désactiver** l'authentification à tout moment, passez simplement le sélecteur sur **Désactivé** (`Disabled`) et cliquez sur **Enregistrer l'auth API**.
 
-#### Option B : Via le fichier `config.json` sur la carte SD
-Éditez directement `/config.json` et configurez le bloc `system` :
+#### Option B : Via le fichier `/config/system.json` sur la carte SD
+Éditez directement `/config/system.json` :
 ```json
 {
-  "system": {
-    "api_auth_enabled": true,
-    "api_token": "mon_super_token_secret_123"
-  }
+  "api_auth_enabled": true,
+  "api_token": "mon_super_token_secret_123"
 }
 ```
 
@@ -313,7 +305,7 @@ Définit l'ordre d'affichage, la durée de chaque créneau et l'activation des o
 
 Seules les instances listées ici sont initialisées, ce qui économise de la mémoire pour les fonctionnalités inutilisées. La rotation est modifiable depuis le panneau **Rotation** de la Web UI (`GET`/`POST /api/rotation`).
 
-> **Persistance Lisible** : Lors de son enregistrement sur disque (`config.json`), le fichier est systématiquement écrit formaté avec des indentations claires (`serializeJsonPretty`) pour permettre une relecture et modification manuelle sans risque.
+> **Persistance Lisible** : Lors de leur enregistrement sur disque (`/config/*.json`), les fichiers sont systématiquement écrits formatés avec des indentations claires (`serializeJsonPretty`) pour permettre une relecture et modification manuelle sans risque.
 
 ---
 
@@ -592,7 +584,7 @@ Exemple d'instance : `{"instance_id":"home_data","engine_id":"mqttdata","config"
 
 ### Moteurs : `retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase` (DMD Media Showcase)
 > [!IMPORTANT]
-> Ces 4 moteurs Showcase **fonctionnent exclusivement avec l'application compagnon [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) installée sur une autre machine du même réseau local** (Raspberry Pi, NAS, serveur Docker ou PC). La connexion au serveur se configure une seule fois globalement dans le bloc racine `showcase` de `config.json` (ou via la carte unifiée **Showcase Server** dans l'onglet Settings de la Web UI).
+> Ces 4 moteurs Showcase **fonctionnent exclusivement avec l'application compagnon [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) installée sur une autre machine du même réseau local** (Raspberry Pi, NAS, serveur Docker ou PC). La connexion au serveur se configure une seule fois globalement dans le bloc `showcase` de `/config/network.json` (ou via la carte unifiée **Showcase Server** dans l'onglet Settings de la Web UI).
 
 | Champ Racine `showcase` | Type | Défaut | Description |
 | :--- | :--- | :--- | :--- |

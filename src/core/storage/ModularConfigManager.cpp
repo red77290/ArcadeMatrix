@@ -49,9 +49,10 @@ bool ModularConfigManager::checkAndMigrateLegacy(ConfigLoader& config, const cha
         return false;
     }
 
-    // Backup legacy file
+    // Backup legacy file and remove active monolithic file so /config/ is sole source of truth
     String backupPath = String(legacyPath) + ".bak";
     if (_storage.writeStringAtomic(backupPath.c_str(), legacyContent)) {
+        _storage.remove(legacyPath);
         LOGI("ModularConfigManager", "Legacy config safely backed up to %s", backupPath.c_str());
     }
 

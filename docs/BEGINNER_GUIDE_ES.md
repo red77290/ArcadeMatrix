@@ -9,7 +9,7 @@ Esta guía breve y sin tecnicismos va directo al grano: elegir tu placa electró
 ## 1. ¿Cómo funciona ArcadeMatrix? (En 4 pasos rápidos)
 
 La pantalla es **100 % autónoma** (no necesita quedar conectada a ningún PC):
-1. **Preparar la MicroSD (`FAT32`)**: descomprime **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** en la raíz de la tarjeta SD y **abre `config.json` con el Bloc de notas / TextEdit para escribir el `ssid` y `password` de tu Wi-Fi 2.4 GHz** *(obligatorio: ¡el Wi-Fi no se puede configurar desde la pantalla LED!)*.
+1. **Preparar la MicroSD (`FAT32`)**: descomprime **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** en la raíz de la tarjeta SD y **abre `config/network.json` con el Bloc de notas / TextEdit para escribir el `ssid` y `password` de tu Wi-Fi 2.4 GHz** *(obligatorio: ¡el Wi-Fi no se puede configurar desde la pantalla LED!)*.
 2. **Flashear en 1 clic (una sola vez)**: conecta el ESP32 por USB al PC/Mac, abre **[red77290.github.io/ArcadeMatrix](https://red77290.github.io/ArcadeMatrix/)** en Chrome o Edge y pulsa **Install**.
 3. **Conectar al panel LED y alimentar a `5V`**: al encenderse, el DMD se conecta solo a tu Wi-Fi y muestra su dirección IP.
 4. **Controlar desde el móvil o PC**: abre **`http://arcadematrix.local`** (o la IP mostrada) en el navegador para cambiar relojes retro, clima/bolsa, subir GIFs o enlazar **Recalbox / Batocera**.
@@ -90,7 +90,7 @@ Compra siempre **paneles LED RGB de interior (`Indoor HUB75` / `HUB75E`)** (evit
 
 ### Tabla resumen: Paneles, Dimensiones y Amperaje `5V` requerido
 
-| Resolución | Paneles unidos | Tamaño total | Placa necesaria | `config.json` / WebUI | Fuente de `5V` y Amperaje necesario |
+| Resolución | Paneles unidos | Tamaño total | Placa necesaria | `config/hardware.json` / WebUI | Fuente de `5V` y Amperaje necesario |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`64 × 32`** | **1× `64×32`** (`P2.5` a `P5`) | `16×8 cm` (`P2.5`) a `32×16 cm` (`P5`) | ESP32 o ESP32-S3 | `height=32`, `width=64`, `chain_length=1` | **¡Cargador USB-C `5V / 2A–3A` OK!** |
 | **`128 × 32`** *(DMD Clásico)* | **2× `64×32`** lado a lado (`P2.5`, `P3`, **`P4`**, **`P5`**) | • `2× P2.5`: `32 × 8 cm`<br>• `2× P3`: `38,4 × 9,6 cm`<br>• **`2× P4`: `51,2 × 12,8 cm`** *(DMD pinball)*<br>• **`2× P5`: `64 × 16 cm`** | ESP32 Clásico *(Mortaca / BenFactory / DIY)* o ESP32-S3 | `height=32`, `width=64`, `chain_length=2` | **Cargador USB-C `5V / 3A` (15W) OK** a brillo normal<br>*(Prever `5V / 5A` [25W] si usas brillo al 100 % en `P4`/`P5`)* |
@@ -102,26 +102,21 @@ Compra siempre **paneles LED RGB de interior (`Indoor HUB75` / `HUB75E`)** (evit
 
 ---
 
-## 4. Configurar `config.json` (¡Wi-Fi obligatorio!) y Primer Arranque
+## 4. Configurar `config/network.json` (¡Wi-Fi obligatorio!) y Primer Arranque
 
 > [!IMPORTANT]
-> **¡El DMD no puede conectarse al Wi-Fi configurándolo desde la pantalla!** Debes **editar obligatoriamente a mano el archivo `config.json`** en la MicroSD con tu `ssid` y `password` antes de encenderlo.
+> **¡El DMD no puede conectarse al Wi-Fi configurándolo desde la pantalla!** Debes **editar obligatoriamente a mano el archivo `config/network.json`** en la MicroSD con tu `ssid` y `password` antes de encenderlo.
 
-1. **Prepara la MicroSD (`FAT32`)**: copia el contenido de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directamente en la raíz de la SD (`config.json`, `gifs/`, `fighters_32/`...).
-2. **Edita `config.json` en la tarjeta SD** con el *Bloc de notas* (Windows) o *TextEdit* (Mac) para poner tu **Wi-Fi `2.4 GHz`** y el **tamaño de tus paneles**:
+1. **Prepara la MicroSD (`FAT32`)**: copia el contenido de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directamente en la raíz de la SD (`config/`, `gifs/`, `fighters_32/`...).
+2. **Edita `config/network.json` en la tarjeta SD** con el *Bloc de notas* (Windows) o *TextEdit* (Mac) para poner tu **Wi-Fi `2.4 GHz`**:
    ```json
-   "matrix": {
-       "width": 64,
-       "height": 32,
-       "chain_length": 2
-   },
    "wifi": {
        "ssid": "NombreDeTuWiFi_2.4GHz",
        "password": "TuPasswordWiFi",
        "hostname": "arcadematrix"
    }
    ```
-   *(Ejemplo superior para `128×32` = `2× 64×32`. Para `256×64` con `2× 128×64`, pon `"width": 128, "height": 64, "chain_length": 2`).*
+   *(Si el tamaño de tus paneles difiere del `128×32` = `2× 64×32` por defecto, edita también `config/hardware.json` — p. ej. para `256×64` con `2× 128×64`, pon `"width": 128, "height": 64, "chainLength": 2`).*
 3. **Flashea el firmware en 1 clic** en **[red77290.github.io/ArcadeMatrix](https://red77290.github.io/ArcadeMatrix/)** desde Chrome o Edge (`Standard ESP32`, `ESP32-S3 (N16R8 / N8R8)`, o `Waveshare ESP32-S3 (N32R16V)`).
 4. **Inserta la MicroSD y enciende**: el DMD se conectará a tu Wi-Fi y mostrará su IP. Abre **`http://arcadematrix.local`** (o `http://<IP_MOSTRADA>`) en el móvil o PC para manejarlo todo al instante (relojes, clima, subida de GIFs sin sacar la SD, [sincronización con Recalbox / Batocera](../README_ES.md#-sincronizaci%C3%B3n-con-recalbox-batocera-y-retropie--showcase-en-juego-marquesinas-fichas-y-v%C3%ADdeos-gameplay)).
 

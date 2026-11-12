@@ -1,36 +1,30 @@
 🇬🇧 English | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 [Español](CONFIGURATION_ES.md)
 
-# Detailed Configuration (config.json) — ESP32
+# Detailed Configuration (`/config/` Modular Domains) — ESP32
 
-The configuration system relies exclusively on a single `config.json` file located on LittleFS / SD storage. It handles the matrix DMA driver, network, MQTT integration, system behaviour, display orientation, API security, and the decoupled logic of each engine ("instances").
+The configuration system relies on modular domain files inside `/config/` on SD storage (`network.json`, `hardware.json`, `system.json`, `playlist.json`, and `instances/*.json`). It handles the matrix DMA driver, network, MQTT integration, system behaviour, display orientation, API security, and the decoupled logic of each engine ("instances").
 
-> `config.json` is the **single source of truth**. On boot the file is validated and self-healed by `ConfigSanitizer`, so missing keys are automatically re-created with safe defaults.
+> `/config/` is the **single source of truth**. On boot each domain file is validated and self-healed by `ConfigSanitizer`, so missing keys are automatically re-created with safe defaults (and any legacy v3 `/config.json` is automatically migrated into `/config/`).
 
 ---
 
-## 1. Global Structure
+## 1. Global Structure (`/config/`)
 
-```json
-{
-  "matrix": { ... },
-  "wifi": { ... },
-  "mqtt": { ... },
-  "data_mqtt": { ... },
-  "system": {
-    "api_auth_enabled": false,
-    "api_token": "",
-    ...
-  },
-  "display": { ... },
-  "audio": { ... },
-  "instances": [ ... ],
-  "rotation": [ ... ]
-}
+```text
+/config/
+  ├─ hardware.json       <- Matrix dimensions, color depth, driver chip & transitions
+  ├─ network.json        <- "wifi", "mqtt", "data_mqtt", and "showcase" blocks
+  ├─ system.json         <- Timezone, language, night mode & API authentication
+  ├─ playlist.json       <- Idle rotation order, durations & overlays
+  └─ instances/
+       ├─ clock_main.json
+       ├─ gifs_main.json
+       └─ <instance_id>.json
 ```
 
 ---
 
-## 2. The `"matrix"` Block (Hardware Driver)
+## 2. `/config/hardware.json` (Hardware Driver)
 
 This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DMA` driver. Changing critical hardware values triggers an automatic driver reload.
 
@@ -57,7 +51,7 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 
 ### 2.1 Rendering & Buffering Pipeline Options (`render_pipeline: auto`)
 
-ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`), decoupling engine pixel rasterization from physical DMA controllers. You can configure the pipeline directly in `config.json` or interactively from the **System Settings → Hardware** tab in the Web UI:
+ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`), decoupling engine pixel rasterization from physical DMA controllers. You can configure the pipeline directly in `config/hardware.json` or interactively from the **System Settings → Hardware** tab in the Web UI:
 
 - **`auto`** *(Recommended)*: Automatically resolves the optimal pipeline based on your hardware profile and memory tier:
   - **ESP32-S3 / PSRAM Boards**: Allocates an intermediate 16-bit RGB565 canvas in external PSRAM with Double DMA buffering (`canvas_double`) for maximal throughput and tear-free 60 FPS animation.
@@ -192,17 +186,15 @@ These settings control whether write/mutating endpoints (reboots, brightness adj
 2. Navigate to the **System** tab (`sys-tab-hardware`) and locate the **API Authentication** card.
 3. Set **Require Auth for API** to **Enabled**.
 4. Enter your desired secret token into the **API Token** field (see below for suggestions).
-5. Click **Save API Auth**. The token is saved immediately to `/config.json` on the SD card, and automatically cached in your browser's `localStorage`.
+5. Click **Save API Auth**. The token is saved immediately to `/config/system.json` on the SD card, and automatically cached in your browser's `localStorage`.
 6. To **disable** authentication at any time, simply switch the selector to **Disabled** and click **Save API Auth**.
 
-#### Option B: Via `config.json` on the SD card
-Edit `/config.json` directly and configure the `system` block:
+#### Option B: Via `/config/system.json` on the SD card
+Edit `/config/system.json` directly:
 ```json
 {
-  "system": {
-    "api_auth_enabled": true,
-    "api_token": "my_super_secret_token_123"
-  }
+  "api_auth_enabled": true,
+  "api_token": "my_super_secret_token_123"
 }
 ```
 
@@ -313,7 +305,7 @@ Defines the display order, per-slot duration, and transverse overlay toggles.
 
 Only instances listed here are ever initialized, saving memory for unused features. The rotation is editable from the Web UI **Rotation** panel (`GET`/`POST /api/rotation`).
 
-> **Human-Readable Persistence**: When saved to disk (`config.json`), the file is always written formatted and indented (`serializeJsonPretty`) so it can be cleanly inspected and edited by hand without breaking.
+> **Human-Readable Persistence**: When saved to disk (`/config/*.json`), each domain file is always written formatted and indented (`serializeJsonPretty`) so it can be cleanly inspected and edited by hand without breaking.
 
 ---
 
@@ -592,7 +584,7 @@ Instance example: `{"instance_id":"home_data","engine_id":"mqttdata","config":{"
 
 ### Engines: `retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase` (DMD Media Showcase)
 > [!IMPORTANT]
-> These 4 Showcase engines **only work with the companion [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) application installed on another machine on the same local network** (Raspberry Pi, NAS, Docker host, or PC). The server connection is configured once globally in the `showcase` root block of `config.json` (or via the unified **Showcase Server** card in the Web UI Settings tab).
+> These 4 Showcase engines **only work with the companion [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) application installed on another machine on the same local network** (Raspberry Pi, NAS, Docker host, or PC). The server connection is configured once globally in the `showcase` block of `/config/network.json` (or via the unified **Showcase Server** card in the Web UI Settings tab).
 
 | Root `showcase` Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |

@@ -449,7 +449,7 @@ The schema is the **single source of truth** for both the WebUI form generator a
 
 ```cpp
 struct ConfigField {
-    String id;                          // Key in config.json
+    String id;                          // Key in /config/instances/<id>.json
     ConfigType type;                    // BOOLEAN, INTEGER, FLOAT, STRING, ENUM, COLOR, LIST
     String label;                       // WebUI label
     String description;                 // Tooltip text
@@ -932,7 +932,7 @@ CANONICAL_THEMES = [
 ]
 ```
 
-The WebUI will automatically embed "Space Invaders Clock" in the theme dropdown at compile time (with zero RAM overhead on the ESP32), persist it in `config.json`, and apply it live via hot reload.
+The WebUI will automatically embed "Space Invaders Clock" in the theme dropdown at compile time (with zero RAM overhead on the ESP32), persist it in `/config/instances/<id>.json`, and apply it live via hot reload.
 
 ---
 

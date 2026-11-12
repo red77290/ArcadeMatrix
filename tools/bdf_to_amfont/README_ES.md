@@ -12,7 +12,7 @@ Por defecto, todas las fuentes usadas por el firmware ESP32 se compilan directam
 que añadir o cambiar una fuente requiere una recompilación completa del firmware y volver a flashearlo.
 
 `BitmapFontLoader` cubre ese hueco cargando una fuente desde la tarjeta SD al arrancar, sin necesidad de recompilar;
-solo hay que copiar un archivo y apuntar `config.json` a él. Pero el ESP32 no tiene ni parser BDF ni rasterizador de
+solo hay que copiar un archivo y seleccionarlo en la interfaz Web (o en `/config/instances/<id>.json`). Pero el ESP32 no tiene ni parser BDF ni rasterizador de
 fuentes en el dispositivo (eso consumiría flash/RAM/CPU que no podemos permitirnos), así que las fuentes deben
 **preconvertirse offline** a un formato binario compacto que el firmware pueda `malloc()` y leer
  directamente. Eso es exactamente lo que hace este script.
@@ -40,13 +40,11 @@ python3 bdf_to_amfont.py input.bdf output.amf [--first 0x20] [--last 0x7E]
 - Los codepoints que falten en la BDF de origen dentro del rango solicitado se emiten como glifos vacíos, de ancho cero, en lugar de abortar la conversión.
 
 Después copia el archivo `.amf` resultante a la carpeta `/fonts` de la tarjeta SD (por ejemplo
-`/fonts/myfont.amf`). Se vuelve seleccionable de inmediato en la interfaz Web, página Settings, en
+`/fonts/myfont.amf`). Se vuelve seleccionable de inmediato en la ventana de configuración de instancia de la interfaz Web, en
 el menú desplegable "Font" del Reloj o de la Fecha (cada uno se rellena en vivo mediante
-`GET /api/fonts`, que lista todos los archivos `.amf` encontrados en `/fonts`) - sin editar
-`config.json` manualmente. También puedes definirlo directamente vía `config.json`
-(`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` bajo `[time]` / `[date]`,
-o `custom_font_path=/fonts/myfont.amf` bajo `[fonts]` para el texto desplazante
-`MessageEngine`/`/api/message`). Consulta `docs/DEVELOPER_ES.md` para ver el flujo completo.
+`GET /api/fonts`, que lista todos los archivos `.amf` encontrados en `/fonts`) - sin edición JSON
+manual. También puedes definirlo directamente en el archivo de instancia
+`/config/instances/<id>.json` (por ejemplo `"font": "/fonts/myfont.amf"`). Consulta `docs/DEVELOPER_ES.md` para ver el flujo completo.
 
 ## Detalles del formato
 

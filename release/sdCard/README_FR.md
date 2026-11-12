@@ -3,17 +3,16 @@
 🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
 
 Ce dossier est un point de départ prêt à l'emploi pour votre carte SD : copiez son contenu à la
-racine d'une carte SD formatée en **FAT32**, modifiez les fichiers de configuration modulaires dans `config/` (ou le fichier hérité `config.json`), et c'est prêt à démarrer.
+racine d'une carte SD formatée en **FAT32**, renseignez vos identifiants Wi-Fi dans `config/network.json` (et la taille de vos dalles dans `config/hardware.json` si nécessaire), et c'est prêt à démarrer.
 
 ```
 sdCard/
   ├─ config/                <- réglages modulaires par domaine (v4.0+)
   │    ├─ hardware.json     <- dimensions de matrice, profondeur de couleur, driver, pins
   │    ├─ system.json       <- fuseau horaire, mode nuit, luminosité, langue
-  │    ├─ network.json      <- identifiants Wi-Fi et paramètres MQTT
+  │    ├─ network.json      <- identifiants Wi-Fi (ssid/password) et paramètres MQTT/Showcase
   │    ├─ playlist.json     <- séquence de rotation des moteurs et durées
   │    └─ instances/        <- configurations individuelles d'instances (*.json)
-  ├─ config.json            <- fallback monolithique hérité (migré automatiquement vers config/ si présent)
   ├─ gifs/                  <- exemple de manifeste de playlist GIF (voir gif_indexation/ ci-dessous)
   ├─ gifs_tate/             <- bibliothèque verticale (Tate) (ex. échantillon 32x128 pour panneaux pivotés)
   ├─ fighters_32/           <- exemple d'export de sprites MUGEN pour matrices de 32px de haut

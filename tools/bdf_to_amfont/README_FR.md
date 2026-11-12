@@ -12,7 +12,7 @@ Par défaut, toutes les polices utilisées par le firmware ESP32 sont compilées
 qu'ajouter ou modifier une police exige une recompilation complète du firmware et un reflash.
 
 `BitmapFontLoader` comble ce manque en chargeant une police depuis la carte SD au démarrage — aucune recompilation
-nécessaire, il suffit de copier un fichier et de pointer `config.json` dessus. Mais l'ESP32 n'a ni parseur BDF ni moteur
+nécessaire, il suffit de copier un fichier et de le sélectionner dans l'interface Web (ou dans `/config/instances/<id>.json`). Mais l'ESP32 n'a ni parseur BDF ni moteur
 de rasterisation de polices embarqué (cela coûterait de la flash / RAM / CPU que nous n'avons pas en réserve), donc les polices doivent être
 **préconverties hors ligne** vers un format binaire compact que le firmware peut `malloc()` et lire
  directement. C'est exactement ce que fait ce script.
@@ -40,13 +40,11 @@ python3 bdf_to_amfont.py input.bdf output.amf [--first 0x20] [--last 0x7E]
 - Les codepoints absents de la police BDF source dans la plage demandée sont émis comme des glyphes vides, de largeur nulle, plutôt que d'interrompre la conversion.
 
 Copiez ensuite le fichier `.amf` obtenu dans le dossier `/fonts` de la carte SD (par ex.
-`/fonts/myfont.amf`). Il devient immédiatement sélectionnable dans l'interface Web, page Settings,
+`/fonts/myfont.amf`). Il devient immédiatement sélectionnable dans la fenêtre de configuration d'instance de l'interface Web,
 dans le menu déroulant "Font" de l'Horloge ou de la Date (chacun peuplé en direct via
-`GET /api/fonts`, qui liste tous les fichiers `.amf` trouvés dans `/fonts`) - sans éditer
-`config.json` manuellement. Vous pouvez aussi le définir directement via `config.json`
-(`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` sous `[time]` / `[date]`,
-ou `custom_font_path=/fonts/myfont.amf` sous `[fonts]` pour le texte défilant
-`MessageEngine`/`/api/message`). Voir `docs/DEVELOPER_FR.md` pour le workflow complet.
+`GET /api/fonts`, qui liste tous les fichiers `.amf` trouvés dans `/fonts`) - sans édition JSON
+manuelle. Vous pouvez aussi le définir directement dans le fichier d'instance
+`/config/instances/<id>.json` (par ex. `"font": "/fonts/myfont.amf"`). Voir `docs/DEVELOPER_FR.md` pour le workflow complet.
 
 ## Détails du format
 
