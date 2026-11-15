@@ -124,6 +124,8 @@ private:
     bool m_gifAllocatedInPsram = false;
     bool ensureGifDecoder();
     void freeGifDecoder();
+    void releaseSharedGifDecoderFromOtherOwner();
+    bool refreshSingleFileOnSurface();
     bool ensureCanvasBuffer();
     void freeCanvasBuffer();
     // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
@@ -136,9 +138,6 @@ private:
     // task" troubleshooting entry in docs/GETTING_STARTED.md for why this matters on a
     // non-PSRAM classic ESP32 (only ~320KB total internal RAM).
     PNG* png = nullptr;              ///< The PNGdec decoder instance, lazily allocated on first PNG decode
-    bool m_pngAllocatedRaw = false;
-    bool ensurePngDecoder();
-    void freePngDecoder();
     IDrawingSurface* matrix = nullptr; ///< Drawing surface hardware abstraction reference
     bool isPlaying;                  ///< State flag for active playback
     bool playlistMode;               ///< State flag for playlist rotation
@@ -188,7 +187,6 @@ private:
     
     int remainingGifsToPlay;         ///< Counter for rotation limits
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
-    char m_singleFilePath[128] = {0}; ///< Active single-file marquee path when playlistMode == false
     uint32_t m_rotationBudget = 0;
     const EngineConfig* m_instanceConfig = nullptr;
     EngineContext* m_context = nullptr;
