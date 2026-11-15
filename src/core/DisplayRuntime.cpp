@@ -57,18 +57,29 @@ void DisplayRuntime::registerSourceEngine(DisplaySourceId sourceId, IEngine* eng
 }
 
 IEngine* DisplayRuntime::resolveEngine(const EngineHandle& handle, DisplaySourceId sourceId) const {
-    // 1. If explicit instanceId is provided in handle, resolve via RotationManager
+    // 1. Dedicated preemption sources (GIF marquee, MQTT banner, MARQUEE, INGAME_SHOWCASE,
+    //    WEBUI_SYNC, ALERT) own dedicated engine instances registered on DisplayRuntime and must
+    //    never collide with a RotationManager slot sharing a similar instance_id (e.g. "gifs_main").
+    if (sourceId != DisplaySourceId::ROTATION && sourceId != DisplaySourceId::VISUALIZER) {
+        for (size_t i = 0; i < m_registeredSourceCount; ++i) {
+            if (m_registeredSources[i].sourceId == sourceId) {
+                return m_registeredSources[i].engine;
+            }
+        }
+    }
+
+    // 2. If explicit instanceId is provided in handle (ROTATION / VISUALIZER), resolve via RotationManager
     if (handle.instanceId[0] != '\0' && m_rotationManager) {
         IEngine* instEngine = m_rotationManager->findActiveEngine(handle.instanceId);
         if (instEngine) return instEngine;
     }
 
-    // 2. If sourceId is ROTATION, active rotation engine
-    if (sourceId == DisplaySourceId::ROTATION) {
-        return m_rotationManager ? m_rotationManager->getCurrentActiveEngine() : nullptr;
+    // 3. If sourceId is ROTATION and RotationManager is bound, resolve current active rotation engine
+    if (sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
+        return m_rotationManager->getCurrentActiveEngine();
     }
 
-    // 3. Resolve registered specialized source engines
+    // 4. Fallback: resolve registered source engines (standalone VISUALIZER or unit-test ROTATION mocks)
     for (size_t i = 0; i < m_registeredSourceCount; ++i) {
         if (m_registeredSources[i].sourceId == sourceId) {
             return m_registeredSources[i].engine;
@@ -87,10 +98,12 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
     }
     m_lastReconciledVersion = snapshot.version;
     
-    // Only notify the currently active instance if present to avoid
-    // Core 1 allocation and mutex contention on hot-path (Invariant 1)
+    // Only notify RotationManager when the active session actually belongs to ROTATION or VISUALIZER
+    // to avoid mutating paused rotation slots while a preemption source is on screen.
     if (m_rotationManager && m_session.activeEngine) {
-        if (m_session.engineHandle.instanceId[0] != '\0') {
+        if ((m_session.sourceId == DisplaySourceId::ROTATION ||
+             m_session.sourceId == DisplaySourceId::VISUALIZER) &&
+            m_session.engineHandle.instanceId[0] != '\0') {
             m_rotationManager->notifyConfigChanged(m_session.engineHandle.instanceId);
         } else if (m_session.sourceId == DisplaySourceId::ROTATION &&
                    m_rotationManager->getCurrentInstanceIdCStr()[0] != '\0') {

@@ -3927,7 +3927,7 @@ void test_frontend_sync_title_and_peer_marquee_banner_handoff(void) {
     TrackingMockEngine inGameEng("ingame");
 
     runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotEng, EngineHandle("clock", "main"));
-    runtime.registerSourceEngine(DisplaySourceId::GIF, &gifEng, EngineHandle("gifs", "gifs_main"));
+    runtime.registerSourceEngine(DisplaySourceId::GIF, &gifEng, EngineHandle("gifs", "gifs_marquee"));
     runtime.registerSourceEngine(DisplaySourceId::MQTT, &msgEng, EngineHandle("message", "message_main"));
     runtime.registerSourceEngine(DisplaySourceId::INGAME_SHOWCASE, &inGameEng, EngineHandle("ingame_showcase", "ingame_showcase_main"));
 
@@ -3946,7 +3946,7 @@ void test_frontend_sync_title_and_peer_marquee_banner_handoff(void) {
             TEST_ASSERT_EQUAL_PTR(&msgEng, runtime.getCurrentSession().activeEngine);
         } else {
             arbiter.cancelRequest(DisplaySourceId::MQTT);
-            DisplayRequest reqGif{DisplaySourceId::GIF, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(100 + i), EngineHandle("gifs", "gifs_main")};
+            DisplayRequest reqGif{DisplaySourceId::GIF, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(100 + i), EngineHandle("gifs", "gifs_marquee")};
             arbiter.submitRequest(reqGif);
             runtime.transitionSession(arbiter.evaluate());
             TEST_ASSERT_EQUAL_PTR(&gifEng, runtime.getCurrentSession().activeEngine);
@@ -3954,6 +3954,35 @@ void test_frontend_sync_title_and_peer_marquee_banner_handoff(void) {
         // Only baseline ROTATION should remain on PreemptionStack (depth == 1)
         TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
     }
+
+    // Launch a game WITH Pixelcade marquee (GIF) active + dmd_media_showcase ("Play once & keep marquee" / alternating)
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+    DisplayRequest reqMarquee{DisplaySourceId::GIF, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 400, EngineHandle("gifs", "gifs_marquee")};
+    arbiter.submitRequest(reqMarquee);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL_PTR(&gifEng, runtime.getCurrentSession().activeEngine);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    const int gifDeactivatesBeforeShowcase = gifEng.deactivateCalls;
+    const int gifPausesBeforeShowcase = gifEng.pauseCalls;
+    const int gifResumesBeforeShowcase = gifEng.resumeCalls;
+
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        DisplayRequest reqInGame{DisplaySourceId::INGAME_SHOWCASE, DisplayPriority::INGAME_SHOWCASE, RequestLifecycle::UNTIL_CANCELLED, true, static_cast<uint32_t>(450 + cycle), EngineHandle("ingame_showcase", "ingame_showcase_main")};
+        arbiter.submitRequest(reqInGame);
+        runtime.transitionSession(arbiter.evaluate());
+        TEST_ASSERT_EQUAL_PTR(&inGameEng, runtime.getCurrentSession().activeEngine);
+        TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+        // Showcase once/alternating finishes -> resumes Pixelcade marquee cleanly at depth == 1 without deactivating it
+        arbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
+        runtime.transitionSession(arbiter.evaluate());
+        TEST_ASSERT_EQUAL_PTR(&gifEng, runtime.getCurrentSession().activeEngine);
+        TEST_ASSERT_EQUAL(TransitionMode::RESUME, runtime.getCurrentSession().lastTransitionMode);
+        TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    }
+    TEST_ASSERT_EQUAL(gifDeactivatesBeforeShowcase, gifEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(gifPausesBeforeShowcase + 4, gifEng.pauseCalls);
+    TEST_ASSERT_EQUAL(gifResumesBeforeShowcase + 4, gifEng.resumeCalls);
 
     // Launch a game with missing Pixelcade marquee -> cyan banner (MQTT) active, then 6 Alternating InGameShowcase cycles
     arbiter.cancelRequest(DisplaySourceId::GIF);

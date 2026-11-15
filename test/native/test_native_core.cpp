@@ -3951,6 +3951,85 @@ void test_hub75_staged_8bit_encoder_bit_exact_and_dirty_scan_rows(void) {
     }
 }
 
+void test_frontend_sync_gifs_marquee_and_ingame_showcase_once_resume_arbiter_contract(void) {
+    DisplayArbiter arbiter;
+
+    // 1. Baseline rotation uses "gifs_main"; FrontendSync marquee uses dedicated "gifs_marquee"
+    EngineHandle rotGifHandle("gifs", "gifs_main");
+    EngineHandle marqueeGifHandle("gifs", "gifs_marquee");
+    TEST_ASSERT_TRUE(rotGifHandle != marqueeGifHandle);
+
+    DisplayDecision d0 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d0.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d0.sourceId);
+
+    // 2. Menu navigation: first cyan fallback banner (MQTT) while downloading, then downloaded PNG marquee (GIF @ MQTT priority)
+    DisplayRequest reqMenuText{
+        DisplaySourceId::MQTT,
+        DisplayPriority::MQTT,
+        RequestLifecycle::UNTIL_CANCELLED,
+        true,
+        0,
+        EngineHandle("message", "message_main")
+    };
+    arbiter.submitRequest(reqMenuText);
+    DisplayDecision dMenuText = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, dMenuText.sourceId);
+
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+    DisplayRequest reqMarquee{
+        DisplaySourceId::GIF,
+        DisplayPriority::MQTT,
+        RequestLifecycle::UNTIL_CANCELLED,
+        true,
+        0,
+        marqueeGifHandle
+    };
+    arbiter.submitRequest(reqMarquee);
+    DisplayDecision dMarquee = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::GIF, dMarquee.sourceId);
+    TEST_ASSERT_EQUAL_STRING("gifs_marquee", dMarquee.engineHandle.instanceId);
+    TEST_ASSERT_EQUAL((uint8_t)DisplayPriority::MQTT, (uint8_t)dMarquee.priority);
+    const uint32_t marqueeRequestId = dMarquee.requestId;
+
+    // Marquee stays pinned indefinitely across time advances ("Play once & keep marquee" in menus/games)
+    advanceVirtualMillis(60000);
+    DisplayDecision dHeld = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::GIF, dHeld.sourceId);
+    TEST_ASSERT_EQUAL_STRING("gifs_marquee", dHeld.engineHandle.instanceId);
+    TEST_ASSERT_EQUAL_UINT32(marqueeRequestId, dHeld.requestId);
+
+    // 3. Game launch with dmd_media_showcase: INGAME_SHOWCASE (priority 45) preempts GIF marquee (priority 40)
+    //    while GIF remains active underneath so "once" ("Lire une fois puis garder le Marquee") and "alternating"
+    //    resume the exact marquee session cleanly.
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        DisplayRequest reqShowcase{
+            DisplaySourceId::INGAME_SHOWCASE,
+            DisplayPriority::INGAME_SHOWCASE,
+            RequestLifecycle::UNTIL_CANCELLED,
+            true,
+            0,
+            EngineHandle("ingame_showcase", "ingame_showcase_main")
+        };
+        arbiter.submitRequest(reqShowcase);
+        DisplayDecision dShowcase = arbiter.evaluate();
+        TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, dShowcase.sourceId);
+        TEST_ASSERT_TRUE(arbiter.hasActiveSource(DisplaySourceId::GIF));
+
+        advanceVirtualMillis(15000);
+        arbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
+        DisplayDecision dResumed = arbiter.evaluate();
+        TEST_ASSERT_EQUAL(DisplaySourceId::GIF, dResumed.sourceId);
+        TEST_ASSERT_EQUAL_STRING("gifs_marquee", dResumed.engineHandle.instanceId);
+        TEST_ASSERT_EQUAL_UINT32(marqueeRequestId, dResumed.requestId);
+    }
+
+    // 4. Exit frontend / idle timeout -> cancels GIF marquee and returns to baseline ROTATION
+    arbiter.cancelRequest(DisplaySourceId::GIF);
+    DisplayDecision dExit = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, dExit.sourceId);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -4052,6 +4131,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_hub75_single_dma_scan_chaser_eliminates_center_seam_across_all_phases);
     RUN_TEST(test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll);
     RUN_TEST(test_hub75_staged_8bit_encoder_bit_exact_and_dirty_scan_rows);
+    RUN_TEST(test_frontend_sync_gifs_marquee_and_ingame_showcase_once_resume_arbiter_contract);
 
     return UNITY_END();
 }

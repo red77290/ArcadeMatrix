@@ -746,7 +746,7 @@ void AppRuntime::initialize() {
         auto gifPtr = gifDesc->factory();
         gifEngine = static_cast<GifEngine*>(gifPtr.release());
         gifEngine->initialize(m_appCtx, nullptr);
-        m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine, EngineHandle("gifs", "gifs_main"));
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine, EngineHandle("gifs", "gifs_marquee"));
     }
     MemTrace::mark("after gif engine");
 
@@ -1024,7 +1024,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
 
     if (gifEngine) {
         bool active = gifEngine->isActive();
-        EngineHandle handle("gifs", "gifs_main");
+        EngineHandle handle("gifs", "gifs_marquee");
         if (active) {
             DisplayPriority priority = (m_frontendListener && m_frontendListener->isPlaying())
                 ? DisplayPriority::MQTT
