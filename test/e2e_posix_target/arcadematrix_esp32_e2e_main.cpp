@@ -40,6 +40,7 @@
 #include "core/net/DmdzStreamClient.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "engines/BuiltinSystemMaps.h"
+#include "engines/PixelcadeArtResolver.h"
 #include "engines/showcase/ShowcaseStreamPlayer.h"
 
 HardwareSerial Serial;
@@ -146,59 +147,14 @@ std::string trimAscii(const std::string& s) {
     return s.substr(a, b - a);
 }
 
-// Mirrors FrontendSyncEngine::cleanSystemName
+// Delegates directly to PixelcadeArtResolver::cleanSystemName
 std::string cleanSystemNameStd(const std::string& rawSystem) {
-    std::string s = trimAscii(rawSystem);
-    std::string sNorm = toLowerAscii(s);
-    for (char& c : sNorm) {
-        if (c == '_' || c == '-') c = ' ';
-    }
-    const char* prefixes[] = {
-        "arcade manufacturer ",
-        "arcade system ",
-        "arcade genre ",
-        "arcade collection ",
-        "manufacturer ",
-        "system ",
-        "genre ",
-        "collection ",
-    };
-    for (const char* p : prefixes) {
-        size_t plen = std::strlen(p);
-        if (sNorm.compare(0, plen, p) == 0 && plen <= s.size()) {
-            std::string rem = s.substr(plen);
-            if (!rem.empty() && (rem[0] == '_' || rem[0] == '-')) rem.erase(0, 1);
-            return trimAscii(rem);
-        }
-    }
-    return s;
+    return engines::PixelcadeArtResolver::cleanSystemName(String(rawSystem.c_str())).c_str();
 }
 
-// Mirrors FrontendSyncEngine::mapSystemToPixelcadeFolder
+// Delegates directly to PixelcadeArtResolver::mapSystemToPixelcadeFolder
 std::string mapSystemToPixelcadeFolderStd(const std::string& systemId) {
-    std::string sLower = toLowerAscii(cleanSystemNameStd(systemId));
-    struct Entry { const char* id; const char* folder; };
-    static const Entry table[] = {
-        {"arcade", "mame"}, {"mame", "mame"}, {"fba", "mame"}, {"fbneo", "mame"},
-        {"cps1", "mame"}, {"cps2", "mame"}, {"cps3", "mame"},
-        {"neogeo", "neogeo"}, {"neogeocd", "neogeocd"},
-        {"nes", "nes"}, {"famicom", "nes"},
-        {"snes", "snes"}, {"supernintendo", "snes"},
-        {"n64", "n64"}, {"nintendo64", "n64"},
-        {"gb", "gb"}, {"gameboy", "gb"},
-        {"gba", "gba"}, {"gameboyadvance", "gba"},
-        {"gbc", "gbc"}, {"gameboycolor", "gbc"},
-        {"megadrive", "genesis"}, {"genesis", "genesis"},
-        {"mastersystem", "mastersystem"}, {"gamegear", "gamegear"},
-        {"psx", "psx"}, {"ps1", "psx"}, {"playstation", "psx"},
-        {"dreamcast", "dreamcast"}, {"saturn", "saturn"},
-        {"pcengine", "pcengine"}, {"tg16", "pcengine"},
-        {"atari2600", "atari2600"}, {"atari5200", "atari5200"}, {"atari7800", "atari7800"},
-    };
-    for (const auto& e : table) {
-        if (sLower == e.id) return e.folder;
-    }
-    return cleanSystemNameStd(systemId);
+    return engines::PixelcadeArtResolver::mapSystemToPixelcadeFolder(String(systemId.c_str())).c_str();
 }
 
 // Decodes 24-bit/32-bit uncompressed BMP into 128x32 RGB565

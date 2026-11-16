@@ -95,6 +95,18 @@ void test_map_system_to_pixelcade_folder(void) {
     TEST_ASSERT_EQUAL_STRING("neogeo", FrontendSyncEngine::mapSystemToPixelcadeFolder("neogeo").c_str());
     TEST_ASSERT_EQUAL_STRING("n64", FrontendSyncEngine::mapSystemToPixelcadeFolder("n64").c_str());
     TEST_ASSERT_EQUAL_STRING("gba", FrontendSyncEngine::mapSystemToPixelcadeFolder("gba").c_str());
+    TEST_ASSERT_EQUAL_STRING("sega_saturn", FrontendSyncEngine::mapSystemToPixelcadeFolder("saturn").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_ds", FrontendSyncEngine::mapSystemToPixelcadeFolder("nds").c_str());
+    TEST_ASSERT_EQUAL_STRING("sega_naomi", FrontendSyncEngine::mapSystemToPixelcadeFolder("naomi").c_str());
+    TEST_ASSERT_EQUAL_STRING("sammy_atomiswave", FrontendSyncEngine::mapSystemToPixelcadeFolder("atomiswave").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", FrontendSyncEngine::mapSystemToPixelcadeFolder("model3").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", FrontendSyncEngine::getSecondaryPixelcadeFolder("neogeo").c_str());
+
+    // Virtual collection ROM path extraction
+    TEST_ASSERT_EQUAL_STRING(
+        "snes",
+        FrontendSyncEngine::extractSystemFromRomPath("favorites", "/recalbox/share/roms/snes/Chrono Trigger.sfc").c_str()
+    );
 
     // Verify no "console/" prefix is introduced in game folder resolution
     String snesFolder = FrontendSyncEngine::mapSystemToPixelcadeFolder("snes");

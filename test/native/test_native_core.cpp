@@ -14,6 +14,7 @@
 #include "core/net/ShowcaseDiscovery.h"
 #include "engines/showcase/ShowcaseStreamPlayer.h"
 #include "engines/GNewsTickerUtils.h"
+#include "engines/PixelcadeArtResolver.h"
 #include "engines/WebUiSyncEngine.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
@@ -1071,15 +1072,15 @@ void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
     ctx.height = 32;
     ctx.colorDepth = 8;
     ctx.hardware.hasPsram = false;
-    ctx.requestedPipeline = "canvas_single"; // Forces single buffer
+    ctx.requestedPipeline = "direct_single"; // Forces raw unbuffered DIRECT_DMA_SINGLE
 
-    // 1. Engine requires double-buffering but single-buffer was selected -> Incompatible!
+    // 1. Engine requires offscreen/double-buffering and raw direct_single was selected -> Incompatible!
     auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
     TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
     TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v1.primaryReason);
     TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
 
-    // 2. Engine prefers double buffer but supports single buffer -> CompatibleDegraded!
+    // 2. Engine prefers double buffer on raw direct_single -> CompatibleDegraded!
     EngineDescriptor prefDesc;
     prefDesc.metadata.id = "pref_engine";
     prefDesc.requirements.prefersDoubleBuffer = true;
@@ -1089,6 +1090,34 @@ void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
     TEST_ASSERT_TRUE(v2.degraded());
     TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v2.primaryReason);
     TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v2.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
+
+    // 2b. With Canvas + Single DMA (`canvas_single`), both engines render tear-free into offscreen RGB565 canvas -> Compatible!
+    ctx.requestedPipeline = "canvas_single";
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)CompatibilityEvaluator::evaluate(desc, ctx).status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)CompatibilityEvaluator::evaluate(prefDesc, ctx).status);
+
+    // 2c. Waveshare S3 128x64 (dmaBytesDouble > 80 KB) auto-selects CANVAS_BURST_SINGLE -> Audio Visualizer & prefersDoubleBuffer engines are 100% Compatible!
+    CompatibilityContext wsCtx;
+    wsCtx.hardware.profile = HwProfile::WAVESHARE_S3;
+    wsCtx.hardware.hasPsram = true;
+    wsCtx.hardware.hasMicrophone = true;
+    wsCtx.width = 128;
+    wsCtx.height = 64;
+    wsCtx.colorDepth = 8;
+    wsCtx.requestedPipeline = "auto";
+    EngineDescriptor visDesc;
+    visDesc.metadata.id = "audiovisualizer";
+    visDesc.requirements.needsAudio = true;
+    visDesc.requirements.needsAudioInput = true;
+    visDesc.requirements.targetFps = 60;
+    visDesc.requirements.prefersDoubleBuffer = true;
+    visDesc.requirements.supportsSingleBuffer = true;
+    auto vVis = CompatibilityEvaluator::evaluate(visDesc, wsCtx);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)vVis.strategy);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vVis.status);
+    auto vPrefWs = CompatibilityEvaluator::evaluate(prefDesc, wsCtx);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)vPrefWs.strategy);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vPrefWs.status);
 
     // 3. Single-buffer blanking budget exceeded:
     EngineDescriptor normalDesc;
@@ -1159,7 +1188,7 @@ void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
     gifDesc.requirements.internalPersistentBytes = 25000;
     gifDesc.requirements.internalContiguousBytes = 25000;
 
-    // 2. Initial static reference capability qualification:
+    // 2. Initial static reference capability qualification (Canvas SRAM + Single DMA -> tear-free Compatible):
     CompatibilityContext refCtx;
     refCtx.mode = EvaluationMode::ReferenceCapability;
     refCtx.hardware.profile = HwProfile::ESP32_STD;
@@ -1174,10 +1203,10 @@ void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
     refCtx.width = 128;
     refCtx.height = 32;
     refCtx.colorDepth = 8;
-    refCtx.requestedPipeline = "canvas_burst_single";
+    refCtx.requestedPipeline = "canvas_single";
 
     auto vClockRef1 = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
-    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRef1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vClockRef1.status);
     TEST_ASSERT_TRUE(vClockRef1.compatible());
 
     auto vGifRef1 = CompatibilityEvaluator::evaluate(gifDesc, refCtx);
@@ -1199,12 +1228,12 @@ void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
     // Positive Assertion: ReferenceCapability remains STRICTLY INVARIANT despite transient volatile heap pressure!
     // (This guarantees WebUI catalog and API transition safety gating never deadlock)
     auto vClockRefDuringGif = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
-    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefDuringGif.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vClockRefDuringGif.status);
     TEST_ASSERT_TRUE(vClockRefDuringGif.compatible());
 
     // 4. Requested pipeline gating: evaluating against requested target pipeline succeeds
     CompatibilityContext targetPipeCtx = refCtx;
-    targetPipeCtx.requestedPipeline = "canvas_burst_single";
+    targetPipeCtx.requestedPipeline = "canvas_single";
     auto vTargetPipeline = CompatibilityEvaluator::evaluate(clockDesc, targetPipeCtx);
     TEST_ASSERT_TRUE(vTargetPipeline.compatible());
 
@@ -1217,12 +1246,12 @@ void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
     recoveredCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
 
     auto vClockPostReclaim = CompatibilityEvaluator::evaluate(clockDesc, recoveredCtx);
-    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockPostReclaim.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vClockPostReclaim.status);
     TEST_ASSERT_TRUE(vClockPostReclaim.compatible());
 
     // 6. Post-transition: Reference capability catalog remains 100% invariant
     auto vClockRefPost = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
-    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefPost.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vClockRefPost.status);
     TEST_ASSERT_EQUAL((int)vClockRef1.status, (int)vClockRefPost.status);
 }
 
@@ -4306,6 +4335,150 @@ void test_sync_celebration_preemption_priority_55_pauses_ingame_showcase_and_res
     TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, dAfter.sourceId);
 }
 
+void test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings(void) {
+    using engines::PixelcadeArtResolver;
+
+    // 1. Complete primary + secondary Pixelcade folder mappings (fixes broken upstream/empty names)
+    TEST_ASSERT_EQUAL_STRING("sega_saturn", PixelcadeArtResolver::mapSystemToPixelcadeFolder("saturn").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_ds", PixelcadeArtResolver::mapSystemToPixelcadeFolder("nds").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_3ds", PixelcadeArtResolver::mapSystemToPixelcadeFolder("3ds").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_gamecube", PixelcadeArtResolver::mapSystemToPixelcadeFolder("gamecube").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_wii", PixelcadeArtResolver::mapSystemToPixelcadeFolder("wii").c_str());
+    TEST_ASSERT_EQUAL_STRING("sega_naomi", PixelcadeArtResolver::mapSystemToPixelcadeFolder("naomi").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::getSecondaryPixelcadeFolder("naomi").c_str());
+    TEST_ASSERT_EQUAL_STRING("sammy_atomiswave", PixelcadeArtResolver::mapSystemToPixelcadeFolder("atomiswave").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::getSecondaryPixelcadeFolder("atomiswave").c_str());
+    TEST_ASSERT_EQUAL_STRING("neogeo", PixelcadeArtResolver::mapSystemToPixelcadeFolder("neogeo").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::getSecondaryPixelcadeFolder("neogeo").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::mapSystemToPixelcadeFolder("model3").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_famicom_disk_system", PixelcadeArtResolver::mapSystemToPixelcadeFolder("fds").c_str());
+    TEST_ASSERT_EQUAL_STRING("nes", PixelcadeArtResolver::getSecondaryPixelcadeFolder("fds").c_str());
+    TEST_ASSERT_EQUAL_STRING("nintendo_super_famicom", PixelcadeArtResolver::mapSystemToPixelcadeFolder("sfc").c_str());
+    TEST_ASSERT_EQUAL_STRING("snes", PixelcadeArtResolver::getSecondaryPixelcadeFolder("sfc").c_str());
+    TEST_ASSERT_EQUAL_STRING("coleco", PixelcadeArtResolver::mapSystemToPixelcadeFolder("colecovision").c_str());
+    TEST_ASSERT_EQUAL_STRING("microsoft_xbox", PixelcadeArtResolver::mapSystemToPixelcadeFolder("xbox").c_str());
+
+    // 2. Known-empty Pixelcade folders short-circuit network fetches in 0 ms
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("msx"));
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("zxspectrum"));
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("favorites"));
+    TEST_ASSERT_FALSE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("snes"));
+    TEST_ASSERT_FALSE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("sega_saturn"));
+    TEST_ASSERT_FALSE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("nintendo_ds"));
+    TEST_ASSERT_FALSE(PixelcadeArtResolver::isKnownEmptyPixelcadeFolder("console"));
+
+    // 3. Virtual collection real-system extraction from ROM path (`/roms/<real_sys>/`)
+    TEST_ASSERT_EQUAL_STRING(
+        "snes",
+        PixelcadeArtResolver::extractSystemFromRomPath("favorites", "/recalbox/share/roms/snes/Chrono Trigger (France).sfc").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "naomi",
+        PixelcadeArtResolver::extractSystemFromRomPath("allgames", "/userdata/roms/naomi/mvsc2.zip").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "megadrive",
+        PixelcadeArtResolver::extractSystemFromRomPath("custom-sega", "/userdata/roms/megadrive/Sonic.md").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "mame",
+        PixelcadeArtResolver::extractSystemFromRomPath("mame", "/recalbox/share/roms/fba_libretro/sf2.zip").c_str()
+    );
+
+    // 4. Key normalization (UTF-8 accents, inverted/leading articles, '&' -> 'and', EU TMNT Hero -> Ninja)
+    char keyA[128], keyB[128];
+    PixelcadeArtResolver::normalizeMarqueeKey("The Legend of Zelda - A Link to the Past (France)", keyA, sizeof(keyA));
+    PixelcadeArtResolver::normalizeMarqueeKey("Legend of Zelda, The - A Link to the Past.png", keyB, sizeof(keyB));
+    TEST_ASSERT_EQUAL_STRING(keyB, keyA);
+
+    PixelcadeArtResolver::normalizeMarqueeKey("Ast\xC3\xA9rix & Ob\xC3\xA9lix (Europe) (En,Fr,De)", keyA, sizeof(keyA));
+    PixelcadeArtResolver::normalizeMarqueeKey("Asterix and Obelix.png", keyB, sizeof(keyB));
+    TEST_ASSERT_EQUAL_STRING(keyB, keyA);
+
+    PixelcadeArtResolver::normalizeMarqueeKey("Teenage Mutant Hero Turtles IV - Turtles in Time (Europe)", keyA, sizeof(keyA));
+    PixelcadeArtResolver::normalizeMarqueeKey("Teenage Mutant Ninja Turtles IV - Turtles in Time (USA).png", keyB, sizeof(keyB));
+    TEST_ASSERT_EQUAL_STRING(keyB, keyA);
+
+    // 5. Catalog scoring precision & anti-false-positive guards
+    TEST_ASSERT_TRUE(
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "Pokemon - Emerald Version (USA, Europe).png",
+            "Pokemon - Version Emeraude (France)",
+            "Pok\xC3\xA9mon Version \xC3\x89meraude"
+        ) >= 700
+    );
+    // Must NEVER cross-match a different version in the same franchise
+    TEST_ASSERT_EQUAL_INT(
+        0,
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "Pokemon - Ruby Version (USA, Europe).png",
+            "Pokemon - Version Emeraude (France)",
+            "Pok\xC3\xA9mon Version \xC3\x89meraude"
+        )
+    );
+    TEST_ASSERT_EQUAL_INT(
+        0,
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "Legend of Zelda, The - Oracle of Seasons (USA).png",
+            "The Legend of Zelda - Oracle of Ages (Europe)",
+            ""
+        )
+    );
+    // Non-existent sequel must score 0 (never prefix-match Mega Man.png or Mega Man 9.png)
+    TEST_ASSERT_EQUAL_INT(
+        0,
+        PixelcadeArtResolver::scoreCatalogEntry("Mega Man (USA).png", "Mega Man 99", "Mega Man 99")
+    );
+    // Regional renames & NDS numbering & multi-disc preference
+    TEST_ASSERT_TRUE(
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "Castlevania - Dracula X.png",
+            "Castlevania - Vampire's Kiss (Europe)",
+            ""
+        ) >= 700
+    );
+    TEST_ASSERT_TRUE(
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "0168 - Mario Kart DS (USA).png",
+            "Mario Kart DS (Europe) (En,Fr,De,Es,It)",
+            "Mario Kart DS"
+        ) >= 750
+    );
+    TEST_ASSERT_TRUE(
+        PixelcadeArtResolver::scoreCatalogEntry(
+            "1943 - The Battle of Midway (USA).png",
+            "1943 (Europe)",
+            ""
+        ) >= 540
+    );
+    int disc1Score = PixelcadeArtResolver::scoreCatalogEntry(
+        "Panzer Dragoon Saga (USA) (Disc 1).png", "Panzer Dragoon Saga (Europe)", ""
+    );
+    int disc2Score = PixelcadeArtResolver::scoreCatalogEntry(
+        "Panzer Dragoon Saga (USA) (Disc 2).png", "Panzer Dragoon Saga (Europe)", ""
+    );
+    TEST_ASSERT_TRUE(disc1Score > disc2Score);
+
+    // 6. System wheel logo scoring & RFC 3986 URL segment encoding
+    auto allGamesVars = PixelcadeArtResolver::getSystemNameVariants("allgames");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-all_games.png", allGamesVars) > 1900);
+
+    auto lastPlayedVars = PixelcadeArtResolver::getSystemNameVariants("lastplayed");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("auto-lastplayed.png", lastPlayedVars) > 1900);
+
+    auto arcadeVars = PixelcadeArtResolver::getSystemNameVariants("arcade");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("mame.png", arcadeVars) > 1900);
+
+    TEST_ASSERT_EQUAL_STRING(
+        "A%2BM%2BO%2BK%20%28USA%29.png",
+        PixelcadeArtResolver::urlEncodeSegment("A+M+O+K (USA).png").c_str()
+    );
+    TEST_ASSERT_EQUAL_STRING(
+        "100%25%20Dynamite%21%20%5B%21%5D.png",
+        PixelcadeArtResolver::urlEncodeSegment("100% Dynamite! [!].png").c_str()
+    );
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -4412,6 +4585,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_agenda_ics_streaming_parser_unfolding_rrule_exdate_and_sprites);
     RUN_TEST(test_fireworks_lut_renderer_q8_8_integer_physics_and_clock_sprite_bank);
     RUN_TEST(test_sync_celebration_preemption_priority_55_pauses_ingame_showcase_and_resumes);
+    RUN_TEST(test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings);
 
     return UNITY_END();
 }

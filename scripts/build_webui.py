@@ -170,10 +170,10 @@ if ref_name.startswith("v") and re.match(r"^v\d+\.\d+", ref_name):
 if not firmware_version:
     try:
         tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always'], cwd=repo_dir).decode('ascii').strip()
-        m = re.match(r"^v?(\d+\.\d+\.\d+)", tag_desc)
+        m = re.match(r"^v?(\d+\.\d+\.\d+(?:-(?!\d+-g[0-9a-f]+$)[0-9A-Za-z.]+)?)(?:-(\d+)-g[0-9a-f]+)?$", tag_desc)
         if m:
             firmware_version = m.group(1)
-            if "-" in tag_desc and not tag_desc.startswith(f"v{firmware_version}-0"):
+            if m.group(2) and m.group(2) != "0":
                 firmware_version = f"{firmware_version}-dev"
         elif tag_desc:
             firmware_version = tag_desc.lstrip("v")

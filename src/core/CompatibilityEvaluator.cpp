@@ -197,10 +197,15 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
         verdict.strategy = policyRes.descriptor.strategy;
         verdict.storage = policyRes.descriptor.canvasStorage;
 
-        bool isDouble = (verdict.strategy == PresentationStrategy::CANVAS_BURST_DOUBLE ||
-                         verdict.strategy == PresentationStrategy::DIRECT_DMA_DOUBLE);
+        // Offscreen-buffered presentation: hardware DMA double-buffering OR Canvas-buffered single-DMA
+        // (`CANVAS_BURST_SINGLE`), where all engine drawing (`fillScreen`, `drawPixel`, `blit565`)
+        // executes tear-free in an offscreen RGB565 canvas before staged scan-row burst.
+        // Only raw unbuffered `DIRECT_DMA_SINGLE` (`CanvasStorage::NONE`) lacks an offscreen backbuffer.
+        bool hasOffscreenBuffer = (verdict.strategy == PresentationStrategy::CANVAS_BURST_DOUBLE ||
+                                   verdict.strategy == PresentationStrategy::DIRECT_DMA_DOUBLE ||
+                                   verdict.strategy == PresentationStrategy::CANVAS_BURST_SINGLE);
 
-        if (req.requiresDoubleBuffer && !isDouble) {
+        if (req.requiresDoubleBuffer && !hasOffscreenBuffer) {
             verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::DoubleBufferUnavailable);
             if (verdict.primaryReason == CompatibilityReason::None) {
                 verdict.primaryReason = CompatibilityReason::RequiresDoubleBuffer;
@@ -208,7 +213,7 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
             }
         }
 
-        if (!req.supportsSingleBuffer && !isDouble) {
+        if (!req.supportsSingleBuffer && !hasOffscreenBuffer) {
             verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::DoubleBufferUnavailable);
             if (verdict.primaryReason == CompatibilityReason::None) {
                 verdict.primaryReason = CompatibilityReason::RequiresDoubleBuffer;
@@ -216,7 +221,7 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
             }
         }
 
-        if (req.prefersDoubleBuffer && !isDouble && verdict.status == CompatibilityStatus::Compatible) {
+        if (req.prefersDoubleBuffer && !hasOffscreenBuffer && verdict.status == CompatibilityStatus::Compatible) {
             verdict.status = CompatibilityStatus::CompatibleDegraded;
             verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::DoubleBufferUnavailable);
             if (verdict.primaryReason == CompatibilityReason::None) {
