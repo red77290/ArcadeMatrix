@@ -98,6 +98,32 @@ int32_t localDayIndex(uint32_t epochUtc, int32_t tzOffsetSec) {
     return static_cast<int32_t>((localSec >= 0) ? (localSec / 86400LL) : ((localSec - 86399LL) / 86400LL));
 }
 
+void civilFromDaysLocal(int64_t z, int& y, unsigned& m, unsigned& d, int& weekday0) {
+    // 1970-01-01 was a Thursday (weekday 4 where 0 = Sunday)
+    int64_t wd = (z + 4) % 7;
+    if (wd < 0) wd += 7;
+    weekday0 = static_cast<int>(wd);
+
+    z += 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = static_cast<unsigned>(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = static_cast<int>(yoe) + static_cast<int>(era) * 400;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp + (mp < 10 ? 3 : -9);
+    y += (m <= 2) ? 1 : 0;
+}
+
+void drawClippedVerticalText5x7(IDrawingSurface* surface, const char* text, int16_t startX, int16_t y,
+                                int16_t clipMinX, int16_t clipMaxX, int16_t clipMinY, int16_t clipMaxY,
+                                uint16_t color) {
+    if (!surface || !text || *text == '\0') return;
+    if (y + 7 <= clipMinY || y >= clipMaxY) return;
+    drawClippedText5x7(surface, text, startX, y, clipMinX, clipMaxX, color);
+}
+
 } // namespace
 
 AgendaEngine::AgendaEngine() {
@@ -160,15 +186,42 @@ void AgendaEngine::applyConfig(const EngineConfig* config) {
     if (hor > 30) hor = 30;
     m_horizonDays = static_cast<uint8_t>(hor);
 
-    int shown = config->getInt("events_shown", 3);
+    int shown = config->getInt("events_shown", 5);
     if (shown < 1) shown = 1;
-    if (shown > 6) shown = 6;
+    if (shown > static_cast<int>(MAX_ACTIVE_EVENTS)) shown = static_cast<int>(MAX_ACTIVE_EVENTS);
     m_eventsShown = static_cast<uint8_t>(shown);
 
     int imm = config->getInt("imminent_min", 15);
     if (imm < 0) imm = 0;
     if (imm > 60) imm = 60;
     m_imminentMin = static_cast<uint8_t>(imm);
+
+    int slideSec = config->getInt("slide_duration_sec", 5);
+    if (slideSec < 3) slideSec = 3;
+    if (slideSec > 20) slideSec = 20;
+    m_slideDurationSec = static_cast<uint8_t>(slideSec);
+
+    String vm = config->getString("view_mode", "auto");
+    if (vm.equalsIgnoreCase("multiday_scroll")) m_viewMode = ViewMode::MultiDayScroll;
+    else if (vm.equalsIgnoreCase("cards")) m_viewMode = ViewMode::Cards;
+    else if (vm.equalsIgnoreCase("split_deck")) m_viewMode = ViewMode::SplitDeck;
+    else if (vm.equalsIgnoreCase("ticker")) m_viewMode = ViewMode::Ticker;
+    else m_viewMode = ViewMode::Auto;
+
+    String th = config->getString("theme", "cyber_arcade");
+    if (th.equalsIgnoreCase("amber_dmd")) m_theme = AgendaTheme::AmberDmd;
+    else if (th.equalsIgnoreCase("matrix_green")) m_theme = AgendaTheme::MatrixGreen;
+    else if (th.equalsIgnoreCase("snes_rpg")) m_theme = AgendaTheme::SnesRpg;
+    else if (th.equalsIgnoreCase("minimal_clean")) m_theme = AgendaTheme::MinimalClean;
+    else m_theme = AgendaTheme::CyberArcade;
+
+    String spd = config->getString("scroll_speed", "normal");
+    if (spd.equalsIgnoreCase("slow")) m_scrollSpeed = ScrollSpeed::Slow;
+    else if (spd.equalsIgnoreCase("fast")) m_scrollSpeed = ScrollSpeed::Fast;
+    else m_scrollSpeed = ScrollSpeed::Normal;
+
+    m_showRelativeTime = config->getBool("show_relative_time", true);
+    m_showBadges = config->getBool("show_badges", true);
 
     String emp = config->getString("empty_behavior", "chill");
     m_emptyChill = !emp.equalsIgnoreCase("skip");
@@ -577,16 +630,86 @@ bool AgendaEngine::shutdownForDestruction() {
     return true;
 }
 
+uint32_t AgendaEngine::scrollStepIntervalMs() const {
+    switch (m_scrollSpeed) {
+        case ScrollSpeed::Slow: return 55U;
+        case ScrollSpeed::Fast: return 20U;
+        case ScrollSpeed::Normal:
+        default: return 33U;
+    }
+}
+
+AgendaEngine::ThemeColors AgendaEngine::resolveThemeColors() const {
+    switch (m_theme) {
+        case AgendaTheme::AmberDmd:
+            return { 0x2080, 0xFD20, 0xFFE0, 0xFD20, 0xC380, 0x4100, 0x0000, true, 0xFD20 };
+        case AgendaTheme::MatrixGreen:
+            return { 0x0120, 0x07E0, 0x87F0, 0x07E0, 0x04A0, 0x0240, 0x0000, true, 0x07E0 };
+        case AgendaTheme::SnesRpg:
+            return { 0x108B, 0xFFE0, 0xFFFF, 0xFFFF, 0xAD55, 0x6B4D, 0x0845, false, 0x07FF };
+        case AgendaTheme::MinimalClean:
+            return { 0x1082, 0xAD55, 0xFFFF, 0xFFFF, 0x8410, 0x2104, 0x0000, false, 0xFFFF };
+        case AgendaTheme::CyberArcade:
+        default:
+            return { 0x0863, 0x07FF, 0x07FF, 0xFFFF, 0x8410, 0x2104, 0x0000, false, 0x07FF };
+    }
+}
+
+uint16_t AgendaEngine::resolveEventAccent(const AgendaEventPod& ev, const ThemeColors& tc) const {
+    if (tc.overrideCalendarColor) {
+        return tc.primaryAccent;
+    }
+    return ev.calendarColor565 ? ev.calendarColor565 : tc.primaryAccent;
+}
+
+void AgendaEngine::formatEventDayHeader(uint32_t startEpoch, uint32_t nowEpoch, bool shortForm, char* out, size_t outSize) const {
+    int32_t evDay = localDayIndex(startEpoch, m_localTzOffsetSec);
+    int32_t curDay = (nowEpoch > 0) ? localDayIndex(nowEpoch, m_localTzOffsetSec) : evDay;
+    int y = 1970, wd = 0;
+    unsigned m = 1, d = 1;
+    civilFromDaysLocal(evDay, y, m, d, wd);
+    I18n::formatAgendaDayBanner(evDay, curDay, wd, static_cast<int>(d), static_cast<int>(m),
+                                I18n::getLang(), m_showRelativeTime && !shortForm, shortForm, out, outSize);
+}
+
 void AgendaEngine::recomputeSlideScrollBounds(uint16_t panelW) {
     m_scrollOffsetPx = 0;
     m_scrollPhase = ScrollPhase::PauseStart;
     m_phaseStartMs = millis();
 
-    if (m_activeCount == 0 || m_currentSlideIdx >= m_activeCount) {
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    if (limit == 0) {
         m_maxScrollPx = 0;
         return;
     }
 
+    if (m_viewMode == ViewMode::MultiDayScroll) {
+        // Calculate total vertical height of day headers + event rows
+        int16_t totalH = 0;
+        int32_t prevDay = -999999;
+        for (uint8_t i = 0; i < limit; ++i) {
+            int32_t evDay = localDayIndex(m_activeEvents[i].startEpoch, m_localTzOffsetSec);
+            if (evDay != prevDay) {
+                prevDay = evDay;
+                totalH += 11;
+            }
+            totalH += 12;
+        }
+        int16_t viewH = static_cast<int16_t>(m_geometry.height) - 2;
+        m_maxScrollPx = (totalH > viewH) ? (totalH - viewH + 6) : 0;
+        return;
+    }
+
+    if (m_viewMode == ViewMode::Ticker) {
+        int16_t totalW = 0;
+        for (uint8_t i = 0; i < limit; ++i) {
+            totalW += static_cast<int16_t>(strlen(m_activeEvents[i].title)) * 6 + 96;
+        }
+        m_maxScrollPx = (totalW > static_cast<int16_t>(panelW)) ? totalW : static_cast<int16_t>(panelW);
+        return;
+    }
+
+    if (m_currentSlideIdx >= limit) m_currentSlideIdx = 0;
     const AgendaEventPod& ev = m_activeEvents[m_currentSlideIdx];
     int16_t titlePx = static_cast<int16_t>(strlen(ev.title)) * 6;
     int16_t availW = static_cast<int16_t>(panelW) - 36;
@@ -613,6 +736,9 @@ void AgendaEngine::update(EngineContext* context) {
 
     uint32_t nowMs = millis();
     bool dirty = false;
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const uint32_t stepMs = scrollStepIntervalMs();
+    const uint32_t slideDurMs = static_cast<uint32_t>(m_slideDurationSec) * 1000U;
 
     // Advance sprite animation tick at ~4 Hz (250 ms)
     if (nowMs - m_lastAnimTickMs >= 250U) {
@@ -623,19 +749,27 @@ void AgendaEngine::update(EngineContext* context) {
         }
     }
 
-    // Compact wide layout scrolls overflowing title smoothly at ~30 FPS
-    const bool isCompactWide = (m_geometry.layoutClass == LayoutClass::WIDE && m_geometry.height < 64);
-    if (isCompactWide && m_activeCount > 0 && m_maxScrollPx > 0) {
+    if (m_viewMode == ViewMode::Ticker && limit > 0) {
+        m_isRealtimeNow = true;
+        if (nowMs - m_phaseStartMs >= stepMs) {
+            m_phaseStartMs = nowMs;
+            m_scrollOffsetPx++;
+            if (m_scrollOffsetPx >= m_maxScrollPx) {
+                m_scrollOffsetPx = 0;
+            }
+            dirty = true;
+        }
+    } else if (m_viewMode == ViewMode::MultiDayScroll && limit > 0 && m_maxScrollPx > 0) {
         m_isRealtimeNow = true;
         switch (m_scrollPhase) {
             case ScrollPhase::PauseStart:
-                if (nowMs - m_phaseStartMs >= 1200U) {
+                if (nowMs - m_phaseStartMs >= 1400U) {
                     m_scrollPhase = ScrollPhase::Scrolling;
                     m_phaseStartMs = nowMs;
                 }
                 break;
             case ScrollPhase::Scrolling:
-                if (nowMs - m_phaseStartMs >= 33U) {
+                if (nowMs - m_phaseStartMs >= stepMs) {
                     m_phaseStartMs = nowMs;
                     m_scrollOffsetPx++;
                     dirty = true;
@@ -646,29 +780,57 @@ void AgendaEngine::update(EngineContext* context) {
                 }
                 break;
             case ScrollPhase::PauseEnd:
-                if (nowMs - m_phaseStartMs >= 1000U) {
-                    uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
-                    if (limit > 1) {
-                        m_currentSlideIdx = (m_currentSlideIdx + 1) % limit;
-                    }
-                    m_slidesShownCycle++;
-                    m_lastSlideMs = nowMs;
-                    recomputeSlideScrollBounds(m_geometry.width);
+                if (nowMs - m_phaseStartMs >= 1400U) {
+                    m_scrollOffsetPx = 0;
+                    m_scrollPhase = ScrollPhase::PauseStart;
+                    m_phaseStartMs = nowMs;
                     dirty = true;
                 }
                 break;
         }
     } else {
-        m_isRealtimeNow = false;
-        // Advance compact slide every 5 seconds when static
-        if (isCompactWide && m_activeCount > 1 && (nowMs - m_lastSlideMs >= 5000U)) {
-            uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
-            if (limit > 1) {
+        const bool isCompactOrCards = (m_viewMode == ViewMode::Cards) ||
+                                      (m_viewMode == ViewMode::Auto && m_geometry.layoutClass == LayoutClass::WIDE && m_geometry.height < 64);
+        if (isCompactOrCards && limit > 0 && m_maxScrollPx > 0) {
+            m_isRealtimeNow = true;
+            switch (m_scrollPhase) {
+                case ScrollPhase::PauseStart:
+                    if (nowMs - m_phaseStartMs >= 1200U) {
+                        m_scrollPhase = ScrollPhase::Scrolling;
+                        m_phaseStartMs = nowMs;
+                    }
+                    break;
+                case ScrollPhase::Scrolling:
+                    if (nowMs - m_phaseStartMs >= stepMs) {
+                        m_phaseStartMs = nowMs;
+                        m_scrollOffsetPx++;
+                        dirty = true;
+                        if (m_scrollOffsetPx >= m_maxScrollPx) {
+                            m_scrollOffsetPx = m_maxScrollPx;
+                            m_scrollPhase = ScrollPhase::PauseEnd;
+                        }
+                    }
+                    break;
+                case ScrollPhase::PauseEnd:
+                    if (nowMs - m_phaseStartMs >= 1000U) {
+                        if (limit > 1) {
+                            m_currentSlideIdx = (m_currentSlideIdx + 1) % limit;
+                        }
+                        m_slidesShownCycle++;
+                        m_lastSlideMs = nowMs;
+                        recomputeSlideScrollBounds(m_geometry.width);
+                        dirty = true;
+                    }
+                    break;
+            }
+        } else {
+            m_isRealtimeNow = false;
+            if (limit > 1 && (nowMs - m_lastSlideMs >= slideDurMs)) {
                 m_currentSlideIdx = (m_currentSlideIdx + 1) % limit;
                 recomputeSlideScrollBounds(m_geometry.width);
+                m_lastSlideMs = nowMs;
                 dirty = true;
             }
-            m_lastSlideMs = nowMs;
         }
     }
 
@@ -726,15 +888,23 @@ void AgendaEngine::renderChillScene(IDrawingSurface* surface, uint16_t w, uint16
 }
 
 void AgendaEngine::renderWideCompact(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
-    const AgendaEventPod& ev = m_activeEvents[m_currentSlideIdx < m_activeCount ? m_currentSlideIdx : 0];
+    const ThemeColors tc = resolveThemeColors();
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const uint8_t curIdx = (limit > 0 && m_currentSlideIdx < limit) ? m_currentSlideIdx : 0;
+    const AgendaEventPod& ev = m_activeEvents[curIdx];
     const bool allDay = (ev.flags & AGENDA_FLAG_ALL_DAY) != 0;
+    const uint16_t accent = resolveEventAccent(ev, tc);
+
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
 
     // Top row (y = 0..17): colored time pill + contextual 12x12 sprite + scrolling/static title
     char timeStr[12]{};
     formatEventTimePill(ev.startEpoch, allDay, m_localTzOffsetSec, nowEpoch, timeStr, sizeof(timeStr));
 
     int16_t pillW = 24;
-    surface->fillRect(1, 2, pillW, 11, ev.calendarColor565);
+    surface->fillRect(1, 2, pillW, 11, accent);
     drawTinyTimeString3x5(surface, 3, 5, timeStr, 0x0000);
 
     int16_t textMinX = pillW + 3;
@@ -743,12 +913,12 @@ void AgendaEngine::renderWideCompact(IDrawingSurface* surface, uint16_t w, uint1
         textMinX += 13;
     }
 
-    drawClippedText5x7(surface, ev.title, textMinX - m_scrollOffsetPx, 4, textMinX, static_cast<int16_t>(w) - 1, 0xFFFF);
+    drawClippedText5x7(surface, ev.title, textMinX - m_scrollOffsetPx, 4, textMinX, static_cast<int16_t>(w) - 1, tc.titleText);
 
     // Subtle divider line
-    surface->drawFastHLine(0, 16, w, 0x2104);
+    surface->drawFastHLine(0, 16, w, tc.divider);
 
-    // Bottom row (y = 19..31): Imminent gauge / Active progress / Next event preview
+    // Bottom row (y = 19..31): Imminent gauge / Active progress / Day + Badge + Next event preview
     Lang l = I18n::getLang();
     bool isImminent = false;
     int32_t minsUntil = 0;
@@ -762,7 +932,6 @@ void AgendaEngine::renderWideCompact(IDrawingSurface* surface, uint16_t w, uint1
     const bool isActiveNow = (nowEpoch > 0 && nowEpoch >= ev.startEpoch && nowEpoch < ev.endEpoch);
 
     if (isImminent) {
-        // VS-Fighting style pulsing imminent bar
         uint16_t barCol = (m_animTick & 1U) ? 0xFFE0 : 0xFD20;
         int16_t barMaxW = static_cast<int16_t>(w) - 4;
         int16_t fillW = (m_imminentMin > 0)
@@ -777,7 +946,6 @@ void AgendaEngine::renderWideCompact(IDrawingSurface* surface, uint16_t w, uint1
         I18n::formatAgendaImminent(immBuf, sizeof(immBuf), minsUntil, l);
         drawClippedText5x7(surface, immBuf, 6, 21, 4, static_cast<int16_t>(w) - 4, barCol);
     } else if (isActiveNow) {
-        // Active slot progress bar
         uint32_t totalDur = (ev.endEpoch > ev.startEpoch) ? (ev.endEpoch - ev.startEpoch) : 3600U;
         uint32_t elapsed = nowEpoch - ev.startEpoch;
         int32_t remMin = static_cast<int32_t>((ev.endEpoch - nowEpoch + 59U) / 60U);
@@ -790,103 +958,256 @@ void AgendaEngine::renderWideCompact(IDrawingSurface* surface, uint16_t w, uint1
         char nowBuf[32]{};
         snprintf(nowBuf, sizeof(nowBuf), "%s (-%dm)", I18n::getAgendaActiveNowLabel(l), (int)remMin);
         drawClippedText5x7(surface, nowBuf, 6, 21, 4, static_cast<int16_t>(w) - 4, 0x07E0);
-    } else if (m_activeCount > 1) {
-        uint8_t nextIdx = (m_currentSlideIdx + 1) % m_activeCount;
-        const AgendaEventPod& nextEv = m_activeEvents[nextIdx];
-        char nextTime[12]{};
-        formatEventTimePill(nextEv.startEpoch, (nextEv.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, nextTime, sizeof(nextTime));
-        char line2[64]{};
-        snprintf(line2, sizeof(line2), "%s %s %s", I18n::getAgendaNextPrefix(l), nextTime, nextEv.title);
-        drawClippedText5x7(surface, line2, 2, 21, 2, static_cast<int16_t>(w) - 14, 0xAD55);
+    } else {
+        char dayHdr[28]{};
+        formatEventDayHeader(ev.startEpoch, nowEpoch, true, dayHdr, sizeof(dayHdr));
+        char line2[72]{};
+        if (m_showBadges && ev.badgeLabel[0] != '\0') {
+            snprintf(line2, sizeof(line2), "%s [%s]", dayHdr, ev.badgeLabel);
+        } else {
+            snprintf(line2, sizeof(line2), "%s", dayHdr);
+        }
+        drawClippedText5x7(surface, line2, 2, 21, 2, static_cast<int16_t>(w) - 18, tc.headerText);
 
         // Pagination dots on bottom right
-        uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
         for (uint8_t i = 0; i < limit; ++i) {
-            uint16_t dotCol = (i == m_currentSlideIdx) ? 0x07FF : 0x4208;
+            uint16_t dotCol = (i == curIdx) ? tc.headerAccent : tc.divider;
             surface->fillRect(static_cast<int16_t>(w) - static_cast<int16_t>((limit - i) * 4), 28, 2, 2, dotCol);
         }
-    } else {
-        drawClippedText5x7(surface, ev.badgeLabel, 2, 21, 2, static_cast<int16_t>(w) - 2, ev.calendarColor565);
     }
 }
 
 void AgendaEngine::renderWideHd(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
-    const int16_t leftColW = (w >= 200) ? 72 : 52;
+    const ThemeColors tc = resolveThemeColors();
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const uint8_t startIdx = (limit > 3) ? ((m_currentSlideIdx / 3) * 3) % limit : 0;
+    const AgendaEventPod& leadEv = m_activeEvents[startIdx];
+    const int16_t leftColW = (w >= 200) ? 72 : 54;
 
-    // Left Column: Beveled Arcade Calendar Block + Large Contextual Sprite
-    surface->drawRect(2, 2, leftColW - 4, h - 4, 0x07FF);
-    surface->fillRect(3, 3, leftColW - 6, 12, 0xF800);
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
 
-    Lang l = I18n::getLang();
-    const AgendaEventPod& firstEv = m_activeEvents[0];
-    drawClippedText5x7(surface, I18n::getAgendaTodayLabel(l, true), 6, 5, 4, leftColW - 4, 0xFFFF);
+    // Left Column: Beveled Arcade Calendar Block + Dynamic Day/Date + Large Contextual Sprite
+    surface->drawRect(2, 2, leftColW - 4, h - 4, tc.headerAccent);
+    surface->fillRect(3, 3, leftColW - 6, 12, tc.headerBg);
+
+    char dayHdr[24]{};
+    formatEventDayHeader(leadEv.startEpoch, nowEpoch, true, dayHdr, sizeof(dayHdr));
+    drawClippedText5x7(surface, dayHdr, 5, 5, 4, leftColW - 4, tc.headerText);
 
     if (m_funSprites) {
-        ClockSpriteBank::drawAgendaIcon(surface, firstEv.spriteId, (leftColW / 2) - 7, 20, 16, m_animTick);
+        ClockSpriteBank::drawAgendaIcon(surface, leadEv.spriteId, (leftColW / 2) - 7, 20, 16, m_animTick);
     }
     ClockSpriteBank::drawPacman(surface, (leftColW / 2) - 6, h - 18, static_cast<uint8_t>(m_animTick), true);
 
-    // Right Column: Up to 3 simultaneous event cards with vertical accent bar
-    uint8_t count = (m_activeCount < 3) ? m_activeCount : 3;
+    // Right Column: Up to 3 simultaneous event cards (paginated across multi-day horizon)
     int16_t rowH = static_cast<int16_t>(h) / 3;
-    for (uint8_t i = 0; i < count; ++i) {
-        const AgendaEventPod& ev = m_activeEvents[i];
-        int16_t ry = static_cast<int16_t>(i) * rowH + 2;
-        surface->fillRect(leftColW + 2, ry, 3, rowH - 3, ev.calendarColor565);
+    for (uint8_t row = 0; row < 3 && row < limit; ++row) {
+        uint8_t idx = (startIdx + row) % limit;
+        const AgendaEventPod& ev = m_activeEvents[idx];
+        uint16_t accent = resolveEventAccent(ev, tc);
+        int16_t ry = static_cast<int16_t>(row) * rowH + 2;
+        surface->fillRect(leftColW + 2, ry, 3, rowH - 3, accent);
 
         char tbuf[12]{};
         formatEventTimePill(ev.startEpoch, (ev.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, tbuf, sizeof(tbuf));
-        drawTinyTimeString3x5(surface, leftColW + 8, ry + 2, tbuf, ev.calendarColor565);
-        drawClippedText5x7(surface, ev.title, leftColW + 32, ry + 1, leftColW + 32, static_cast<int16_t>(w) - 2, 0xFFFF);
-        drawClippedText5x7(surface, ev.badgeLabel, leftColW + 32, ry + 10, leftColW + 32, static_cast<int16_t>(w) - 2, 0x8410);
+        drawTinyTimeString3x5(surface, leftColW + 8, ry + 2, tbuf, accent);
+        drawClippedText5x7(surface, ev.title, leftColW + 32, ry + 1, leftColW + 32, static_cast<int16_t>(w) - 2, tc.titleText);
+
+        char subLine[40]{};
+        char evDayShort[20]{};
+        formatEventDayHeader(ev.startEpoch, nowEpoch, true, evDayShort, sizeof(evDayShort));
+        if (m_showBadges && ev.badgeLabel[0] != '\0') {
+            snprintf(subLine, sizeof(subLine), "[%s] %s", ev.badgeLabel, evDayShort);
+        } else {
+            snprintf(subLine, sizeof(subLine), "%s", evDayShort);
+        }
+        drawClippedText5x7(surface, subLine, leftColW + 32, ry + 10, leftColW + 32, static_cast<int16_t>(w) - 2, tc.dimText);
     }
 }
 
 void AgendaEngine::renderSquare(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
-    Lang l = I18n::getLang();
-    surface->fillRect(0, 0, w, 12, 0x1084);
-    drawClippedText5x7(surface, I18n::getAgendaTodayLabel(l, true), 2, 2, 2, static_cast<int16_t>(w) - 18, 0x07FF);
+    const ThemeColors tc = resolveThemeColors();
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const uint8_t startIdx = (limit > 2) ? (m_currentSlideIdx % limit) : 0;
+    const AgendaEventPod& leadEv = m_activeEvents[startIdx];
+
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
+    surface->fillRect(0, 0, w, 12, tc.headerBg);
+    char dayHdr[24]{};
+    formatEventDayHeader(leadEv.startEpoch, nowEpoch, true, dayHdr, sizeof(dayHdr));
+    drawClippedText5x7(surface, dayHdr, 2, 2, 2, static_cast<int16_t>(w) - 16, tc.headerText);
     if (m_funSprites) {
-        ClockSpriteBank::drawAgendaIcon(surface, m_activeEvents[0].spriteId, static_cast<int16_t>(w) - 15, 0, 12, m_animTick);
+        ClockSpriteBank::drawAgendaIcon(surface, leadEv.spriteId, static_cast<int16_t>(w) - 14, 0, 12, m_animTick);
     }
 
-    uint8_t count = (m_activeCount < 2) ? m_activeCount : 2;
-    for (uint8_t i = 0; i < count; ++i) {
-        const AgendaEventPod& ev = m_activeEvents[i];
-        int16_t cy = 15 + static_cast<int16_t>(i) * 24;
-        surface->fillRect(1, cy, 2, 20, ev.calendarColor565);
+    uint8_t count = (limit < 2) ? limit : 2;
+    for (uint8_t row = 0; row < count; ++row) {
+        const AgendaEventPod& ev = m_activeEvents[(startIdx + row) % limit];
+        uint16_t accent = resolveEventAccent(ev, tc);
+        int16_t cy = 15 + static_cast<int16_t>(row) * 24;
+        surface->fillRect(1, cy, 2, 20, accent);
         char tbuf[12]{};
         formatEventTimePill(ev.startEpoch, (ev.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, tbuf, sizeof(tbuf));
-        drawTinyTimeString3x5(surface, 5, cy + 1, tbuf, ev.calendarColor565);
-        drawClippedText5x7(surface, ev.badgeLabel, 28, cy, 28, static_cast<int16_t>(w) - 1, 0xAD55);
-        drawClippedText5x7(surface, ev.title, 5, cy + 10, 5, static_cast<int16_t>(w) - 1, 0xFFFF);
+        drawTinyTimeString3x5(surface, 5, cy + 1, tbuf, accent);
+        if (m_showBadges) {
+            drawClippedText5x7(surface, ev.badgeLabel, 28, cy, 28, static_cast<int16_t>(w) - 1, tc.dimText);
+        }
+        drawClippedText5x7(surface, ev.title, 5, cy + 10, 5, static_cast<int16_t>(w) - 1, tc.titleText);
     }
 }
 
 void AgendaEngine::renderTateQuestLog(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
-    Lang l = I18n::getLang();
+    const ThemeColors tc = resolveThemeColors();
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const uint8_t startIdx = (limit > 0) ? (m_currentSlideIdx % limit) : 0;
+    const AgendaEventPod& leadEv = m_activeEvents[startIdx];
 
-    // Header: Quest Log Date + Contextual Sprite on Ground Bricks
-    drawClippedText5x7(surface, I18n::getAgendaTodayLabel(l, w < 64), 2, 2, 2, static_cast<int16_t>(w) - 2, 0xFFE0);
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
+
+    char dayHdr[24]{};
+    formatEventDayHeader(leadEv.startEpoch, nowEpoch, w < 64, dayHdr, sizeof(dayHdr));
+    drawClippedText5x7(surface, dayHdr, 2, 2, 2, static_cast<int16_t>(w) - 2, tc.headerText);
     ClockSpriteBank::SpriteFrameRef tile = ClockSpriteBank::getCameoFrame(ClockSpriteBank::CameoSprite::GROUND_TILE_MARIO, 0);
     for (int16_t gx = 0; gx < static_cast<int16_t>(w); gx += 8) {
         ClockSpriteBank::blitSprite(surface, tile, gx, 22, false);
     }
     if (m_funSprites) {
-        ClockSpriteBank::drawAgendaIcon(surface, m_activeEvents[0].spriteId, static_cast<int16_t>(w / 2) - 6, 10, 12, m_animTick);
+        ClockSpriteBank::drawAgendaIcon(surface, leadEv.spriteId, static_cast<int16_t>(w / 2) - 6, 10, 12, m_animTick);
     }
 
     int16_t yCursor = 32;
     uint8_t maxCards = (h >= 200) ? 7 : ((h >= 120) ? 4 : 2);
-    uint8_t limit = (m_activeCount < maxCards) ? m_activeCount : maxCards;
-    for (uint8_t i = 0; i < limit && yCursor + 20 <= static_cast<int16_t>(h); ++i) {
-        const AgendaEventPod& ev = m_activeEvents[i];
-        surface->drawRect(1, yCursor, w - 2, 20, ev.calendarColor565);
+    uint8_t count = (limit < maxCards) ? limit : maxCards;
+    for (uint8_t i = 0; i < count && yCursor + 20 <= static_cast<int16_t>(h); ++i) {
+        const AgendaEventPod& ev = m_activeEvents[(startIdx + i) % limit];
+        uint16_t accent = resolveEventAccent(ev, tc);
+        surface->drawRect(1, yCursor, w - 2, 20, accent);
         char tbuf[12]{};
         formatEventTimePill(ev.startEpoch, (ev.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, tbuf, sizeof(tbuf));
-        drawTinyTimeString3x5(surface, 4, yCursor + 2, tbuf, ev.calendarColor565);
-        drawClippedText5x7(surface, ev.title, 4, yCursor + 10, 4, static_cast<int16_t>(w) - 3, 0xFFFF);
+        drawTinyTimeString3x5(surface, 4, yCursor + 2, tbuf, accent);
+        drawClippedText5x7(surface, ev.title, 4, yCursor + 10, 4, static_cast<int16_t>(w) - 3, tc.titleText);
         yCursor += 23;
+    }
+}
+
+void AgendaEngine::renderMultiDayVerticalScroll(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
+    const ThemeColors tc = resolveThemeColors();
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
+
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    int16_t yCursor = 1 - m_scrollOffsetPx;
+    int32_t prevDay = -999999;
+
+    for (uint8_t i = 0; i < limit; ++i) {
+        const AgendaEventPod& ev = m_activeEvents[i];
+        int32_t evDay = localDayIndex(ev.startEpoch, m_localTzOffsetSec);
+
+        // Day group header banner whenever the date changes
+        if (evDay != prevDay) {
+            prevDay = evDay;
+            if (yCursor + 10 > 0 && yCursor < static_cast<int16_t>(h)) {
+                if (yCursor >= 0 && yCursor + 9 <= static_cast<int16_t>(h)) {
+                    surface->fillRect(1, yCursor, w - 2, 9, tc.headerBg);
+                }
+                char dayBanner[32]{};
+                formatEventDayHeader(ev.startEpoch, nowEpoch, w < 96, dayBanner, sizeof(dayBanner));
+                drawClippedVerticalText5x7(surface, dayBanner, 3, yCursor + 1, 2, static_cast<int16_t>(w) - 2, 0, static_cast<int16_t>(h), tc.headerText);
+            }
+            yCursor += 11;
+        }
+
+        // Event row
+        if (yCursor + 11 > 0 && yCursor < static_cast<int16_t>(h)) {
+            uint16_t accent = resolveEventAccent(ev, tc);
+            int16_t barTop = (yCursor < 0) ? 0 : yCursor;
+            int16_t barBot = (yCursor + 10 > static_cast<int16_t>(h)) ? static_cast<int16_t>(h) : (yCursor + 10);
+            if (barBot > barTop) {
+                surface->fillRect(1, barTop, 2, barBot - barTop, accent);
+            }
+
+            int16_t cx = 5;
+            if (m_funSprites && w >= 64 && yCursor >= 0 && yCursor + 12 <= static_cast<int16_t>(h)) {
+                ClockSpriteBank::drawAgendaIcon(surface, ev.spriteId, cx, yCursor - 1, 12, m_animTick);
+                cx += 13;
+            }
+
+            char tbuf[12]{};
+            formatEventTimePill(ev.startEpoch, (ev.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, tbuf, sizeof(tbuf));
+            if (yCursor >= 0 && yCursor + 6 <= static_cast<int16_t>(h)) {
+                drawTinyTimeString3x5(surface, cx, yCursor + 2, tbuf, accent);
+            }
+            cx += 22;
+
+            if (m_showBadges && w >= 120 && ev.badgeLabel[0] != '\0') {
+                char bbuf[16]{};
+                snprintf(bbuf, sizeof(bbuf), "[%.4s]", ev.badgeLabel);
+                drawClippedVerticalText5x7(surface, bbuf, cx, yCursor + 1, cx, static_cast<int16_t>(w) - 2, 0, static_cast<int16_t>(h), accent);
+                cx += static_cast<int16_t>(strlen(bbuf)) * 6 + 2;
+            }
+
+            drawClippedVerticalText5x7(surface, ev.title, cx, yCursor + 1, cx, static_cast<int16_t>(w) - 2, 0, static_cast<int16_t>(h), tc.titleText);
+        }
+        yCursor += 12;
+    }
+}
+
+void AgendaEngine::renderMultiDayTicker(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const {
+    const ThemeColors tc = resolveThemeColors();
+    if (tc.cardBg != 0) {
+        surface->fillRect(0, 0, w, h, tc.cardBg);
+    }
+
+    const uint8_t limit = (m_activeCount < m_eventsShown) ? m_activeCount : m_eventsShown;
+    const AgendaEventPod& leadEv = m_activeEvents[0];
+
+    // Top bar: Calendar header + current day + active sprite
+    surface->fillRect(0, 0, w, 12, tc.headerBg);
+    surface->drawFastHLine(0, 12, w, tc.headerAccent);
+    if (m_funSprites) {
+        ClockSpriteBank::drawAgendaIcon(surface, leadEv.spriteId, 2, 0, 12, m_animTick);
+    }
+    char hdr[32]{};
+    formatEventDayHeader(leadEv.startEpoch, nowEpoch, false, hdr, sizeof(hdr));
+    drawClippedText5x7(surface, hdr, m_funSprites ? 16 : 3, 2, 2, static_cast<int16_t>(w) - 2, tc.headerText);
+
+    // Continuous multi-day ticker stream below header
+    int16_t tickerY = (h >= 48) ? static_cast<int16_t>((h + 12) / 2 - 4) : 18;
+    for (int pass = 0; pass < 2; ++pass) {
+        int16_t cx = static_cast<int16_t>(w / 3) - m_scrollOffsetPx + static_cast<int16_t>(pass * m_maxScrollPx);
+        for (uint8_t i = 0; i < limit; ++i) {
+            const AgendaEventPod& ev = m_activeEvents[i];
+            uint16_t accent = resolveEventAccent(ev, tc);
+
+            if (m_funSprites && cx + 12 > 0 && cx < static_cast<int16_t>(w)) {
+                ClockSpriteBank::drawAgendaIcon(surface, ev.spriteId, cx, tickerY - 2, 12, m_animTick);
+            }
+            if (m_funSprites) cx += 14;
+
+            char dayStr[20]{};
+            formatEventDayHeader(ev.startEpoch, nowEpoch, true, dayStr, sizeof(dayStr));
+            char timeStr[12]{};
+            formatEventTimePill(ev.startEpoch, (ev.flags & AGENDA_FLAG_ALL_DAY) != 0, m_localTzOffsetSec, nowEpoch, timeStr, sizeof(timeStr));
+
+            char metaPill[44]{};
+            if (m_showBadges && ev.badgeLabel[0] != '\0') {
+                snprintf(metaPill, sizeof(metaPill), "[%s %s %s]", dayStr, timeStr, ev.badgeLabel);
+            } else {
+                snprintf(metaPill, sizeof(metaPill), "[%s %s]", dayStr, timeStr);
+            }
+            drawClippedText5x7(surface, metaPill, cx, tickerY, 0, static_cast<int16_t>(w), accent);
+            cx += static_cast<int16_t>(strlen(metaPill)) * 6 + 4;
+
+            drawClippedText5x7(surface, ev.title, cx, tickerY, 0, static_cast<int16_t>(w), tc.titleText);
+            cx += static_cast<int16_t>(strlen(ev.title)) * 6 + 18;
+        }
     }
 }
 
@@ -906,6 +1227,28 @@ void AgendaEngine::render(EngineContext* context) {
     }
 
     uint32_t now = currentEpoch();
+    switch (m_viewMode) {
+        case ViewMode::MultiDayScroll:
+            renderMultiDayVerticalScroll(surface, w, h, now);
+            return;
+        case ViewMode::Ticker:
+            renderMultiDayTicker(surface, w, h, now);
+            return;
+        case ViewMode::Cards:
+            renderWideCompact(surface, w, h, now);
+            return;
+        case ViewMode::SplitDeck:
+            if (w >= 96 && h >= 48) {
+                renderWideHd(surface, w, h, now);
+            } else {
+                renderSquare(surface, w, h, now);
+            }
+            return;
+        case ViewMode::Auto:
+        default:
+            break;
+    }
+
     switch (m_geometry.layoutClass) {
         case LayoutClass::PORTRAIT:
         case LayoutClass::TALL:
@@ -933,9 +1276,15 @@ constexpr FieldTableEntry kAgendaFields[] = {
     {"ics_url_2", ConfigType::STRING, "Secondary Calendar URL (.ics)", "Optional second iCal (.ics / webcal://) URL (Work, Family, Birthdays).", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept},
     {"ics_label_2", ConfigType::STRING, "Secondary Calendar Badge", "Short label displayed for the second calendar.", "Pro", false, "", "", "", "", "", false, "", ValidationPolicy::Accept},
     {"ics_color_2", ConfigType::COLOR, "Secondary Calendar Color", "Accent color for the second calendar.", "#FFB300", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault},
+    {"view_mode", ConfigType::ENUM, "Display Layout Mode", "Visual layout: Auto, Multi-Day Vertical Scroll, Sliding Cards, Split Calendar Deck, or Horizontal Ticker.", "auto", false, "", "", "", "auto,multiday_scroll,cards,split_deck,ticker", "", false, "", ValidationPolicy::FallbackDefault},
+    {"theme", ConfigType::ENUM, "Visual Theme", "Color palette and border style for the agenda display.", "cyber_arcade", false, "", "", "", "cyber_arcade,amber_dmd,matrix_green,snes_rpg,minimal_clean", "", false, "", ValidationPolicy::FallbackDefault},
+    {"scroll_speed", ConfigType::ENUM, "Scroll Speed", "Scrolling speed for multi-day feed, horizontal ticker, and long event titles.", "normal", false, "", "", "", "slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault},
+    {"slide_duration_sec", ConfigType::INTEGER, "Slide / Page Duration (sec)", "Seconds per card or page when cycling through multi-day events.", "5", false, "3", "20", "1", "", "", false, "", ValidationPolicy::Clamp},
     {"cache_ttl_min", ConfigType::INTEGER, "SD Cache Duration (min)", "Duration in minutes to serve cached events from MicroSD before refreshing.", "60", false, "15", "1440", "5", "", "", false, "", ValidationPolicy::Clamp},
     {"horizon_days", ConfigType::INTEGER, "Lookahead Horizon (days)", "Number of upcoming days to scan for events.", "7", false, "1", "30", "1", "", "", false, "", ValidationPolicy::Clamp},
-    {"events_shown", ConfigType::INTEGER, "Max Events per Cycle", "Maximum number of upcoming events displayed per rotation cycle.", "3", false, "1", "6", "1", "", "", false, "", ValidationPolicy::Clamp},
+    {"events_shown", ConfigType::INTEGER, "Max Events per Cycle", "Maximum number of upcoming events displayed across the multi-day horizon.", "5", false, "1", "8", "1", "", "", false, "", ValidationPolicy::Clamp},
+    {"show_relative_time", ConfigType::BOOLEAN, "Show Relative Countdown", "Display relative day/minute countdowns (e.g. IN 12M, J+3 / +3D).", "true", false},
+    {"show_badges", ConfigType::BOOLEAN, "Show Calendar Badges", "Display calendar source badge pills ([Perso], [Pro]) next to events.", "true", false},
     {"empty_behavior", ConfigType::ENUM, "Empty Schedule Behavior", "Action when no upcoming event is scheduled: 'chill' shows retro Free Play scene, 'skip' advances rotation immediately.", "chill", false, "", "", "", "chill,skip", "", false, "", ValidationPolicy::FallbackDefault},
     {"imminent_min", ConfigType::INTEGER, "Imminent Alert Threshold (min)", "Arcade VS-Fighting countdown gauge when an event starts within N minutes (0 = disabled).", "15", false, "0", "60", "5", "", "", false, "", ValidationPolicy::Clamp},
     {"fun_sprites", ConfigType::BOOLEAN, "Contextual Pixel-Art Sprites", "Display animated contextual arcade sprites (birthday cake, cyber call, heart, pizza, cameos).", "true", false}

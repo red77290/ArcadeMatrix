@@ -829,6 +829,37 @@ void I18n::formatAgendaImminent(char* out, size_t outSize, int minutes, Lang l) 
     snprintf(out, outSize, fmt, minutes);
 }
 
+void I18n::formatAgendaRelativeDays(char* out, size_t outSize, int days, Lang l) {
+    if (!out || outSize == 0) return;
+    if (days <= 0) {
+        out[0] = '\0';
+        return;
+    }
+    const char* fmt = (l == Lang::FR) ? "J+%d" : "+%dD";
+    snprintf(out, outSize, fmt, days);
+}
+
+void I18n::formatAgendaDayBanner(int32_t eventDayIdx, int32_t curDayIdx, int weekday0, int dayOfMonth, int month1, Lang l, bool includeRelative, bool shortForm, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    int32_t diffDays = (curDayIdx > 0) ? (eventDayIdx - curDayIdx) : 0;
+    if (curDayIdx > 0 && diffDays <= 0) {
+        snprintf(out, outSize, "%s %02d/%02d", getAgendaTodayLabel(l, shortForm), dayOfMonth, month1);
+        return;
+    }
+    if (curDayIdx > 0 && diffDays == 1) {
+        snprintf(out, outSize, "%s %02d/%02d", getAgendaTomorrowLabel(l, shortForm), dayOfMonth, month1);
+        return;
+    }
+    const char* wd = getWeatherDayLabel(weekday0, false, false, l);
+    if (includeRelative && diffDays > 1) {
+        char rel[12]{};
+        formatAgendaRelativeDays(rel, sizeof(rel), static_cast<int>(diffDays), l);
+        snprintf(out, outSize, "%s %02d/%02d (%s)", wd, dayOfMonth, month1, rel);
+    } else {
+        snprintf(out, outSize, "%s %02d/%02d", wd, dayOfMonth, month1);
+    }
+}
+
 const char* I18n::getAgendaFreePlayLabel(Lang l, bool compact) {
     if (compact) {
         return (l == Lang::EN) ? "FREE PLAY" : (l == Lang::ES) ? "SIN EVENTOS" : "RIEN DE PREVU";

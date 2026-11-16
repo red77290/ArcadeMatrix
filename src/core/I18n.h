@@ -83,6 +83,8 @@ public:
     static const char* getAgendaTomorrowLabel(Lang l, bool shortForm = false);
     static const char* getAgendaActiveNowLabel(Lang l);
     static void formatAgendaImminent(char* out, size_t outSize, int minutes, Lang l);
+    static void formatAgendaRelativeDays(char* out, size_t outSize, int days, Lang l);
+    static void formatAgendaDayBanner(int32_t eventDayIdx, int32_t curDayIdx, int weekday0, int dayOfMonth, int month1, Lang l, bool includeRelative, bool shortForm, char* out, size_t outSize);
     static const char* getAgendaFreePlayLabel(Lang l, bool compact = false);
     static const char* getAgendaNextPrefix(Lang l);
     static const char* getAgendaAllDayLabel(Lang l);

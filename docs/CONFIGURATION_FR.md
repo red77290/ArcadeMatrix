@@ -472,9 +472,15 @@ Le moteur `agenda` télécharge et filtre à la volée des flux calendaires stan
 | `ics_url_2` | `String` | `""` | URL `.ics` / `webcal://` | Second flux iCal optionnel fusionné par ordre chronologique. |
 | `ics_label_2` | `String` | `"Pro"` | Texte court | Libellé court du second calendrier. |
 | `ics_color_2` | `Color` | `#FFB300` | Couleur Hex | Couleur d'accentuation du second calendrier. |
+| `view_mode` | `Options` | `auto` | `auto,multiday_scroll,cards,split_deck,ticker` | Disposition visuelle : Auto, Défilement Vertical Multi-Jours, Cartes Glissantes, Double Volet ou Bandeau Ticker. |
+| `theme` | `Options` | `cyber_arcade` | `cyber_arcade,amber_dmd,matrix_green,snes_rpg,minimal_clean` | Palette de couleurs et style de cadre de l'agenda. |
+| `scroll_speed` | `Options` | `normal` | `slow,normal,fast` | Vitesse de défilement vertical multi-jours, du bandeau ticker et des titres longs. |
+| `slide_duration_sec` | `int` | `5` | `3` à `20` | Durée d'affichage en secondes de chaque carte ou page multi-jours. |
 | `cache_ttl_min` | `int` | `60` | `15` à `1440` | Durée de validité du cache MicroSD en minutes avant rafraîchissement (`0 ms` de coupure tant que frais). |
 | `horizon_days` | `int` | `7` | `1` à `30` | Horizon en jours pour filtrer les rendez-vous et calculer les récurrences `RRULE`. |
-| `events_shown` | `int` | `3` | `1` à `6` | Nombre maximum de prochains rendez-vous affichés par cycle de rotation. |
+| `events_shown` | `int` | `5` | `1` à `8` | Nombre maximum de prochains rendez-vous affichés sur l'horizon multi-jours. |
+| `show_relative_time` | `bool` | `true` | `true`, `false` | Affiche les délais relatifs (ex. `DANS 12 MIN`, `J+3`). |
+| `show_badges` | `bool` | `true` | `true`, `false` | Affiche les pastilles de source (`[Perso]`, `[Pro]`) à côté des événements. |
 | `empty_behavior` | `Options` | `chill` | `chill`, `skip` | Si aucun rendez-vous n'est prévu : `chill` affiche la scène rétro Free Play avec Metool endormi, `skip` passe immédiatement au tour suivant. |
 | `imminent_min` | `int` | `15` | `0` à `60` | Minutes avant le début d'un rendez-vous pour activer la jauge de compte à rebours arcade (`0` = désactivé). |
 | `fun_sprites` | `bool` | `true` | `true`, `false` | Affiche les icônes pixel-art contextuelles (gâteau, appel cyber, cœur médical, manette) et les caméos partagés `ClockSpriteBank`. |
