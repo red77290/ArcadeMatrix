@@ -1217,13 +1217,26 @@ void runEmbeddedBrokerLoop(uint16_t port) {
         int cfd = ::accept(srv, nullptr, nullptr);
         if (cfd < 0) continue;
         std::thread([cfd]() {
-            struct timeval ctv{2, 0};
+            struct timeval ctv{1, 0};
             ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &ctv, sizeof(ctv));
             std::vector<uint8_t> rx;
             uint8_t buf[2048];
+            auto lastRxAt = std::chrono::steady_clock::now();
             while (g_running.load(std::memory_order_relaxed)) {
                 ssize_t n = ::recv(cfd, buf, sizeof(buf), 0);
-                if (n <= 0) break;
+                if (n < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        auto idleSec = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now() - lastRxAt
+                        ).count();
+                        if (idleSec >= 65) break;
+                        continue;
+                    }
+                    break;
+                }
+                if (n == 0) break;
+                lastRxAt = std::chrono::steady_clock::now();
                 rx.insert(rx.end(), buf, buf + n);
                 while (rx.size() >= 2) {
                     uint8_t hdr = rx[0];
@@ -1247,12 +1260,18 @@ void runEmbeddedBrokerLoop(uint16_t port) {
                         const uint8_t pingResp[2] = {0xD0, 0x00};
                         sendAllBytes(cfd, pingResp, 2);
                     } else if (ptype == 0x30U && rem >= 2) {
+                        uint8_t qos = (hdr >> 1) & 0x03U;
                         uint16_t tLen = (uint16_t(rx[i]) << 8) | rx[i + 1];
-                        size_t pPos = i + 2 + tLen + ((((hdr >> 1) & 3U) > 0) ? 2U : 0U);
+                        size_t idPos = i + 2 + tLen;
+                        size_t pPos = idPos + ((qos > 0U) ? 2U : 0U);
                         if (pPos <= i + rem) {
                             std::string t(reinterpret_cast<const char*>(rx.data() + i + 2), tLen);
                             std::string p(reinterpret_cast<const char*>(rx.data() + pPos), (i + rem) - pPos);
                             handleFrontendMqttMessage(t, p);
+                            if (qos == 1U) {
+                                const uint8_t pubAck[4] = {0x40, 0x02, rx[idPos], rx[idPos + 1]};
+                                sendAllBytes(cfd, pubAck, 4);
+                            }
                         }
                     } else if (ptype == 0xE0U) {
                         rx.clear();
