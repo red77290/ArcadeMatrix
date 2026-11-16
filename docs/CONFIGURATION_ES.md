@@ -461,6 +461,32 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 5. **Reinicio a Medianoche (00:00 UTC):**
    - El cambio de día calendario restablece automáticamente los contadores de consumo a 0 y borra las alertas de límite de cuota.
 
+### Motor: `agenda` (Agenda Conectada iCal `.ics`)
+El motor `agenda` descarga y filtra en streaming calendarios estándar RFC 5545 `.ics` / `webcal://` (Google Calendar, Apple iCloud, Outlook / Microsoft 365, Proton, Nextcloud) hacia una caché binaria compacta en MicroSD (`/cache/agenda_<instance_id>.bin`, cabecera `AgendaCacheHeader` de 24 bytes + hasta 12 registros `AgendaEventPod` de 96 bytes) con cero RAM persistente en reposo (`sizeof(AgendaEngine) <= 1600`).
+
+| Campo | Tipo | Por defecto | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `ics_url_1` | `String` | `""` | URL `.ics` / `webcal://` | URL privada iCal del calendario principal. |
+| `ics_label_1` | `String` | `"Perso"` | Texto corto | Insignia corta del calendario principal. |
+| `ics_color_1` | `Color` | `#00E5FF` | Color Hex | Color de acento del calendario principal. |
+| `ics_url_2` | `String` | `""` | URL `.ics` / `webcal://` | Segundo flujo iCal opcional fusionado cronológicamente. |
+| `ics_label_2` | `String` | `"Pro"` | Texto corto | Insignia corta del calendario secundario. |
+| `ics_color_2` | `Color` | `#FFB300` | Color Hex | Color de acento del calendario secundario. |
+| `cache_ttl_min` | `int` | `60` | `15` a `1440` | Duración de validez de la caché MicroSD en minutos antes de refrescar (`0 ms` de corte cuando está fresca). |
+| `horizon_days` | `int` | `7` | `1` a `30` | Horizonte en días para filtrar eventos y expandir recurrencias `RRULE`. |
+| `events_shown` | `int` | `3` | `1` a `6` | Número máximo de próximas citas mostradas por ciclo de rotación. |
+| `empty_behavior` | `Options` | `chill` | `chill`, `skip` | Cuando no hay eventos previstos: `chill` muestra la escena retro Free Play con Metool durmiendo, `skip` salta inmediatamente al siguiente turno. |
+| `imminent_min` | `int` | `15` | `0` a `60` | Minutos antes del inicio de un evento para activar la cuenta atrás arcade (`0` = desactivado). |
+| `fun_sprites` | `bool` | `true` | `true`, `false` | Muestra iconos pixel-art contextuales (pastel, llamada cyber, corazón médico, mando) y cameos compartidos de `ClockSpriteBank`. |
+
+### Compañero de Sincronización de Consola (`RetroAchievements y High Scores`)
+Cuando `mqtt.enabled` está activo y los scripts compañeros (`arcadematrix_companion_sync.py`) están instalados en Batocera, Recalbox o RetroPie:
+- **`sync_show_hiscores`** (`bool`, por defecto `true`): Muestra de forma oportunista la tarjeta **Salón de la Fama** (Top 5 récords locales MAME/FBNeo `.hi`) durante la partida.
+- **`sync_show_ra`** (`bool`, por defecto `true`): Muestra de forma oportunista la tarjeta **RetroAchievements** (barra de progreso, puntos y último trofeo desbloqueado).
+- **`sync_celebrate_events`** (`bool`, por defecto `true`): Preempta la pantalla (`DisplaySourceId::SYNC_CELEBRATION = 55`, `7500 ms`) a 60 FPS con fuegos artificiales enteros `Q8.8` y cameo del héroe de la consola al desbloquear un trofeo `[RCHEEVOS]` en vivo o batir un récord Top 3 al salir del juego.
+- **`sync_card_duration_sec`** (`int`, por defecto `8`, `4..20`): Duración de visualización de cada tarjeta compañero en segundos.
+- **`ra_web_api_key`** (`String`, por defecto `""`): Clave Web API de RetroAchievements opcional.
+
 ### Overlay Transversal: `fighter` (Combate M.U.G.E.N)
 > [!NOTE]
 > `FighterEngine` **no** es un motor independiente registrado en `EngineRegistry` (`instances`). Opera como un **overlay decorativo transversal** superpuesto a las pantallas de rotación activas (`RotationManager` etapa 2) cuando está habilitado globalmente en el bloque `system` (`idle_fighter_enabled`, `idle_fighter_interval`, `fighter_theme`, `fighter_1`, `fighter_2`, `fighter_stage`) y activado por slot mediante `rotation[i].overlays.fighter = true`.

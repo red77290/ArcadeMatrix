@@ -59,6 +59,7 @@ private:
     MessageEngine* m_messageEngine = nullptr;
     MarqueeEngine* m_marqueeEngine = nullptr;
     InGameShowcaseEngine* m_inGameShowcaseEngine = nullptr;
+    SyncCelebrationEngine* m_syncCelebrationEngine = nullptr;
     WebUiSyncEngine* m_webUiSyncEngine = nullptr;
     WebServerAPI* m_webServer = nullptr;
     FrontendSyncEngine* m_frontendListener = nullptr;
@@ -68,6 +69,7 @@ private:
     bool m_firstLoop = true;
     int m_lastSec = -1;
     uint32_t m_lastReconciledVersion = 0;
+    uint32_t m_lastCelebrationSeq = 0;
 
     bool m_lastMqttEnabled = false;
     String m_lastMqttBroker = "";

@@ -8,6 +8,10 @@
 #include "../SpiRamJsonDocument.h"
 #include <ArduinoJson.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 ModularConfigManager::ModularConfigManager(IConfigStorage& storage)
     : _storage(storage)
     , _workingSet(storage)
@@ -291,6 +295,9 @@ bool ModularConfigManager::loadSystem(SystemConfig& outSystem) {
     if (doc.containsKey("api_token")) outSystem.api_token = doc["api_token"].as<String>();
     else if (doc.containsKey("apiToken")) outSystem.api_token = doc["apiToken"].as<String>();
 
+    if (doc.containsKey("ota_auto_check")) outSystem.ota_auto_check = doc["ota_auto_check"].as<bool>();
+    else if (doc.containsKey("otaAutoCheck")) outSystem.ota_auto_check = doc["otaAutoCheck"].as<bool>();
+
     return true;
 }
 
@@ -310,6 +317,7 @@ bool ModularConfigManager::saveSystem(const SystemConfig& system) {
     doc["idle_fighter_speed"] = system.idle_fighter_speed;
     doc["api_auth_enabled"] = system.api_auth_enabled;
     doc["api_token"] = system.api_token;
+    doc["ota_auto_check"] = system.ota_auto_check;
 
     if (doc.overflowed()) {
         LOGE("ModularConfigManager", "System config overflowed StaticJsonDocument; refusing to overwrite /config/system.json");
@@ -368,6 +376,11 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
         if (m.containsKey("video_fps")) outMqtt.video_fps = m["video_fps"].as<int>();
         if (m.containsKey("video_mode")) outMqtt.video_mode = m["video_mode"].as<String>();
         if (m.containsKey("color_boost")) outMqtt.color_boost = m["color_boost"].as<String>();
+        if (m.containsKey("sync_show_hiscores")) outMqtt.sync_show_hiscores = m["sync_show_hiscores"].as<bool>();
+        if (m.containsKey("sync_show_ra")) outMqtt.sync_show_ra = m["sync_show_ra"].as<bool>();
+        if (m.containsKey("sync_celebrate_events")) outMqtt.sync_celebrate_events = m["sync_celebrate_events"].as<bool>();
+        if (m.containsKey("sync_card_duration_sec")) outMqtt.sync_card_duration_sec = m["sync_card_duration_sec"].as<int>();
+        if (m.containsKey("ra_web_api_key")) outMqtt.ra_web_api_key = m["ra_web_api_key"].as<String>();
     }
     // Data MQTT (MQTT Data engine broker), same "data_mqtt" object as the legacy /config.json.
     if (doc.containsKey("data_mqtt")) {
@@ -431,6 +444,11 @@ bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig&
     m["video_fps"] = mqtt.video_fps;
     m["video_mode"] = mqtt.video_mode;
     m["color_boost"] = mqtt.color_boost;
+    m["sync_show_hiscores"] = mqtt.sync_show_hiscores;
+    m["sync_show_ra"] = mqtt.sync_show_ra;
+    m["sync_celebrate_events"] = mqtt.sync_celebrate_events;
+    m["sync_card_duration_sec"] = mqtt.sync_card_duration_sec;
+    m["ra_web_api_key"] = mqtt.ra_web_api_key;
 
     JsonObject d = doc.createNestedObject("data_mqtt");
     d["broker"] = dataMqtt.broker;

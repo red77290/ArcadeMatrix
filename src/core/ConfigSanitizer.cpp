@@ -2,6 +2,10 @@
 #include "Logger.h"
 #include "../hal/BoardProfile.h"
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotationBootstrap) {
     SanitizeResult result;
     
@@ -398,6 +402,11 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
     if (mqtt.color_boost != "auto" && mqtt.color_boost != "pixel_art" && mqtt.color_boost != "anime" && mqtt.color_boost != "cinema") {
         mqtt.color_boost = "auto";
         result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.sync_card_duration_sec < 4 || mqtt.sync_card_duration_sec > 20) {
+        mqtt.sync_card_duration_sec = constrain(mqtt.sync_card_duration_sec, 4, 20);
+        result.values_clamped++;
         result.modified = true;
     }
 }

@@ -22,6 +22,11 @@
 #include "MarqueeEngine.h"
 #include "MqttDataEngine.h"
 #include "MediaShowcaseEngines.h"
+#include "AgendaEngine.h"
+
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
 
 CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* targetPipeline, EvaluationMode mode) {
     auto ctx = CompatibilityEvaluator::buildCurrentContext(mode);
@@ -79,6 +84,7 @@ void EngineRegistrar::registerAll() {
     static const MovieShowcaseEngineDescriptorHandler movieShowcaseHandler;
     static const SeriesShowcaseEngineDescriptorHandler seriesShowcaseHandler;
     static const AnimeShowcaseEngineDescriptorHandler animeShowcaseHandler;
+    static const AgendaEngineDescriptorHandler agendaHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -102,7 +108,8 @@ void EngineRegistrar::registerAll() {
         &retroGamesHandler,
         &movieShowcaseHandler,
         &seriesShowcaseHandler,
-        &animeShowcaseHandler
+        &animeShowcaseHandler,
+        &agendaHandler
     };
 
     for (const auto* handler : handlers) {

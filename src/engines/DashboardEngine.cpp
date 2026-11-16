@@ -4,6 +4,10 @@
 #include "../core/ConfigLoader.h"
 #include "../api/OpenWeatherMapProvider.h"
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 DashboardEngine::DashboardEngine()
     : matrix(nullptr), m_layoutDirty(true),
       m_weatherApiKey(""), m_weatherCity("Paris"), m_weatherUnits("metric") {

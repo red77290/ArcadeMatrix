@@ -4,6 +4,10 @@
 #include <strings.h>
 #include <ctype.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 extern ConfigLoader config;
 
 Lang I18n::parseLang(const char* code) {
@@ -799,4 +803,61 @@ const char* I18n::getWebUiLoadingTitleLabel(Lang l) {
 const char* I18n::getWebUiLoadingSubLabel(Lang l) {
     return (l == Lang::FR) ? "INTERFACE WEB..." : (l == Lang::ES) ? "INTERFAZ WEB..." : "WEB INTERFACE...";
 }
+
+const char* I18n::getAgendaTodayLabel(Lang l, bool shortForm) {
+    if (shortForm) {
+        return (l == Lang::EN) ? "TODAY" : (l == Lang::ES) ? "HOY" : "AUJ.";
+    }
+    return (l == Lang::EN) ? "TODAY" : (l == Lang::ES) ? "HOY" : "AUJOURD'HUI";
+}
+
+const char* I18n::getAgendaTomorrowLabel(Lang l, bool shortForm) {
+    if (shortForm) {
+        return (l == Lang::EN) ? "TOM." : (l == Lang::ES) ? "MAN." : "DEM.";
+    }
+    return (l == Lang::EN) ? "TOMORROW" : (l == Lang::ES) ? "MANANA" : "DEMAIN";
+}
+
+const char* I18n::getAgendaActiveNowLabel(Lang l) {
+    return (l == Lang::EN) ? "NOW" : (l == Lang::ES) ? "EN CURSO" : "EN COURS";
+}
+
+void I18n::formatAgendaImminent(char* out, size_t outSize, int minutes, Lang l) {
+    if (!out || outSize == 0) return;
+    if (minutes < 0) minutes = 0;
+    const char* fmt = (l == Lang::EN) ? "IN %d MIN" : (l == Lang::ES) ? "EN %d MIN" : "DANS %d MIN";
+    snprintf(out, outSize, fmt, minutes);
+}
+
+const char* I18n::getAgendaFreePlayLabel(Lang l, bool compact) {
+    if (compact) {
+        return (l == Lang::EN) ? "FREE PLAY" : (l == Lang::ES) ? "SIN EVENTOS" : "RIEN DE PREVU";
+    }
+    return (l == Lang::EN) ? "FREE PLAY - NO EVENTS" : (l == Lang::ES) ? "FREE PLAY - SIN EVENTOS" : "FREE PLAY - RIEN DE PREVU";
+}
+
+const char* I18n::getAgendaNextPrefix(Lang l) {
+    return (l == Lang::EN) ? "NEXT:" : (l == Lang::ES) ? "SIG:" : "SUIV:";
+}
+
+const char* I18n::getAgendaAllDayLabel(Lang l) {
+    return (l == Lang::EN) ? "ALL DAY" : (l == Lang::ES) ? "DIA" : "JOUR";
+}
+
+const char* I18n::getSyncHighScoresTitle(Lang l) {
+    return (l == Lang::ES) ? "RECORDS" : "HIGH SCORES";
+}
+
+const char* I18n::getSyncNewRecordTitle(Lang l) {
+    return (l == Lang::ES) ? "NUEVO RECORD!" : "NEW RECORD!";
+}
+
+const char* I18n::getSyncAchievementTitle(Lang l) {
+    return (l == Lang::ES) ? "LOGRO!" : "ACHIEVEMENT!";
+}
+
+const char* I18n::getSyncUnlockedTitle(Lang l) {
+    return (l == Lang::ES) ? "DESBLOQUEADO!" : "UNLOCKED!";
+}
+
 

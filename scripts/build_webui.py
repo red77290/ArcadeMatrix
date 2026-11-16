@@ -87,6 +87,10 @@ def minify_webui(content):
         css = re.sub(r'\s*([\{\};:,>+~])\s*', r'\1', css)
         return f'<style{attrs}>{css.strip()}</style>'
     content = re.sub(r'<style([^>]*)>([\s\S]*?)</style>', replace_style, content)
+    # Strip standalone full-line // comments and leading line indentation
+    content = re.sub(r'(?m)^[ \t]*//[^\n]*\n', '', content)
+    content = re.sub(r'(?m)^[ \t]+', '', content)
+    content = re.sub(r'\n{2,}', '\n', content)
     return content
 
 # Compile-Time Dynamic Engine Catalog & Theme Extraction
@@ -113,6 +117,15 @@ if "/* [[COMPILED_ENGINE_CATALOG]] */" in html_text:
     print(f"✅ Injected compile-time engine catalog ({len(engine_catalog)} engines), {len(themes)} themes, and metadata into WebUI.")
 
 minified_html = minify_webui(html_text)
+try:
+    for idx, part in enumerate(minified_html.split("<script>")[1:], 1):
+        script_code = part.split("</script>")[0]
+        res = subprocess.run(["node", "--check", "-"], input=script_code, text=True, capture_output=True)
+        if res.returncode != 0:
+            print(f"❌ Minified JavaScript SyntaxError (block {idx}):\n{res.stderr}")
+            sys.exit(1)
+except FileNotFoundError:
+    pass
 raw_data = minified_html.encode('utf-8')
 
 # Gzip compress WebUI HTML to save ~190KB flash and prevent LwIP TCP buffer exhaustion
@@ -214,6 +227,8 @@ else:
 try:
     Import("env")
     env.Append(CPPDEFINES=[("BUILD_GIT_COMMIT", f'\\"{git_commit}\\"')])
+    if env.get("PIOENV") in ("esp32dev", "esp32dev_memtrace"):
+        env.Append(CXXFLAGS=["-fno-exceptions"])
 
     def verify_app0_partition_fit(source, target, env):
         import struct

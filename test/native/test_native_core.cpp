@@ -4030,6 +4030,282 @@ void test_frontend_sync_gifs_marquee_and_ingame_showcase_once_resume_arbiter_con
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, dExit.sourceId);
 }
 
+#include "../../src/engines/AgendaIcsParser.h"
+#include "../../src/engines/AgendaEngine.h"
+#include "../../src/engines/renderers/FireworksLutRenderer.h"
+#include "../../src/engines/clocks/ClockSpriteBank.h"
+
+void test_agenda_engine_size_and_binary_cache_header_pod(void) {
+    static_assert(sizeof(AgendaEngine) <= 1600, "AgendaEngine must remain <= 1600 bytes (Golden Rule)");
+    static_assert(sizeof(AgendaCacheHeader) == 24, "AgendaCacheHeader must be 24 bytes");
+    static_assert(sizeof(AgendaEventPod) == 96, "AgendaEventPod must be 96 bytes");
+
+    TEST_ASSERT_TRUE(sizeof(AgendaEngine) <= 1600U);
+    TEST_ASSERT_EQUAL_UINT32(24U, static_cast<uint32_t>(sizeof(AgendaCacheHeader)));
+    TEST_ASSERT_EQUAL_UINT32(96U, static_cast<uint32_t>(sizeof(AgendaEventPod)));
+
+    char normUrl[128] = "";
+    AgendaIcsParser::normalizeIcsUrl(
+        "webcal://calendar.google.com/calendar/ical/test/basic.ics",
+        normUrl,
+        sizeof(normUrl)
+    );
+    TEST_ASSERT_EQUAL_STRING("https://calendar.google.com/calendar/ical/test/basic.ics", normUrl);
+
+    const uint32_t crcA = AgendaIcsParser::computeConfigCrc32(
+        "https://cal.example.com/a.ics",
+        "https://cal.example.com/b.ics",
+        14
+    );
+    const uint32_t crcB = AgendaIcsParser::computeConfigCrc32(
+        "https://cal.example.com/a.ics",
+        "https://cal.example.com/b.ics",
+        14
+    );
+    const uint32_t crcDiff = AgendaIcsParser::computeConfigCrc32(
+        "https://cal.example.com/a.ics",
+        "https://cal.example.com/c.ics",
+        14
+    );
+    TEST_ASSERT_EQUAL_UINT32(crcA, crcB);
+    TEST_ASSERT_NOT_EQUAL(crcA, crcDiff);
+}
+
+void test_agenda_ics_streaming_parser_unfolding_rrule_exdate_and_sprites(void) {
+    // Reference epoch: 2026-05-10 08:00:00 UTC (Sunday)
+    const uint32_t nowEpoch = 1778400000UL; // 2026-05-10 08:00:00 UTC
+
+    const char* sampleIcs =
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;VALUE=DATE:20200511\r\n"
+        "RRULE:FREQ=YEARLY\r\n"
+        "SUMMARY:\xF0\x9F\x8E\x82 Anniversai\r\n"
+        " re L\xC3\xA9o\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20260510T093000Z\r\n"
+        "DTEND:20260510T103000Z\r\n"
+        "SUMMARY:\xF0\x9F\x8E\xAE Retro Arcade Tournament\r\n"
+        "LOCATION:Gameroom\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20260504T140000Z\r\n"
+        "DTEND:20260504T150000Z\r\n"
+        "RRULE:FREQ=WEEKLY;BYDAY=MO,WE\r\n"
+        "EXDATE:20260511T140000Z\r\n"
+        "SUMMARY:Dentiste Checkup\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    AgendaEventPod outEvents[AGENDA_MAX_CACHED_EVENTS]{};
+    AgendaSourceMeta srcMeta{};
+    srcMeta.color565 = 0x073F;
+    srcMeta.sourceIdx = 0;
+    strcpy(srcMeta.defaultBadge, "Perso");
+
+    const size_t count = AgendaIcsParser::parseBuffer(
+        sampleIcs,
+        strlen(sampleIcs),
+        nowEpoch,
+        14,
+        0,
+        srcMeta,
+        outEvents,
+        0,
+        AGENDA_MAX_CACHED_EVENTS
+    );
+
+    // 1 (Today 09:30) + 1 (Tomorrow Birthday) + 3 (Weekly MO,WE over 14 days minus EXDATE 2026-05-11 -> May 13, 18, 20) = 5
+    TEST_ASSERT_EQUAL_UINT32(5U, static_cast<uint32_t>(count));
+
+    // Event 0: Today 09:30 -> Retro Arcade Tournament (SPRITE_GAMING_PACMAN)
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ClockSpriteBank::SPRITE_GAMING_PACMAN), outEvents[0].spriteId);
+    TEST_ASSERT_EQUAL_STRING("Gameroom", outEvents[0].badgeLabel);
+
+    // Event 1: Tomorrow 2026-05-11 All-Day -> Anniversaire Leo (SPRITE_BIRTHDAY_CAKE, unfolded across CRLF+space)
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ClockSpriteBank::SPRITE_BIRTHDAY_CAKE), outEvents[1].spriteId);
+    TEST_ASSERT_TRUE((outEvents[1].flags & AGENDA_FLAG_ALL_DAY) != 0U);
+    TEST_ASSERT_NOT_NULL(strstr(outEvents[1].title, "Anniversaire Leo"));
+
+    // Event 2: Weekly MO,WE with Monday 2026-05-11 excluded by EXDATE -> resolves to Wednesday 2026-05-13 (SPRITE_MEDICAL_HEART)
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ClockSpriteBank::SPRITE_MEDICAL_HEART), outEvents[2].spriteId);
+    time_t ev2Start = static_cast<time_t>(outEvents[2].startEpoch);
+    struct tm ev2Tm{};
+    gmtime_r(&ev2Start, &ev2Tm);
+    TEST_ASSERT_EQUAL_INT(13, ev2Tm.tm_mday);
+
+    // Verify binary SD cache serialization + corruption detection + O(1) needsTlsFetch()
+    AgendaEngine cacheEng;
+    cacheEng.setTestNowEpoch(nowEpoch);
+    uint8_t cacheBin[1536]{};
+    size_t written = 0;
+    TEST_ASSERT_TRUE(cacheEng.serializeCacheToBuffer(cacheBin, sizeof(cacheBin), outEvents, static_cast<uint8_t>(count), nowEpoch, written));
+    TEST_ASSERT_EQUAL_UINT32(24U + 5U * 96U, static_cast<uint32_t>(written));
+    TEST_ASSERT_TRUE(cacheEng.loadHeaderFromBuffer(cacheBin, written));
+    TEST_ASSERT_FALSE(cacheEng.needsTlsFetch());
+
+    // Flip a payload byte -> CRC32 corruption must be rejected
+    cacheBin[40] ^= 0xFFU;
+    TEST_ASSERT_FALSE(cacheEng.loadActiveEventsFromBuffer(cacheBin, written, nowEpoch));
+    cacheBin[40] ^= 0xFFU;
+    TEST_ASSERT_TRUE(cacheEng.loadActiveEventsFromBuffer(cacheBin, written, nowEpoch));
+    TEST_ASSERT_EQUAL_UINT8(5U, cacheEng.activeEventCount());
+
+    // Verify AgendaEngine renders cleanly across all 4 LayoutClasses (WIDE, SQUARE, PORTRAIT, TALL)
+    class TestAgendaSurface : public IDrawingSurface {
+    public:
+        uint32_t drawnPixels = 0;
+        TestAgendaSurface(uint16_t w, uint16_t h) : IDrawingSurface(w, h, w, h) {}
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            (void)x; (void)y; (void)color;
+            ++drawnPixels;
+        }
+        void clear(uint16_t color = 0) override { (void)color; }
+        bool isDirty() const override { return drawnPixels > 0; }
+        void markDirty() override {}
+        PresentationTiming present() override { return PresentationTiming{}; }
+        void blit565(const uint16_t*, int16_t, int16_t, int16_t, int16_t, int16_t = -1) override { ++drawnPixels; }
+        CanvasView acquireCanvas() override { return CanvasView{}; }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return false; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::NONE; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::DIRECT_DMA_SINGLE; }
+        size_t memoryUsageBytes() const override { return 0; }
+    };
+
+    auto makeGeom = [](uint16_t w, uint16_t h) {
+        DisplayGeometry g{};
+        g.width = w;
+        g.height = h;
+        g.nativeWidth = w;
+        g.nativeHeight = h;
+        g.layoutClass = DisplayGeometry::classify(w, h);
+        return g;
+    };
+
+    const DisplayGeometry geometries[] = {
+        makeGeom(128, 32),
+        makeGeom(256, 64),
+        makeGeom(64, 64),
+        makeGeom(64, 128),
+        makeGeom(32, 64),
+        makeGeom(64, 256)
+    };
+
+    for (const auto& geom : geometries) {
+        TestAgendaSurface surf(geom.width, geom.height);
+        class TestAgendaCtx : public EngineContext {
+        public:
+            IDrawingSurface* s;
+            DisplayGeometry g;
+            TestAgendaCtx(IDrawingSurface* surfPtr, const DisplayGeometry& geomVal) : s(surfPtr), g(geomVal) {}
+            IDrawingSurface* getSurface() override { return s; }
+            FrontendSyncEngine* getEventBus() override { return nullptr; }
+            DisplayGeometry getGeometry() const override { return g; }
+            void getSystemTime(struct tm* timeinfo) override {
+                if (timeinfo) memset(timeinfo, 0, sizeof(*timeinfo));
+            }
+        } ectx(&surf, geom);
+
+        AgendaEngine eng;
+        eng.setTestNowEpoch(nowEpoch);
+        TEST_ASSERT_EQUAL(EngineError::OK, eng.initialize(&ectx, nullptr));
+        eng.injectEventsForTest(outEvents, static_cast<uint8_t>(count), nowEpoch);
+        eng.update(&ectx);
+        eng.render(&ectx);
+        TEST_ASSERT_TRUE(eng.hasNewFrame());
+        TEST_ASSERT_TRUE(surf.drawnPixels > 0U);
+        eng.deactivate();
+    }
+}
+
+void test_fireworks_lut_renderer_q8_8_integer_physics_and_clock_sprite_bank(void) {
+    using renderers::FireworksLutRenderer;
+    using ClockSpriteBank::CameoSprite;
+
+    FireworksLutRenderer fw;
+    fw.reset(128, 32);
+    for (int i = 0; i < 39; ++i) {
+        fw.step(128, 32);
+    }
+    // At tick 39 (rel = 3 after burst at tick 36), BOUNCE_LUT[3] == -6
+    TEST_ASSERT_EQUAL_INT8(-6, fw.currentHeaderBounceOffset());
+
+    const auto marioJump = ClockSpriteBank::getCameoFrame(CameoSprite::MARIO_JUMP, 0);
+    TEST_ASSERT_EQUAL_UINT8(17U, marioJump.w);
+    TEST_ASSERT_EQUAL_UINT8(16U, marioJump.h);
+    TEST_ASSERT_NOT_NULL(marioJump.pixels565);
+
+    const auto sonicRun = ClockSpriteBank::getCameoFrame(CameoSprite::SONIC_SMS_RUN, 0);
+    TEST_ASSERT_EQUAL_UINT8(20U, sonicRun.w);
+    TEST_ASSERT_NOT_NULL(sonicRun.indexedPixels);
+    TEST_ASSERT_NOT_NULL(sonicRun.palette);
+
+    TEST_ASSERT_EQUAL((uint8_t)ClockSpriteBank::HeroFamily::Nintendo, (uint8_t)ClockSpriteBank::classifySystemHero("snes"));
+    TEST_ASSERT_EQUAL((uint8_t)ClockSpriteBank::HeroFamily::Sega, (uint8_t)ClockSpriteBank::classifySystemHero("megadrive"));
+    TEST_ASSERT_EQUAL((uint8_t)ClockSpriteBank::HeroFamily::NeoGeo, (uint8_t)ClockSpriteBank::classifySystemHero("neogeo"));
+    TEST_ASSERT_EQUAL((uint8_t)ClockSpriteBank::HeroFamily::Capcom, (uint8_t)ClockSpriteBank::classifySystemHero("cps2"));
+    TEST_ASSERT_EQUAL((uint8_t)ClockSpriteBank::HeroFamily::Arcade, (uint8_t)ClockSpriteBank::classifySystemHero("mame"));
+}
+
+void test_sync_celebration_preemption_priority_55_pauses_ingame_showcase_and_resumes(void) {
+    DisplayArbiter arbiter;
+
+    // 1. Active game marquee (GIF at MQTT priority 40) + In-Game Showcase (priority 45)
+    arbiter.submitRequest(DisplayRequest{
+        DisplaySourceId::GIF,
+        DisplayPriority::MQTT,
+        RequestLifecycle::UNTIL_CANCELLED,
+        true,
+        0,
+        EngineHandle("gifs", "gifs_marquee")
+    });
+    arbiter.submitRequest(DisplayRequest{
+        DisplaySourceId::INGAME_SHOWCASE,
+        DisplayPriority::INGAME_SHOWCASE,
+        RequestLifecycle::UNTIL_CANCELLED,
+        true,
+        0,
+        EngineHandle("ingame_showcase", "ingame_showcase_main")
+    });
+
+    DisplayDecision dBefore = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, dBefore.sourceId);
+
+    // 2. RetroAchievements trophy unlocked -> SYNC_CELEBRATION (priority 55, TIMED 7500ms) preempts INGAME_SHOWCASE (45)
+    const uint32_t t0 = millis();
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::SYNC_CELEBRATION,
+        DisplayPriority::SYNC_CELEBRATION,
+        RequestLifecycle::TIMED,
+        /*pre=*/true,
+        1U,
+        EngineHandle("sync_celebration", "sync_celebration_main"),
+        7500U,
+        t0,
+        /*allowOv=*/false,
+        /*clear=*/true,
+        /*realtime=*/true
+    ), /*restartTimer=*/true);
+
+    DisplayDecision dCeleb = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::SYNC_CELEBRATION, dCeleb.sourceId);
+    TEST_ASSERT_EQUAL((uint8_t)DisplayPriority::SYNC_CELEBRATION, (uint8_t)dCeleb.priority);
+    TEST_ASSERT_TRUE(arbiter.hasActiveSource(DisplaySourceId::INGAME_SHOWCASE));
+    TEST_ASSERT_TRUE(arbiter.hasActiveSource(DisplaySourceId::GIF));
+
+    // 3. After 4000ms (< 7500ms), SYNC_CELEBRATION is still on screen
+    advanceVirtualMillis(4000);
+    TEST_ASSERT_EQUAL(DisplaySourceId::SYNC_CELEBRATION, arbiter.evaluate().sourceId);
+
+    // 4. After another 4000ms (8000ms >= 7500ms), SYNC_CELEBRATION expires and resumes INGAME_SHOWCASE!
+    advanceVirtualMillis(4000);
+    DisplayDecision dAfter = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, dAfter.sourceId);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -4132,6 +4408,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_gnews_ticker_single_line_sanitization_and_harmonic_subpixel_scroll);
     RUN_TEST(test_hub75_staged_8bit_encoder_bit_exact_and_dirty_scan_rows);
     RUN_TEST(test_frontend_sync_gifs_marquee_and_ingame_showcase_once_resume_arbiter_contract);
+    RUN_TEST(test_agenda_engine_size_and_binary_cache_header_pod);
+    RUN_TEST(test_agenda_ics_streaming_parser_unfolding_rrule_exdate_and_sprites);
+    RUN_TEST(test_fireworks_lut_renderer_q8_8_integer_physics_and_clock_sprite_bank);
+    RUN_TEST(test_sync_celebration_preemption_priority_55_pauses_ingame_showcase_and_resumes);
 
     return UNITY_END();
 }

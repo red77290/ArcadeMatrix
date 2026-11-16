@@ -12,8 +12,113 @@
 #include "GifEngine.h"
 #include "MessageEngine.h"
 #include "showcase/ShowcaseStreamPlayer.h"
+#include "renderers/FireworksLutRenderer.h"
+#include "clocks/ClockSpriteBank.h"
 
 class IDrawingSurface;
+
+struct SyncHiScoreEntryPod {
+    uint8_t rank = 0;
+    char tag[8] = "";
+    char score[16] = "";
+};
+
+struct SyncRaSummaryPod {
+    uint16_t unlocked = 0;
+    uint16_t total = 0;
+    uint32_t points = 0;
+    uint16_t recentPoints = 0;
+    uint8_t hardcore = 0;
+    uint8_t valid = 0;
+    char recentTitle[48] = "";
+};
+
+struct SyncMetaPayloadPod {
+    char system[24] = "";
+    char game[48] = "";
+    char title[48] = "";
+    char lang[8] = "en";
+    uint8_t hiscoreCount = 0;
+    SyncHiScoreEntryPod hiscores[5]{};
+    SyncRaSummaryPod ra{};
+    uint8_t showHiscores = 1;
+    uint8_t showRa = 1;
+    uint8_t cardDurationSec = 8;
+};
+
+enum class SyncCardMode : uint8_t {
+    None = 0,
+    HallOfFame = 1,
+    RetroAchievements = 2
+};
+
+enum class SyncCelebrationKind : uint8_t {
+    None = 0,
+    Achievement = 1,
+    HighScore = 2
+};
+
+struct SyncCelebrationPayloadPod {
+    SyncCelebrationKind kind = SyncCelebrationKind::None;
+    uint8_t rank = 1;
+    uint8_t hardcore = 0;
+    uint16_t points = 0;
+    char system[24] = "";
+    char game[48] = "";
+    char title[48] = "";
+    char tag[8] = "";
+    char score[16] = "";
+    char lang[8] = "en";
+};
+
+/**
+ * @class SyncCelebrationEngine
+ * @brief Preemptive 60 FPS celebration presenter for DisplaySourceId::SYNC_CELEBRATION (priority 55).
+ *
+ * Triggered when a player unlocks a RetroAchievements trophy in real time or beats a Top 3 High Score
+ * at game exit. Renders 100% integer Q8.8 fixed-point fireworks + system-matched arcade hero cameo.
+ * Zero heap allocation, zero String, zero mutex on Core 1.
+ */
+class SyncCelebrationEngine : public IEngine {
+public:
+    static constexpr uint32_t kCelebrationDurationMs = 7500U;
+
+    SyncCelebrationEngine() = default;
+    ~SyncCelebrationEngine() override = default;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
+
+    bool isRealtime() const override { return true; }
+    bool needsClear() const override { return true; }
+    bool hasNewFrame() const override { return m_renderedNewFrame; }
+    bool allowsOverlay() const override { return false; }
+    uint32_t nextFrameDueInMs() const override { return 16U; }
+    bool allowRotation() const override { return false; }
+
+    void triggerCelebration(const SyncCelebrationPayloadPod& payload);
+    uint32_t pendingTriggerSeq() const { return m_seq.load(std::memory_order_acquire) >> 1U; }
+    const SyncCelebrationPayloadPod& activePayload() const { return m_activePayload; }
+
+private:
+    void latchPendingPayload();
+
+    IDrawingSurface* m_surface = nullptr;
+    DisplayGeometry m_geometry{};
+    renderers::FireworksLutRenderer m_fireworks{};
+
+    std::atomic<uint32_t> m_seq{0};
+    SyncCelebrationPayloadPod m_pendingPayload{};
+    SyncCelebrationPayloadPod m_activePayload{};
+    uint32_t m_lastUpdateMs = 0;
+    uint16_t m_tickCount = 0;
+    bool m_dirty = false;
+    bool m_renderedNewFrame = false;
+};
 
 /**
  * @class InGameShowcaseEngine
@@ -121,7 +226,18 @@ public:
     uint16_t surfaceWidth() const { return m_width; }
     uint16_t surfaceHeight() const { return m_height; }
 
+    void publishSyncMeta(const SyncMetaPayloadPod& meta);
+    void clearSyncMeta();
+    void setActiveCardMode(SyncCardMode mode);
+    SyncCardMode activeCardMode() const {
+        return static_cast<SyncCardMode>(m_activeCardMode.load(std::memory_order_acquire));
+    }
+
 private:
+    void latchSyncMetaIfNeeded();
+    void renderHallOfFameCard(IDrawingSurface* s);
+    void renderRetroAchievementsCard(IDrawingSurface* s);
+
     IDrawingSurface* m_surface = nullptr;
     engines::showcase::ShowcaseStreamPlayer m_streamPlayer;
     uint16_t m_width = 128;
@@ -136,6 +252,14 @@ private:
     std::atomic<uint32_t> m_presentedFrames{0};
     std::atomic<uint32_t> m_nextStreamFrameDueMs{0};
     std::atomic<bool> m_displayEngaged{false};
+
+    std::atomic<uint32_t> m_syncMetaSeq{0};
+    SyncMetaPayloadPod m_pendingSyncMeta{};
+    SyncMetaPayloadPod m_activeSyncMeta{};
+    uint32_t m_latchedSyncMetaSeq = 0;
+    std::atomic<uint8_t> m_activeCardMode{static_cast<uint8_t>(SyncCardMode::None)};
+    uint32_t m_cardActivatedMs = 0;
+    uint32_t m_lastCardFrameMs = 0;
 
     uint32_t m_lastRenderedSeq = 0;
     bool m_dirty = false;
@@ -159,7 +283,8 @@ public:
         const MqttConfig& config,
         GifEngine* gifEngine,
         MessageEngine* messageEngine = nullptr,
-        InGameShowcaseEngine* inGameEngine = nullptr
+        InGameShowcaseEngine* inGameEngine = nullptr,
+        SyncCelebrationEngine* celebrationEngine = nullptr
     );
     ~FrontendSyncEngine();
 
@@ -167,7 +292,10 @@ public:
     bool loop();
     void stop();
     bool isPlaying() const { return isGamePlaying; }
-    bool wantsInGameShowcaseDisplay() const { return m_wantsInGameDisplay.load(std::memory_order_acquire); }
+    bool wantsInGameShowcaseDisplay() const {
+        return m_wantsInGameDisplay.load(std::memory_order_acquire) ||
+               m_wantsSyncCardDisplay.load(std::memory_order_acquire);
+    }
 
     void updateRuntimeConfig(
         const MqttConfig& mqttCfg,
@@ -224,6 +352,7 @@ private:
     GifEngine* gif;
     MessageEngine* message;
     InGameShowcaseEngine* m_inGameEngine = nullptr;
+    SyncCelebrationEngine* m_celebrationEngine = nullptr;
     WiFiClient espClient;
     PubSubClient mqttClient;
     PicoMQTT::Server* internalBroker = nullptr;
@@ -306,7 +435,20 @@ private:
     InGameJobSlot m_jobSlot;
     std::atomic<uint32_t> m_playSessionToken{0};
     std::atomic<bool> m_wantsInGameDisplay{false};
+    std::atomic<bool> m_wantsSyncCardDisplay{false};
     std::atomic<bool> m_readyWakeupHint{false};
+
+    SyncMetaPayloadPod m_sessionSyncMeta{};
+    bool m_hasSessionSyncMeta = false;
+    bool m_syncCardsCompletedOnce = false;
+    uint32_t m_gameStartedAtMs = 0;
+    uint32_t m_syncCardPhaseStartedMs = 0;
+    uint32_t m_lastSyncCardCycleEndedMs = 0;
+    SyncCardMode m_currentSyncCardPhase = SyncCardMode::None;
+
+    void updateSyncCardCycle();
+    void resetSyncCardCycle();
+    bool handleCompanionEvent(const String& jsonPayload);
 
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};

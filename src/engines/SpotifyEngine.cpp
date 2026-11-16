@@ -8,6 +8,10 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 SpotifyEngine::SpotifyEngine() {
 }
 

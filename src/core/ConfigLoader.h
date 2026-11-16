@@ -95,6 +95,11 @@ struct MqttConfig {
     int video_fps = 15;
     String video_mode = "auto_action";
     String color_boost = "auto";
+    bool sync_show_hiscores = true;
+    bool sync_show_ra = true;
+    bool sync_celebrate_events = true;
+    int sync_card_duration_sec = 8;
+    String ra_web_api_key = "";
 };
 
 /// Broker the MQTT Data engine connects to while it is on screen (credentials only: nothing runs
@@ -195,6 +200,7 @@ struct SystemConfig {
     int idle_fighter_speed = 100;
     bool api_auth_enabled = false;
     String api_token = "";
+    bool ota_auto_check = true;
 };
 
 struct EngineInstanceSnapshot {

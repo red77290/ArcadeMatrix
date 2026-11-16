@@ -17,6 +17,9 @@
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
 
 #define NUM_DROPS 8
 struct DateDrop {

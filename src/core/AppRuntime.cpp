@@ -154,6 +154,7 @@ AppRuntime::~AppRuntime() {
     delete m_webServer;
     delete m_frontendListener;
     delete m_inGameShowcaseEngine;
+    delete m_syncCelebrationEngine;
     delete m_webUiSyncEngine;
     if (m_preallocatedCanvasBuffer) {
         free(m_preallocatedCanvasBuffer);
@@ -778,6 +779,14 @@ void AppRuntime::initialize() {
         EngineHandle("ingame_showcase", "ingame_showcase_main")
     );
 
+    m_syncCelebrationEngine = new SyncCelebrationEngine();
+    m_syncCelebrationEngine->initialize(m_appCtx, nullptr);
+    m_displayRuntime.registerSourceEngine(
+        DisplaySourceId::SYNC_CELEBRATION,
+        m_syncCelebrationEngine,
+        EngineHandle("sync_celebration", "sync_celebration_main")
+    );
+
     m_webUiSyncEngine = new WebUiSyncEngine();
     m_webUiSyncEngine->initialize(m_appCtx, nullptr);
     m_displayRuntime.registerSourceEngine(
@@ -796,7 +805,7 @@ void AppRuntime::initialize() {
     m_lastMqttUser = snapshot.mqtt.user;
     m_lastMqttPass = snapshot.mqtt.pass;
     if (snapshot.mqtt.enabled) {
-        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
+        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine, m_syncCelebrationEngine);
         m_frontendListener->begin();
         if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
     }
@@ -916,7 +925,7 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 delete m_frontendListener;
                 m_frontendListener = nullptr;
             }
-            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
+            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine, m_syncCelebrationEngine);
             m_frontendListener->begin();
             if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
         } else {
@@ -1067,6 +1076,30 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncInGameShowcase.active = false;
                 m_syncInGameShowcase.handle = EngineHandle();
                 m_displayArbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
+            }
+        }
+    }
+
+    if (m_syncCelebrationEngine) {
+        uint32_t celebSeq = m_syncCelebrationEngine->pendingTriggerSeq();
+        if (celebSeq != 0U && celebSeq != m_lastCelebrationSeq) {
+            m_lastCelebrationSeq = celebSeq;
+            if (snapshot.mqtt.sync_celebrate_events) {
+                const uint32_t nowMs = millis();
+                DisplayRequest req(
+                    DisplaySourceId::SYNC_CELEBRATION,
+                    DisplayPriority::SYNC_CELEBRATION,
+                    RequestLifecycle::TIMED,
+                    /*pre=*/true,
+                    celebSeq,
+                    EngineHandle("sync_celebration", "sync_celebration_main"),
+                    SyncCelebrationEngine::kCelebrationDurationMs,
+                    nowMs,
+                    /*allowOv=*/false,
+                    /*clear=*/true,
+                    /*realtime=*/true
+                );
+                m_displayArbiter.submitRequest(req, /*restartTimer=*/true);
             }
         }
     }

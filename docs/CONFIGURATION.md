@@ -461,6 +461,32 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 5. **Midnight UTC Rollover:**
    - At 00:00 UTC, daily quota consumption counters reset to 0 and rate-limited status flags are automatically cleared.
 
+### Engine: `agenda` (Connected iCal `.ics` Agenda)
+The `agenda` engine streams and filters standard RFC 5545 `.ics` / `webcal://` calendar feeds (Google Calendar, Apple iCloud, Outlook / Microsoft 365, Proton, Nextcloud) into a compact binary MicroSD cache (`/cache/agenda_<instance_id>.bin`, 24-byte `AgendaCacheHeader` + up to 12 `AgendaEventPod` records of 96 bytes) with zero persistent RAM at rest (`sizeof(AgendaEngine) <= 1600`).
+
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `ics_url_1` | `String` | `""` | `.ics` / `webcal://` URL | Primary private iCal feed URL. |
+| `ics_label_1` | `String` | `"Perso"` | Short text | Badge label for the primary calendar. |
+| `ics_color_1` | `Color` | `#00E5FF` | Hex color | Accent color for primary calendar events. |
+| `ics_url_2` | `String` | `""` | `.ics` / `webcal://` URL | Optional secondary iCal feed URL merged chronologically. |
+| `ics_label_2` | `String` | `"Pro"` | Short text | Badge label for the secondary calendar. |
+| `ics_color_2` | `Color` | `#FFB300` | Hex color | Accent color for secondary calendar events. |
+| `cache_ttl_min` | `int` | `60` | `15` to `1440` | Minutes to serve cached events from MicroSD before refreshing (`0 ms` blanking when fresh). |
+| `horizon_days` | `int` | `7` | `1` to `30` | Lookahead horizon in days for filtering events and expanding `RRULE` recurrences. |
+| `events_shown` | `int` | `3` | `1` to `6` | Maximum number of upcoming appointments shown per rotation cycle. |
+| `empty_behavior` | `Options` | `chill` | `chill`, `skip` | When no events are scheduled: `chill` shows the retro Free Play scene with sleeping Metool, `skip` advances immediately. |
+| `imminent_min` | `int` | `15` | `0` to `60` | Minutes before an event starts to trigger the arcade countdown gauge (`0` = disabled). |
+| `fun_sprites` | `bool` | `true` | `true`, `false` | Display contextual pixel-art icons (birthday cake, cyber call, heart, gamepad) and shared `ClockSpriteBank` cameos. |
+
+### Console Sync Companion (`RetroAchievements & High Scores`)
+When `mqtt.enabled` is active and the console sync scripts (`arcadematrix_companion_sync.py`) are installed on Batocera, Recalbox, or RetroPie:
+- **`sync_show_hiscores`** (`bool`, default `true`):Opportunistically displays the **Hall of Fame** Top 5 MAME/FBNeo `.hi` leaderboard card during gameplay.
+- **`sync_show_ra`** (`bool`, default `true`): Opportunistically displays the **RetroAchievements** progress bar, points, and latest unlocked trophy card.
+- **`sync_celebrate_events`** (`bool`, default `true`): Preempts the display (`DisplaySourceId::SYNC_CELEBRATION = 55`, `7500 ms` timed) at 60 FPS with `Q8.8` integer fireworks and a system-matched arcade hero cameo whenever a `[RCHEEVOS]` trophy is unlocked live or a Top 3 High Score is beaten on game exit.
+- **`sync_card_duration_sec`** (`int`, default `8`, `4..20`): Display duration per companion card in seconds.
+- **`ra_web_api_key`** (`String`, default `""`): Optional RetroAchievements Web API key.
+
 ### Transverse Overlay: `fighter` (M.U.G.E.N Combat)
 > [!NOTE]
 > `FighterEngine` is **not** a standalone engine in `EngineRegistry` (`instances`). It operates as a **transverse decorative overlay** composited on top of active baseline screens (`RotationManager` stage 2) when enabled globally in the `system` block (`idle_fighter_enabled`, `idle_fighter_interval`, `fighter_theme`, `fighter_1`, `fighter_2`, `fighter_stage`) and opted-in per slot via `rotation[i].overlays.fighter = true`.

@@ -5,12 +5,11 @@
 #include "../core/net/SecureHttpClient.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
-
-
-
-
-
 #include "../api/OpenWeatherMapProvider.h"
+
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
 
 WeatherEngine::WeatherEngine() : matrix(nullptr) {
     activeSlide = 0;
