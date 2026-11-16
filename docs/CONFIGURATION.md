@@ -472,9 +472,15 @@ The `agenda` engine streams and filters standard RFC 5545 `.ics` / `webcal://` c
 | `ics_url_2` | `String` | `""` | `.ics` / `webcal://` URL | Optional secondary iCal feed URL merged chronologically. |
 | `ics_label_2` | `String` | `"Pro"` | Short text | Badge label for the secondary calendar. |
 | `ics_color_2` | `Color` | `#FFB300` | Hex color | Accent color for secondary calendar events. |
+| `view_mode` | `Options` | `auto` | `auto,multiday_scroll,cards,split_deck,ticker` | Visual layout: Auto Responsive, Multi-Day Vertical Scroll, Sliding Cards, Split Calendar Deck, or Horizontal Ticker. |
+| `theme` | `Options` | `cyber_arcade` | `cyber_arcade,amber_dmd,matrix_green,snes_rpg,minimal_clean` | Color palette and border style for the agenda display. |
+| `scroll_speed` | `Options` | `normal` | `slow,normal,fast` | Scrolling speed for multi-day vertical feed, horizontal ticker, and long event titles. |
+| `slide_duration_sec` | `int` | `5` | `3` to `20` | Seconds per card or page when cycling through multi-day events. |
 | `cache_ttl_min` | `int` | `60` | `15` to `1440` | Minutes to serve cached events from MicroSD before refreshing (`0 ms` blanking when fresh). |
 | `horizon_days` | `int` | `7` | `1` to `30` | Lookahead horizon in days for filtering events and expanding `RRULE` recurrences. |
-| `events_shown` | `int` | `3` | `1` to `6` | Maximum number of upcoming appointments shown per rotation cycle. |
+| `events_shown` | `int` | `5` | `1` to `8` | Maximum number of upcoming appointments shown across the multi-day horizon. |
+| `show_relative_time` | `bool` | `true` | `true`, `false` | Display relative day/minute countdowns (e.g. `IN 12M`, `J+3` / `+3D`). |
+| `show_badges` | `bool` | `true` | `true`, `false` | Display calendar source badge pills (`[Perso]`, `[Pro]`) next to events. |
 | `empty_behavior` | `Options` | `chill` | `chill`, `skip` | When no events are scheduled: `chill` shows the retro Free Play scene with sleeping Metool, `skip` advances immediately. |
 | `imminent_min` | `int` | `15` | `0` to `60` | Minutes before an event starts to trigger the arcade countdown gauge (`0` = disabled). |
 | `fun_sprites` | `bool` | `true` | `true`, `false` | Display contextual pixel-art icons (birthday cake, cyber call, heart, gamepad) and shared `ClockSpriteBank` cameos. |

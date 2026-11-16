@@ -16,12 +16,46 @@
  */
 class AgendaEngine : public IEngine {
 public:
-    static constexpr size_t MAX_ACTIVE_EVENTS = 7U;
+    static constexpr size_t MAX_ACTIVE_EVENTS = 8U;
 
     enum class ScrollPhase : uint8_t {
         PauseStart = 0,
         Scrolling  = 1,
         PauseEnd   = 2
+    };
+
+    enum class ViewMode : uint8_t {
+        Auto           = 0,
+        MultiDayScroll = 1,
+        Cards          = 2,
+        SplitDeck      = 3,
+        Ticker         = 4
+    };
+
+    enum class AgendaTheme : uint8_t {
+        CyberArcade  = 0,
+        AmberDmd     = 1,
+        MatrixGreen  = 2,
+        SnesRpg      = 3,
+        MinimalClean = 4
+    };
+
+    enum class ScrollSpeed : uint8_t {
+        Slow   = 0,
+        Normal = 1,
+        Fast   = 2
+    };
+
+    struct ThemeColors {
+        uint16_t headerBg;
+        uint16_t headerAccent;
+        uint16_t headerText;
+        uint16_t titleText;
+        uint16_t dimText;
+        uint16_t divider;
+        uint16_t cardBg;
+        bool overrideCalendarColor;
+        uint16_t primaryAccent;
     };
 
     AgendaEngine();
@@ -51,6 +85,8 @@ public:
     uint32_t configCrc32() const { return m_configCrc32; }
     bool hasValidSdCache() const { return m_hasValidSdCache; }
     uint8_t activeEventCount() const { return m_activeCount; }
+    ViewMode viewMode() const { return m_viewMode; }
+    AgendaTheme theme() const { return m_theme; }
     const AgendaEventPod& activeEvent(uint8_t idx) const {
         return m_activeEvents[idx < MAX_ACTIVE_EVENTS ? idx : 0];
     }
@@ -72,8 +108,14 @@ private:
     uint16_t m_icsColor2 = 0xFD80; // #FFB300 Amber
     uint16_t m_cacheTtlMin = 60;
     uint8_t m_horizonDays = 7;
-    uint8_t m_eventsShown = 3;
+    uint8_t m_eventsShown = 5;
     uint8_t m_imminentMin = 15;
+    uint8_t m_slideDurationSec = 5;
+    ViewMode m_viewMode = ViewMode::Auto;
+    AgendaTheme m_theme = AgendaTheme::CyberArcade;
+    ScrollSpeed m_scrollSpeed = ScrollSpeed::Normal;
+    bool m_showRelativeTime = true;
+    bool m_showBadges = true;
     bool m_emptyChill = true;
     bool m_funSprites = true;
 
@@ -84,7 +126,7 @@ private:
     int32_t m_localTzOffsetSec = 3600;
     bool m_hasValidSdCache = false;
 
-    // Active rotation slot state (672 bytes fixed POD)
+    // Active rotation slot state (768 bytes fixed POD)
     AgendaEventPod m_activeEvents[MAX_ACTIVE_EVENTS]{};
     uint8_t m_activeCount = 0;
     uint8_t m_currentSlideIdx = 0;
@@ -110,12 +152,18 @@ private:
     bool writeEventsToSdCache(const AgendaEventPod* events, uint8_t count, uint32_t fetchEpoch);
     void recomputeSlideScrollBounds(uint16_t panelW);
     void requestRedraw() { m_redrawFrames = 2; }
+    uint32_t scrollStepIntervalMs() const;
+    ThemeColors resolveThemeColors() const;
+    uint16_t resolveEventAccent(const AgendaEventPod& ev, const ThemeColors& tc) const;
+    void formatEventDayHeader(uint32_t startEpoch, uint32_t nowEpoch, bool shortForm, char* out, size_t outSize) const;
 
     void renderChillScene(IDrawingSurface* surface, uint16_t w, uint16_t h) const;
     void renderWideCompact(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
     void renderWideHd(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
     void renderSquare(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
     void renderTateQuestLog(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
+    void renderMultiDayVerticalScroll(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
+    void renderMultiDayTicker(IDrawingSurface* surface, uint16_t w, uint16_t h, uint32_t nowEpoch) const;
 
     static uint16_t parseHexColor565(const char* hex, uint16_t fallback);
     static void formatEventTimePill(uint32_t startEpoch, bool allDay, int32_t tzOffsetSec, uint32_t nowEpoch, char* out, size_t outSize);
