@@ -15,6 +15,7 @@ broker and a companion DMD Media Showcase broker with zero console reconfigurati
 """
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -120,9 +121,9 @@ def publish_event(msg):
 
 
 def parse_statefile():
-    game, title, system, state = None, None, None, "browsing"
+    game, title, system, sys_label, state, action, is_folder = None, None, None, None, "browsing", "", ""
     try:
-        with open("/tmp/es_state.inf", "r") as f:
+        with open("/tmp/es_state.inf", "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 if line.startswith("GamePath="):
                     game = line.split("=", 1)[1].strip()
@@ -130,11 +131,17 @@ def parse_statefile():
                     title = line.split("=", 1)[1].strip()
                 elif line.startswith("SystemId="):
                     system = line.split("=", 1)[1].strip()
+                elif line.startswith("System="):
+                    sys_label = line.split("=", 1)[1].strip()
                 elif line.startswith("State="):
                     state = line.split("=", 1)[1].strip()
+                elif line.startswith("Action="):
+                    action = line.split("=", 1)[1].strip()
+                elif line.startswith("IsFolder="):
+                    is_folder = line.split("=", 1)[1].strip()
     except Exception:
         pass
-    return game, title, system, state
+    return game, title, system or sys_label, state, action, is_folder
 
 
 def clean_system_name(s):
@@ -240,17 +247,34 @@ def extract_real_system(sys_name, rom_path):
 
 
 def main():
-    # Single instance lock: guarantee only one daemon runs at a time, even if EmulationStation
-    # (re)starts this launcher script multiple times in a row.
-    lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        lock_socket.bind(("127.0.0.1", 49132))
-    except socket.error:
-        print("Another daemon is already running, exiting...")
-        sys.exit(1)
+    # Detach from EmulationStation / SSH controlling session & process group so ES script cleanup
+    # or RetroArch transitions (`Action=rungame`) never kill the daemon with SIGHUP/SIGTERM.
+    if hasattr(signal, "SIGHUP"):
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        except Exception:
+            pass
+    if hasattr(os, "setsid"):
+        try:
+            os.setsid()
+        except Exception:
+            pass
 
-    print(f"ArcadeMatrix daemon started (DMD_HOST={DMD_HOST}, dynamic broker discovery)!", flush=True)
-    time.sleep(5)
+    # Single instance lock with brief retry for clean handoff during explicit restarts.
+    lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    bound = False
+    for _ in range(10):
+        try:
+            lock_socket.bind(("127.0.0.1", 49132))
+            bound = True
+            break
+        except socket.error:
+            time.sleep(0.1)
+    if not bound:
+        sys.exit(0)
+
+    print(f"ArcadeMatrix daemon started (pid={os.getpid()}, DMD_HOST={DMD_HOST}, dynamic broker discovery)!", flush=True)
+    time.sleep(0.5)
     last_state_key = None
     last_sent_key = None
     last_playing_ctx = None
@@ -259,25 +283,34 @@ def main():
 
     while True:
         try:
-            rom_path, game_title, system, state = parse_statefile()
-            if state != "stopped" and not system and not rom_path:
-                time.sleep(0.06)
+            rom_path, game_title, system, state, action, is_folder = parse_statefile()
+            state_low = (state or "").strip().lower()
+            action_low = (action or "").strip().lower()
+
+            if state_low == "stopped" or action_low in ("shutdown", "reboot", "quit", "stop"):
+                norm_state = "stopped"
+            elif state_low == "playing" and action_low not in ("endgame", "enddemo", "systembrowsing", "gamelistbrowsing"):
+                norm_state = "playing"
+            else:
+                norm_state = "browsing"
+
+            if norm_state != "stopped" and not system and not rom_path:
+                time.sleep(0.05)
                 continue
 
             system = clean_system_name(system)
 
-            if state == "stopped":
+            if norm_state == "stopped":
                 current_key = (None, None, None, "stopped")
             else:
-                is_system = True
-                if rom_path and not os.path.isdir(rom_path):
-                    is_system = False
-
-                if is_system:
+                if action_low == "systembrowsing" or not rom_path:
                     current_key = (None, None, system, "browsing")
+                elif is_folder == "1" or (is_folder != "0" and os.path.isdir(rom_path)):
+                    folder_sys = clean_system_name(game_title) or clean_system_name(os.path.basename(rom_path.rstrip("/")))
+                    current_key = (None, None, folder_sys or system, "browsing")
                 else:
                     resolved_sys = extract_real_system(system, rom_path)
-                    current_key = (rom_path, game_title, resolved_sys, state)
+                    current_key = (rom_path, game_title, resolved_sys, norm_state)
 
             now = time.time()
             if current_key != last_state_key:
@@ -285,7 +318,7 @@ def main():
                 pending_since = now
                 next_retry_at = 0.0
 
-            debounce_sec = 0.0 if current_key[3] in ("playing", "stopped") else 0.08
+            debounce_sec = 0.0 if current_key[3] in ("playing", "stopped") else 0.05
             if (now - pending_since) >= debounce_sec and current_key != last_sent_key and now >= next_retry_at:
                 gbase = ""
                 tclean = ""

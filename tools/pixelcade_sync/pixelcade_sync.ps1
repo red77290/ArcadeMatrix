@@ -67,9 +67,20 @@ try {
         exit 1
     }
 
+    $SkipDirs = @(".git", ".github", "scripts", "docs", "_catalog")
     if ($Systems.Count -gt 0) {
-        Write-Host "Filtering to systems: $($Systems -join ', ')"
-        $systemDirs = $Systems
+        $expanded = @()
+        foreach ($entry in $Systems) {
+            foreach ($part in ($entry -split ',')) {
+                $trimmed = $part.Trim()
+                if ($trimmed) { $expanded += $trimmed }
+            }
+        }
+        if (($expanded -notcontains "console") -and (Test-Path (Join-Path $SrcRoot "console"))) {
+            $expanded += "console"
+        }
+        Write-Host "Filtering to systems: $($expanded -join ', ')"
+        $systemDirs = $expanded
     } else {
         $systemDirs = Get-ChildItem -Path $SrcRoot -Directory | Where-Object { $SkipDirs -notcontains $_.Name } | ForEach-Object { $_.Name }
     }
@@ -93,8 +104,26 @@ try {
         }
     }
 
+    $catalogCopied = 0
+    $srcCatalog = Join-Path $SrcRoot "_catalog"
+    if (Test-Path $srcCatalog) {
+        $destCatalog = Join-Path $Dest "_catalog"
+        New-Item -ItemType Directory -Force -Path $destCatalog | Out-Null
+        $foldersManifest = Join-Path $srcCatalog "_folders.txt"
+        if (Test-Path $foldersManifest) {
+            Copy-Item -Path $foldersManifest -Destination $destCatalog -Force
+        }
+        foreach ($system in $systemDirs) {
+            $catFile = Join-Path $srcCatalog "$($system.Trim()).txt"
+            if (Test-Path $catFile) {
+                Copy-Item -Path $catFile -Destination $destCatalog -Force
+                $catalogCopied++
+            }
+        }
+    }
+
     Write-Host ""
-    Write-Host "Done. Copied $copied artwork files into $((Resolve-Path $Dest).Path)" -ForegroundColor Green
+    Write-Host "Done. Copied $copied artwork files (+ $catalogCopied catalog manifests) into $((Resolve-Path $Dest).Path)" -ForegroundColor Green
     Write-Host "Next step: copy the contents of '$Dest' onto your SD card's \pixelcade folder,"
     Write-Host "so paths look like \pixelcade\mame\pacman.png on the card."
 } finally {

@@ -4469,6 +4469,36 @@ void test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings(void) {
     auto arcadeVars = PixelcadeArtResolver::getSystemNameVariants("arcade");
     TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("mame.png", arcadeVars) > 1900);
 
+    // Recalbox / Batocera arcade manufacturer & sub-board wheel variants against real Pixelcade console.txt filenames
+    auto technosVars = PixelcadeArtResolver::getSystemNameVariants("technos");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_technos_classics.png", technosVars) >= 1998);
+
+    auto taitoGnetVars = PixelcadeArtResolver::getSystemNameVariants("taito-gnet");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_taito_classics.png", taitoGnetVars) > 1700);
+
+    auto namcoSys11Vars = PixelcadeArtResolver::getSystemNameVariants("namco-system11");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-acrade_namco_classics.png", namcoSys11Vars) > 1700);
+
+    auto namcoSys22Vars = PixelcadeArtResolver::getSystemNameVariants("namco-system22");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_namco_system_22.png", namcoSys22Vars) >= 1998);
+
+    auto segaSys16Vars = PixelcadeArtResolver::getSystemNameVariants("sega-system16");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_sega_classics.png", segaSys16Vars) > 1700);
+
+    auto konamiGxVars = PixelcadeArtResolver::getSystemNameVariants("konami-gx");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_konami_classics.png", konamiGxVars) > 1700);
+
+    auto iremM72Vars = PixelcadeArtResolver::getSystemNameVariants("irem-m72");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-arcade_irem_classics.png", iremM72Vars) > 1700);
+
+    auto gwVars = PixelcadeArtResolver::getSystemNameVariants("gw");
+    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("default-gameandwatch.png", gwVars) >= 1998);
+
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::mapSystemToPixelcadeFolder("tecmo").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::mapSystemToPixelcadeFolder("taito-gnet").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::mapSystemToPixelcadeFolder("namco-system11").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", PixelcadeArtResolver::mapSystemToPixelcadeFolder("gw").c_str());
+
     TEST_ASSERT_EQUAL_STRING(
         "A%2BM%2BO%2BK%20%28USA%29.png",
         PixelcadeArtResolver::urlEncodeSegment("A+M+O+K (USA).png").c_str()

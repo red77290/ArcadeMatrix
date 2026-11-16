@@ -183,6 +183,29 @@ uint16_t rankColor565(uint8_t rank) {
     return 0x07FF;                 // Cyan
 }
 
+#if defined(ESP32) && !defined(UNIT_TEST)
+bool closeSdFileSafely(FsFile& file, const char* removePath = nullptr, bool flushBeforeClose = false) {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        esp_task_wdt_reset();
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (guard) {
+            if (file) {
+                if (flushBeforeClose) {
+                    file.flush();
+                }
+                file.close();
+            }
+            if (removePath && removePath[0] != '\0' && sd.exists(removePath)) {
+                sd.remove(removePath);
+            }
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
+}
+#endif
+
 } // namespace
 
 // ============================================================================
@@ -992,15 +1015,35 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
     m_activeBrokerPort = (port > 0) ? port : 1883;
     lastReconnectAttempt = 0;
 
-    const uint16_t rxBufBytes = hardwareHAL.capabilities().hasPsram ? 1024U : 768U;
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const bool localCfgBroker = isLoopbackOrEmptyHost(mqttConfig.broker.c_str());
+    const uint16_t rxBufBytes = hasPsram ? 1024U : 768U;
 
     if (fromShowcase && m_activeBrokerHost[0] != '\0') {
-        if (internalBroker) {
-            delete internalBroker;
-            internalBroker = nullptr;
-            LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker to free SRAM (sharing Showcase broker %s:%u)", m_activeBrokerHost, m_activeBrokerPort);
+        if (!hasPsram) {
+            if (internalBroker) {
+                delete internalBroker;
+                internalBroker = nullptr;
+                LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker to free SRAM (sharing Showcase broker %s:%u)", m_activeBrokerHost, m_activeBrokerPort);
+            } else {
+                LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u", m_activeBrokerHost, m_activeBrokerPort);
+            }
         } else {
-            LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u", m_activeBrokerHost, m_activeBrokerPort);
+            // On PSRAM boards (ESP32-S3), keep embedded PicoMQTT listening on local port 1883 alongside
+            // the Showcase MQTT client so consoles with legacy scripts (hardcoded to <DMD_IP>:1883) or
+            // fallback publishes never get cut off when Showcase comes online!
+            if (localCfgBroker && !internalBroker) {
+                LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d (dual-listener with Showcase %s:%u)...",
+                     mqttConfig.port, m_activeBrokerHost, m_activeBrokerPort);
+                internalBroker = new PicoMQTT::Server(mqttConfig.port, 5, 2);
+                internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
+                    if (instance) instance->handleMessage(String(topic), String(payload));
+                });
+                internalBroker->begin();
+            } else {
+                LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u (local port %d listener kept active)",
+                     m_activeBrokerHost, m_activeBrokerPort, mqttConfig.port);
+            }
         }
         espClient.setTimeout(1);
         mqttClient.setClient(espClient);
@@ -1011,7 +1054,7 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
         return;
     }
 
-    if (isLoopbackOrEmptyHost(mqttConfig.broker.c_str())) {
+    if (localCfgBroker) {
         if (!internalBroker) {
             LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
             internalBroker = new PicoMQTT::Server(mqttConfig.port, 5, 2);
@@ -1042,7 +1085,8 @@ void FrontendSyncEngine::ensureShowcaseWorkerRunning() {
         return;
     }
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
-    const uint32_t stackBytes = hasPsram ? 8192U : 6144U;
+    // Live HTTPS Pixelcade downloads run only on PSRAM boards (16 KB stack); non-PSRAM esp32dev stays strictly at 6 KB (SD-only).
+    const uint32_t stackBytes = hasPsram ? 16384U : 6144U;
     m_workerStopRequested.store(false, std::memory_order_release);
     m_workerExited.store(false, std::memory_order_release);
     if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 2, &m_showcaseWorkerHandle, 0) != pdPASS) {
@@ -1058,6 +1102,9 @@ void FrontendSyncEngine::begin() {
 
     hasReceivedAnyEvent = false;
     hasPendingEvent = false;
+    m_hasPendingNetArt = false;
+    m_pendingNetArtDueMs = 0;
+    m_pendingNetArtJob = ArtDownloadJobSlot{};
     isGamePlaying = false;
     waitingDisplayed = false;
     m_transportConfigured = false;
@@ -1071,6 +1118,7 @@ void FrontendSyncEngine::begin() {
     m_beginMs = millis();
 
     m_activeArtReqId.store(0U, std::memory_order_release);
+    m_artNetBusy.store(false, std::memory_order_release);
     m_artResultPending.store(false, std::memory_order_release);
     m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
     m_artJobSlot = ArtDownloadJobSlot{};
@@ -1089,10 +1137,14 @@ void FrontendSyncEngine::begin() {
     syncWorkerConfigSlot();
     writeSharedBrokerState(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port), false);
 
+    // Core 0 worker exclusively loads and owns `systemMappings` lazily on first system event (zero cross-core String race).
+    systemMappings.clear();
+    m_mappingsLoaded = false;
+
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
     const bool wantShowcaseBroker = (showcaseConfig.enabled && mqttConfig.use_showcase_broker);
     bool adoptedCachedBroker = false;
-    if (wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
+    if (!hasPsram && wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
         char cachedUrl[112] = "";
         char cachedHost[64] = "";
         uint16_t cachedPort = 8890;
@@ -1119,21 +1171,10 @@ void FrontendSyncEngine::begin() {
         ensureShowcaseWorkerRunning();
     }
 
-    // If Showcase broker sharing is NOT enabled, start local/external broker immediately.
-    // Otherwise wait briefly (< 1.5s) in loop() for Core 0's initial Showcase health probe
-    // so we avoid allocating PicoMQTT::Server when Showcase is already online.
-    if (!wantShowcaseBroker) {
+    // Start local/external broker immediately when Showcase sharing is disabled OR on PSRAM with local broker
+    // (on non-PSRAM esp32dev, wait up to 1.5s for Core 0's initial Showcase health probe to avoid transient SRAM peak).
+    if (!wantShowcaseBroker || (hasPsram && isLoopbackOrEmptyHost(mqttConfig.broker.c_str()))) {
         applyBrokerTransport(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port));
-    }
-
-    // On non-PSRAM boards, load `/pixelcade/console.csv` mappings lazily on first system event
-    // instead of pinning ~3 KB of `std::map<String, std::vector<String>>` RB-tree nodes at boot.
-    if (hasPsram) {
-        systemMappings = loadMappingsFromSD();
-        m_mappingsLoaded = true;
-    } else {
-        systemMappings.clear();
-        m_mappingsLoaded = false;
     }
 }
 
@@ -1156,10 +1197,14 @@ void FrontendSyncEngine::stop() {
     isGamePlaying = false;
     waitingDisplayed = false;
     hasPendingEvent = false;
+    m_hasPendingNetArt = false;
+    m_pendingNetArtDueMs = 0;
+    m_pendingNetArtJob = ArtDownloadJobSlot{};
     m_activeMarqueePath[0] = '\0';
     m_wasShowingInGame = false;
 
     m_activeArtReqId.store(0U, std::memory_order_release);
+    m_artNetBusy.store(false, std::memory_order_release);
     m_artResultPending.store(false, std::memory_order_release);
     m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
     m_artJobSlot = ArtDownloadJobSlot{};
@@ -1176,6 +1221,8 @@ void FrontendSyncEngine::stop() {
         m_showcaseWorkerHandle = nullptr;
     }
 #endif
+    systemMappings.clear();
+    m_mappingsLoaded = false;
     freeStreamBuffersSafely();
 
     stopReconnectTask();
@@ -1244,9 +1291,9 @@ bool FrontendSyncEngine::loop() {
         copySafeCStr(resolvedHost, sizeof(resolvedHost), mqttConfig.broker.c_str());
         resolvedPort = static_cast<uint16_t>(mqttConfig.port > 0 ? mqttConfig.port : 1883);
         probedOnce = true;
-    } else if (!resolvedFromShowcase && showcaseConfig.server_url.length() >= 8) {
-        // Zero-socket passive adoption: if `MediaShowcaseBase` discovered/verified Showcase after boot,
-        // adopt its broker IP immediately without spawning `SyncShowcaseWkr` or opening an HTTP socket.
+    } else if (!resolvedFromShowcase && !probedOnce &&
+               !hardwareHAL.capabilities().hasPsram && showcaseConfig.server_url.length() >= 8) {
+        // Zero-socket passive adoption on non-PSRAM boards before initial worker probe
         const unsigned long nowCheck = millis();
         if (m_lastBrokerCacheCheckMs == 0 || (nowCheck - m_lastBrokerCacheCheckMs) >= 3000UL) {
             m_lastBrokerCacheCheckMs = nowCheck == 0 ? 1UL : nowCheck;
@@ -1303,7 +1350,9 @@ bool FrontendSyncEngine::loop() {
     if (m_transportConfigured) {
         if (internalBroker) {
             internalBroker->loop();
-        } else {
+        }
+        const bool useExternalClient = m_activeFromShowcase || !isLoopbackOrEmptyHost(mqttConfig.broker.c_str());
+        if (useExternalClient) {
 #if defined(ESP32)
             const bool hasPsram = hardwareHAL.capabilities().hasPsram;
             // Yield the idle FrontendSync MQTT socket ONLY during `WebUiSync` (browser SPA load).
@@ -1358,10 +1407,14 @@ bool FrontendSyncEngine::loop() {
     }
 
     if (hasPendingEvent) {
-        // Snappy 40 ms debounce for rapid browsing; immediate (0 ms) on first event or gameStart/gameStop/playing/stopped.
-        bool isBrowsing = (pendingPayload.indexOf("\"status\":\"browsing\"") != -1 ||
-                           pendingPayload.indexOf("\"status\": \"browsing\"") != -1);
-        const unsigned long debounceMs = (!hasReceivedAnyEvent || !isBrowsing) ? 0UL : 40UL;
+        // Tier 1: Snappy 40 ms UI/SD debounce for rapid browsing (covers both "browsing" and Recalbox's "selected");
+        // immediate (0 ms) on first event or playing/stopped.
+        const bool isPlayingOrStopped =
+            (pendingPayload.indexOf("\"status\":\"playing\"") != -1 ||
+             pendingPayload.indexOf("\"status\": \"playing\"") != -1 ||
+             pendingPayload.indexOf("\"status\":\"stopped\"") != -1 ||
+             pendingPayload.indexOf("\"status\": \"stopped\"") != -1);
+        const unsigned long debounceMs = (!hasReceivedAnyEvent || isPlayingOrStopped) ? 0UL : 40UL;
         if ((millis() - pendingEventTime) >= debounceMs) {
             hasPendingEvent = false;
             uint32_t reqId = currentRequestId;
@@ -1372,6 +1425,26 @@ bool FrontendSyncEngine::loop() {
         MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0, 0 };
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
+    }
+
+    // Tier 2: 140 ms network settle window while browsing so rapid wheel scrolling never fires intermediate HTTPS GETs
+    if (m_hasPendingNetArt) {
+        if (m_pendingNetArtJob.reqId != currentRequestId || !isGamePlaying) {
+            m_hasPendingNetArt = false;
+        } else if (static_cast<int32_t>(millis() - m_pendingNetArtDueMs) >= 0) {
+            ArtDownloadJobSlot settled = m_pendingNetArtJob;
+            m_hasPendingNetArt = false;
+            dispatchAsyncArtJob(
+                settled.primaryFolder,
+                settled.secondaryFolder,
+                settled.query,
+                settled.title,
+                settled.localStem,
+                settled.reqId,
+                settled.negHash,
+                settled.isSystem
+            );
+        }
     }
 
     return true;
@@ -1425,12 +1498,19 @@ void FrontendSyncEngine::handleMessage(String topic, String msg) {
         pendingPayload = msg;
         hasPendingEvent = true;
         pendingEventTime = millis();
+        m_hasPendingNetArt = false;
         currentRequestId++;
         if (currentRequestId == 0U) {
             currentRequestId = 1U;
         }
-        // Lock-free cancellation of any stale Core 0 artwork download immediately when user scrolls
-        m_activeArtReqId.store(currentRequestId, std::memory_order_release);
+        // Immediately cancel and force-close any in-flight Core 0 HTTP download when user scrolls,
+        // while keeping warm Keep-Alive TLS sessions alive when Core 0 is idle!
+        m_activeArtReqId.store(currentRequestId, std::memory_order_seq_cst);
+#if defined(ESP32) && !defined(UNIT_TEST)
+        if (m_artNetBusy.load(std::memory_order_seq_cst)) {
+            net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_ARTWORK);
+        }
+#endif
         return;
     }
 
@@ -1793,100 +1873,102 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                          (lastHealthProbeMs == 0) ||
                          ((nowMs - lastHealthProbeMs) >= (currentShowcaseOnline ? (hasPsram ? 12000U : 30000U) : 5000U));
         if (needProbe) {
-            if (!hasPsram &&
-                (WebUiSyncEngine::isRequested() ||
-                 WebUiSyncEngine::isReadyForServing() ||
-                 NetworkBudget::isBulkTransferActive() ||
-                 NetworkBudget::getDmdNetActivity() != NetworkBudget::DmdNetActivity::Idle)) {
-                // Fast zero-socket cache reuse when `MediaShowcaseBase` already verified the Showcase host
-                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker && strlen(wcfg.showcaseUrl) >= 8) {
-                    char cachedUrl[112] = "";
-                    char cachedHost[64] = "";
-                    uint16_t cachedPort = 8890;
-                    bool cachedOnline = false;
-                    if (net::ShowcaseDiscovery::peekCachedUrlStatus(
-                            wcfg.showcaseUrl,
-                            cachedUrl,
-                            sizeof(cachedUrl),
-                            cachedHost,
-                            sizeof(cachedHost),
-                            cachedPort,
-                            cachedOnline,
-                            nullptr,
-                            0) &&
-                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
-                        consecutiveHealthFailures = 0;
-                        currentShowcaseOnline = true;
-                        lastCheckedCfgGen = curCfgGen;
-                        lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
-                        writeSharedBrokerState(true, cachedHost, 1883, true);
-                    }
-                }
-            } else {
-                lastCheckedCfgGen = curCfgGen;
-                lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
-
-                if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
-                    WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8) {
-                    char baseServerUrl[112] = "";
-                    char resolvedShowcaseHost[96] = "";
-                    uint16_t cachedPort = 8890;
-                    bool cachedOnline = false;
-                    bool healthOk = false;
-                    String brokerHost;
-                    uint16_t brokerPort = 1883;
-
-                    // Zero-socket fast path when `MediaShowcaseBase` already holds a fresh verified lease
-                    if (!hasPsram &&
-                        net::ShowcaseDiscovery::peekCachedUrlStatus(
-                            wcfg.showcaseUrl,
-                            baseServerUrl,
-                            sizeof(baseServerUrl),
-                            resolvedShowcaseHost,
-                            sizeof(resolvedShowcaseHost),
-                            cachedPort,
-                            cachedOnline,
-                            nullptr,
-                            0,
-                            60000U) &&
-                        cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedShowcaseHost)) {
-                        brokerHost = String(resolvedShowcaseHost);
-                        brokerPort = 1883;
-                        healthOk = true;
-                    } else if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
-                        net::SecureHttpOptions hOpts;
-                        hOpts.ownerId = net::OWNER_INGAME_SYNC;
-                        hOpts.requestTimeoutMs = 1200;
-                        hOpts.keepAlive = false;
-                        auto hResp = net::SecureHttpClient::get(String(baseServerUrl) + "/api/v1/health", hOpts);
-                        if (hResp.ok()) {
-                            String body = hResp.body();
-                            healthOk = parseShowcaseHealthBroker(body.c_str(), resolvedShowcaseHost, brokerHost, brokerPort);
-                        }
-                    }
-
-                    if (healthOk) {
-                        consecutiveHealthFailures = 0;
-                        currentShowcaseOnline = true;
-                        writeSharedBrokerState(true, brokerHost.c_str(), brokerPort, true);
-                    } else {
-                        if (consecutiveHealthFailures < 10) consecutiveHealthFailures++;
-                        if (!currentShowcaseOnline || consecutiveHealthFailures >= 2) {
-                            currentShowcaseOnline = false;
-                            writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+            [&]() __attribute__((noinline)) {
+                if (!hasPsram &&
+                    (WebUiSyncEngine::isRequested() ||
+                     WebUiSyncEngine::isReadyForServing() ||
+                     NetworkBudget::isBulkTransferActive() ||
+                     NetworkBudget::getDmdNetActivity() != NetworkBudget::DmdNetActivity::Idle)) {
+                    // Fast zero-socket cache reuse when `MediaShowcaseBase` already verified the Showcase host
+                    if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker && strlen(wcfg.showcaseUrl) >= 8) {
+                        char cachedUrl[112] = "";
+                        char cachedHost[64] = "";
+                        uint16_t cachedPort = 8890;
+                        bool cachedOnline = false;
+                        if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                                wcfg.showcaseUrl,
+                                cachedUrl,
+                                sizeof(cachedUrl),
+                                cachedHost,
+                                sizeof(cachedHost),
+                                cachedPort,
+                                cachedOnline,
+                                nullptr,
+                                0) &&
+                            cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+                            consecutiveHealthFailures = 0;
+                            currentShowcaseOnline = true;
+                            lastCheckedCfgGen = curCfgGen;
+                            lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+                            writeSharedBrokerState(true, cachedHost, 1883, true);
                         }
                     }
                 } else {
-                    consecutiveHealthFailures = 0;
-                    currentShowcaseOnline = false;
-                    writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                    lastCheckedCfgGen = curCfgGen;
+                    lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
+
+                    if (wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
+                        WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8) {
+                        char baseServerUrl[112] = "";
+                        char resolvedShowcaseHost[96] = "";
+                        uint16_t cachedPort = 8890;
+                        bool cachedOnline = false;
+                        bool healthOk = false;
+                        String brokerHost;
+                        uint16_t brokerPort = 1883;
+
+                        // Zero-socket fast path when `MediaShowcaseBase` already holds a fresh verified lease
+                        if (!hasPsram &&
+                            net::ShowcaseDiscovery::peekCachedUrlStatus(
+                                wcfg.showcaseUrl,
+                                baseServerUrl,
+                                sizeof(baseServerUrl),
+                                resolvedShowcaseHost,
+                                sizeof(resolvedShowcaseHost),
+                                cachedPort,
+                                cachedOnline,
+                                nullptr,
+                                0,
+                                60000U) &&
+                            cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(resolvedShowcaseHost)) {
+                            brokerHost = String(resolvedShowcaseHost);
+                            brokerPort = 1883;
+                            healthOk = true;
+                        } else if (resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost))) {
+                            net::SecureHttpOptions hOpts;
+                            hOpts.ownerId = net::OWNER_INGAME_SYNC;
+                            hOpts.requestTimeoutMs = 1200;
+                            hOpts.keepAlive = false;
+                            auto hResp = net::SecureHttpClient::get(String(baseServerUrl) + "/api/v1/health", hOpts);
+                            if (hResp.ok()) {
+                                String body = hResp.body();
+                                healthOk = parseShowcaseHealthBroker(body.c_str(), resolvedShowcaseHost, brokerHost, brokerPort);
+                            }
+                        }
+
+                        if (healthOk) {
+                            consecutiveHealthFailures = 0;
+                            currentShowcaseOnline = true;
+                            writeSharedBrokerState(true, brokerHost.c_str(), brokerPort, true);
+                        } else {
+                            if (consecutiveHealthFailures < 10) consecutiveHealthFailures++;
+                            if (!currentShowcaseOnline || consecutiveHealthFailures >= 2) {
+                                currentShowcaseOnline = false;
+                                writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                            }
+                        }
+                    } else {
+                        consecutiveHealthFailures = 0;
+                        currentShowcaseOnline = false;
+                        writeSharedBrokerState(false, wcfg.localBroker, wcfg.localPort, true);
+                    }
                 }
-            }
+            }();
         }
 
         // 2. Process pending Pixelcade marquee/system artwork download BEFORE In-Game Showcase
         //    so game launch first resolves and caches the marquee cleanly, then starts Showcase stream!
-        {
+        const bool ranArtJob = [&]() __attribute__((noinline)) -> bool {
             ArtDownloadJobSlot artJob;
             readArtJobSlot(artJob);
             if (artJob.active && artJob.reqId != 0U && artJob.reqId != lastProcessedArtReqId) {
@@ -1898,12 +1980,17 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                 if (!hasPsram) {
                     pixelcadeSession.reset();
                 }
-                // Re-check immediately if user scrolled to another game while this download ran
-                continue;
+                return true;
             }
+            return false;
+        }();
+        if (ranArtJob) {
+            // Re-check immediately if user scrolled to another game while this download ran
+            continue;
         }
 
-        // 3. Check for pending In-Game Showcase launch or cancellation
+        // 3. Check for pending In-Game Showcase launch or cancellation (isolated stack frame)
+        [&]() __attribute__((noinline)) {
         InGameJobSlot job;
         readJobSlot(job);
         if (job.token != lastProcessedJobToken) {
@@ -2154,26 +2241,30 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                 }
             }
         }
+        }();
 
         if (!hasPsram) {
-            InGameJobSlot latestJob;
-            readJobSlot(latestJob);
-            ArtDownloadJobSlot latestArt;
-            readArtJobSlot(latestArt);
-            const bool brokerCheckSettled =
-                !(wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker) ||
-                currentShowcaseOnline ||
-                (consecutiveHealthFailures >= 2);
-            const bool pendingCancel =
-                latestJob.cancelRemote && (latestJob.token != lastProcessedJobToken);
-            const bool pendingArt =
-                latestArt.active && latestArt.reqId != 0U && (latestArt.reqId != lastProcessedArtReqId);
-            if (!latestJob.active &&
-                !pendingCancel &&
-                !pendingArt &&
-                brokerCheckSettled &&
-                lastCheckedCfgGen == m_cfgGen.load(std::memory_order_acquire) &&
-                !m_workerWakeLatch.exchange(false, std::memory_order_acq_rel)) {
+            const bool shouldExitIdle = [&]() __attribute__((noinline)) -> bool {
+                InGameJobSlot latestJob;
+                readJobSlot(latestJob);
+                ArtDownloadJobSlot latestArt;
+                readArtJobSlot(latestArt);
+                const bool brokerCheckSettled =
+                    !(wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker) ||
+                    currentShowcaseOnline ||
+                    (consecutiveHealthFailures >= 2);
+                const bool pendingCancel =
+                    latestJob.cancelRemote && (latestJob.token != lastProcessedJobToken);
+                const bool pendingArt =
+                    latestArt.active && latestArt.reqId != 0U && (latestArt.reqId != lastProcessedArtReqId);
+                return !latestJob.active &&
+                       !pendingCancel &&
+                       !pendingArt &&
+                       brokerCheckSettled &&
+                       lastCheckedCfgGen == m_cfgGen.load(std::memory_order_acquire) &&
+                       !m_workerWakeLatch.exchange(false, std::memory_order_acq_rel);
+            }();
+            if (shouldExitIdle) {
                 break;
             }
         }
@@ -2404,6 +2495,39 @@ void FrontendSyncEngine::showCyanTitleBanner(const char* primaryTitle, const Str
     message->displayMessage(cfg);
 }
 
+void FrontendSyncEngine::scheduleOrDispatchArtJob(
+    const char* primaryFolder,
+    const char* secondaryFolder,
+    const char* query,
+    const char* title,
+    const char* localStem,
+    uint32_t reqId,
+    uint32_t negHash,
+    bool isSystem,
+    bool immediate
+) {
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    // Immediate dispatch on game launch ("playing") or on non-PSRAM boards (0-network offline SD scan).
+    // During rapid wheel browsing on PSRAM boards, wait 140 ms for selection to settle before firing HTTPS GETs.
+    if (immediate || !hasPsram) {
+        m_hasPendingNetArt = false;
+        dispatchAsyncArtJob(primaryFolder, secondaryFolder, query, title, localStem, reqId, negHash, isSystem);
+        return;
+    }
+
+    copySafeCStr(m_pendingNetArtJob.primaryFolder, sizeof(m_pendingNetArtJob.primaryFolder), primaryFolder);
+    copySafeCStr(m_pendingNetArtJob.secondaryFolder, sizeof(m_pendingNetArtJob.secondaryFolder), secondaryFolder);
+    copySafeCStr(m_pendingNetArtJob.query, sizeof(m_pendingNetArtJob.query), query);
+    copySafeCStr(m_pendingNetArtJob.title, sizeof(m_pendingNetArtJob.title), title);
+    copySafeCStr(m_pendingNetArtJob.localStem, sizeof(m_pendingNetArtJob.localStem), localStem);
+    m_pendingNetArtJob.reqId = reqId;
+    m_pendingNetArtJob.negHash = negHash;
+    m_pendingNetArtJob.isSystem = isSystem;
+    m_pendingNetArtJob.active = true;
+    m_pendingNetArtDueMs = millis() + 140U;
+    m_hasPendingNetArt = true;
+}
+
 void FrontendSyncEngine::dispatchAsyncArtJob(
     const char* primaryFolder,
     const char* secondaryFolder,
@@ -2415,15 +2539,51 @@ void FrontendSyncEngine::dispatchAsyncArtJob(
     bool isSystem
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
-    if (WiFi.status() != WL_CONNECTED) return;
-    if (!hardwareHAL.capabilities().hasPsram &&
-        (WebUiSyncEngine::isRequested() ||
-         WebUiSyncEngine::isReadyForServing() ||
-         NetworkBudget::isBulkTransferActive())) {
-        return;
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    if (!hasPsram) {
+        // Non-PSRAM boards (`esp32dev`) NEVER perform live HTTPS/TLS downloads from GitHub:
+        // artwork must be pre-cached onto the SD card via `tools/pixelcade_sync/pixelcade_sync.{sh,ps1}`.
+        // Wake Core 0 for system variant SD lookup or when a local `/pixelcade/_catalog/<folder>.txt` exists.
+        if (WebUiSyncEngine::isRequested() ||
+            WebUiSyncEngine::isReadyForServing() ||
+            NetworkBudget::isBulkTransferActive()) {
+            return;
+        }
+        if (!isSystem) {
+            bool hasLocalCatalog = false;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(10));
+                if (guard) {
+                    char catPath[96];
+                    if (primaryFolder && primaryFolder[0] != '\0') {
+                        snprintf(catPath, sizeof(catPath), "/pixelcade/_catalog/%s.txt", primaryFolder);
+                        hasLocalCatalog = sd.exists(catPath);
+                    }
+                    if (!hasLocalCatalog && secondaryFolder && secondaryFolder[0] != '\0') {
+                        snprintf(catPath, sizeof(catPath), "/pixelcade/_catalog/%s.txt", secondaryFolder);
+                        hasLocalCatalog = sd.exists(catPath);
+                    }
+                }
+            }
+            if (!hasLocalCatalog) {
+                return;
+            }
+        }
+    } else if (WiFi.status() != WL_CONNECTED && !isSystem) {
+        // Offline on PSRAM boards: still allow local SD `_catalog` resolution if present
+        bool hasLocalCatalog = false;
+        SdLockGuard guard(pdMS_TO_TICKS(10));
+        if (guard && primaryFolder && primaryFolder[0] != '\0') {
+            char catPath[96];
+            snprintf(catPath, sizeof(catPath), "/pixelcade/_catalog/%s.txt", primaryFolder);
+            hasLocalCatalog = sd.exists(catPath);
+        }
+        if (!hasLocalCatalog) {
+            return;
+        }
     }
 
-    m_activeArtReqId.store(reqId, std::memory_order_release);
+    m_activeArtReqId.store(reqId, std::memory_order_seq_cst);
     m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
     copySafeCStr(m_artJobSlot.primaryFolder, sizeof(m_artJobSlot.primaryFolder), primaryFolder);
     copySafeCStr(m_artJobSlot.secondaryFolder, sizeof(m_artJobSlot.secondaryFolder), secondaryFolder);
@@ -2477,6 +2637,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         cancelInGameShowcaseSession();
         resetSyncCardCycle();
         hasPendingEvent = false;
+        m_hasPendingNetArt = false;
         return;
     }
 
@@ -2600,7 +2761,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         return;
     }
 
-    dispatchAsyncArtJob(
+    scheduleOrDispatchArtJob(
         effectivePrimary,
         effectiveSecondary,
         gameRaw,
@@ -2608,7 +2769,8 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         localStemBuf[0] != '\0' ? localStemBuf : game.c_str(),
         reqId,
         negHash,
-        false
+        false,
+        /*immediate=*/isPlaying
     );
 }
 
@@ -2633,42 +2795,32 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
         snprintf(canonicalStem, sizeof(canonicalStem), "sys_%s", sysStem);
     }
 
-    // Fast Core 1 local SD check (< 3 ms): check canonical cached path first, then top mapped console names
+    // Ultra-fast Core 1 local SD check (<= 6 probes, < 2 ms on 128 GB exFAT): check canonical cached path
+    // and direct `<sysStem>` / `default-<sysStem>` so Core 1 NEVER stalls before rendering the cyan banner.
+    // Full `sysVariants` SD & `_catalog` resolution runs asynchronously on Core 0.
     char foundArtPath[128] = "";
     {
-        SdLockGuard guard(pdMS_TO_TICKS(15));
-        if (guard) {
+        SdLockGuard guard(pdMS_TO_TICKS(10));
+        if (guard && sysStem[0] != '\0') {
+            char defaultStem[104] = "";
+            snprintf(defaultStem, sizeof(defaultStem), "default-%s", sysStem);
+            const char* fastStems[3] = {
+                canonicalStem[0] != '\0' ? canonicalStem : nullptr,
+                defaultStem,
+                sysStem
+            };
             const char* consoleDirs[2] = { "/pixelcade/console", "/console" };
             for (const char* cDir : consoleDirs) {
                 if (foundArtPath[0] != '\0' || !sd.exists(cDir)) continue;
-
-                if (canonicalStem[0] != '\0') {
+                for (const char* st : fastStems) {
+                    if (!st || st[0] == '\0') continue;
                     char probe[128];
-                    snprintf(probe, sizeof(probe), "%s/%s.png", cDir, canonicalStem);
+                    snprintf(probe, sizeof(probe), "%s/%s.png", cDir, st);
                     if (sd.exists(probe)) {
                         copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
                         break;
                     }
-                    snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, canonicalStem);
-                    if (sd.exists(probe)) {
-                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
-                        break;
-                    }
-                }
-
-                // Also support user-populated `/pixelcade/console/` SD cards directly
-                std::vector<SystemVariant> variants = m_mappingsLoaded
-                    ? getSystemNameVariantsMapped(systemMappings, systemId)
-                    : getSystemNameVariants(systemId);
-                const size_t maxLocalChecks = (variants.size() < 12U) ? variants.size() : 12U;
-                for (size_t vi = 0U; vi < maxLocalChecks; ++vi) {
-                    char probe[128];
-                    snprintf(probe, sizeof(probe), "%s/%s.png", cDir, variants[vi].name.c_str());
-                    if (sd.exists(probe)) {
-                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
-                        break;
-                    }
-                    snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, variants[vi].name.c_str());
+                    snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, st);
                     if (sd.exists(probe)) {
                         copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
                         break;
@@ -2694,7 +2846,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
         return;
     }
 
-    dispatchAsyncArtJob(
+    scheduleOrDispatchArtJob(
         "console",
         "",
         systemId.c_str(),
@@ -2702,7 +2854,8 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
         canonicalStem[0] != '\0' ? canonicalStem : "sys_default",
         reqId,
         negHash,
-        true
+        true,
+        /*immediate=*/false
     );
 }
 
@@ -2712,14 +2865,15 @@ void FrontendSyncEngine::processWorkerArtJob(
     uint32_t& lastArtActivityMs
 ) {
 #if defined(ESP32) && !defined(UNIT_TEST)
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
     auto isCancelled = [&]() -> bool {
         return m_workerStopRequested.load(std::memory_order_acquire) ||
                (m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) ||
-               (!hardwareHAL.capabilities().hasPsram &&
+               (!hasPsram &&
                 (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing()));
     };
 
-    if (isCancelled() || WiFi.status() != WL_CONNECTED) return;
+    if (isCancelled()) return;
 
     if (job.isSystem && !m_mappingsLoaded) {
         systemMappings = loadMappingsFromSD();
@@ -2734,6 +2888,42 @@ void FrontendSyncEngine::processWorkerArtJob(
     char savedPath[128] = "";
     bool downloaded = false;
     bool allFoldersConfirmedMiss = true;
+
+    // Fast offline SD check across all mapped `sysVariants` on Core 0 (zero Core 1 stall, zero network I/O)
+    if (job.isSystem && !sysVariants.empty()) {
+        const char* consoleDirs[2] = { "/pixelcade/console", "/console" };
+        for (const char* cDir : consoleDirs) {
+            if (downloaded || isCancelled()) break;
+            bool dirExists = false;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(100));
+                if (guard) {
+                    dirExists = sd.exists(cDir);
+                }
+            }
+            if (!dirExists) continue;
+
+            for (size_t vi = 0U; vi < sysVariants.size() && !downloaded; ++vi) {
+                if (isCancelled()) return;
+                SdLockGuard guard(pdMS_TO_TICKS(100));
+                if (!guard) break;
+                char probe[128];
+                snprintf(probe, sizeof(probe), "%s/%s.png", cDir, sysVariants[vi].name.c_str());
+                if (sd.exists(probe)) {
+                    copySafeCStr(savedPath, sizeof(savedPath), probe);
+                    downloaded = true;
+                    break;
+                }
+                snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, sysVariants[vi].name.c_str());
+                if (sd.exists(probe)) {
+                    copySafeCStr(savedPath, sizeof(savedPath), probe);
+                    downloaded = true;
+                    break;
+                }
+            }
+            esp_task_wdt_reset();
+        }
+    }
 
     const char* foldersToSearch[2] = {
         job.primaryFolder,
@@ -2763,6 +2953,35 @@ void FrontendSyncEngine::processWorkerArtJob(
                     matchedFilename,
                     sizeof(matchedFilename))) {
                 if (isCancelled()) return;
+
+                // 1. Check if `pixelcade_sync` already placed the exact matched file on the SD card (0 network / 0 TLS!)
+                {
+                    SdLockGuard guard(pdMS_TO_TICKS(100));
+                    if (guard) {
+                        char localCand1[224];
+                        char localCand2[224];
+                        const int n1 = snprintf(localCand1, sizeof(localCand1), "/pixelcade/%s/%s", folder, matchedFilename);
+                        const int n2 = snprintf(localCand2, sizeof(localCand2), "/%s/%s", folder, matchedFilename);
+                        if (n1 > 0 && static_cast<size_t>(n1) < sizeof(localCand1) &&
+                            static_cast<size_t>(n1) < sizeof(savedPath) && sd.exists(localCand1)) {
+                            copySafeCStr(savedPath, sizeof(savedPath), localCand1);
+                            downloaded = true;
+                            break;
+                        }
+                        if (n2 > 0 && static_cast<size_t>(n2) < sizeof(localCand2) &&
+                            static_cast<size_t>(n2) < sizeof(savedPath) && sd.exists(localCand2)) {
+                            copySafeCStr(savedPath, sizeof(savedPath), localCand2);
+                            downloaded = true;
+                            break;
+                        }
+                    }
+                }
+
+                // 2. Live HTTPS download ONLY on PSRAM boards (`esp32s3`); non-PSRAM `esp32dev` stays strictly SD-only!
+                if (!hasPsram || WiFi.status() != WL_CONNECTED) {
+                    continue;
+                }
+
                 bool file404 = false;
                 const char* saveDir = job.isSystem ? "console" : job.primaryFolder;
                 if (downloadExactPixelcadeFile(
@@ -2785,8 +3004,8 @@ void FrontendSyncEngine::processWorkerArtJob(
             }
             // If `hasCatalog` is true and `findMatchInCatalogFile` returned false, the folder
             // definitively does NOT contain this marquee — zero 404 probes needed!
-        } else if (!catalog404) {
-            // Transient network/SD error fetching catalog: bounded 2-candidate direct fallback
+        } else if (!catalog404 && hasPsram && WiFi.status() == WL_CONNECTED) {
+            // Transient network/SD error fetching catalog on PSRAM board: bounded 2-candidate direct fallback
             allFoldersConfirmedMiss = false;
             const char* saveDir = job.isSystem ? "console" : job.primaryFolder;
             if (job.isSystem) {
@@ -2887,20 +3106,38 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
         }
     }
 
+    // Non-PSRAM boards (`esp32dev`) NEVER perform live HTTPS catalog downloads: SD-only!
+    if (!hardwareHAL.capabilities().hasPsram || WiFi.status() != WL_CONNECTED) {
+        outDefinitive404 = true;
+        return false;
+    }
+
+    struct ArtNetBusyGuard {
+        std::atomic<bool>& flag;
+        bool engaged{true};
+        explicit ArtNetBusyGuard(std::atomic<bool>& f) : flag(f) {
+            flag.store(true, std::memory_order_seq_cst);
+        }
+        void release() {
+            if (engaged) {
+                engaged = false;
+                flag.store(false, std::memory_order_release);
+            }
+        }
+        ~ArtNetBusyGuard() { release(); }
+    } netBusyGuard(m_artNetBusy);
+
     if (m_workerStopRequested.load(std::memory_order_acquire) ||
-        m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+        m_activeArtReqId.load(std::memory_order_seq_cst) != reqId) {
         return false;
     }
 
     if (!session || session->isAborted() || session->state() == net::SessionState::Closed) {
         net::SecureHttpOptions opts;
         opts.ownerId = net::OWNER_ARTWORK;
-        opts.requestTimeoutMs = 3500;
-        opts.handshakeTimeoutSec = 3;
-        opts.keepAlive = true;
         opts.followRedirects = true;
-        opts.userAgent = "ArcadeMatrix-ESP32";
-        session.reset(new (std::nothrow) net::SecureHttpSession("raw.githubusercontent.com", 443, opts));
+        session.reset(new (std::nothrow) net::SecureHttpSession(
+            net::SecureHttpClient::session("raw.githubusercontent.com", 443, opts)));
         if (!session) return false;
     }
 
@@ -2909,6 +3146,13 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
     LOGI("RetroFrontend", "Caching Pixelcade catalog %s on Core 0...", urlPath.c_str());
 
     auto resp = session->get(urlPath);
+    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+        m_activeArtReqId.load(std::memory_order_acquire) != reqId ||
+        session->isAborted()) {
+        session->abort();
+        session.reset();
+        return false;
+    }
     if (!resp.ok()) {
         if (resp.statusCode() == 404) {
             outDefinitive404 = true;
@@ -2923,18 +3167,33 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
     FsFile outFile{};
     {
         SdLockGuard guard(pdMS_TO_TICKS(500));
-        if (!guard) return false;
+        if (!guard) {
+            session->abort();
+            session.reset();
+            return false;
+        }
         if (!sd.exists("/pixelcade")) sd.mkdir("/pixelcade");
         if (!sd.exists("/pixelcade/_catalog")) sd.mkdir("/pixelcade/_catalog");
         if (sd.exists(tmpPath)) sd.remove(tmpPath);
         outFile = sd.open(tmpPath, FILE_OPEN_WRITE);
-        if (!outFile) return false;
+        if (!outFile) {
+            session->abort();
+            session.reset();
+            return false;
+        }
     }
 
     Stream& stream = resp.stream();
     const size_t expectedLen = resp.contentLength();
     static constexpr size_t MAX_CATALOG_BYTES = 524288U;
-    uint8_t chunk[1024];
+    static constexpr size_t kCatalogChunkBytes = 1024U;
+    std::unique_ptr<uint8_t[]> chunk(new (std::nothrow) uint8_t[kCatalogChunkBytes]);
+    if (!chunk) {
+        (void)closeSdFileSafely(outFile, tmpPath, false);
+        session->abort();
+        session.reset();
+        return false;
+    }
     size_t totalWritten = 0U;
     uint32_t lastReadMs = millis();
     bool writeFailed = false;
@@ -2942,7 +3201,8 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
 
     while (expectedLen == 0U || totalWritten < expectedLen) {
         if (m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+            m_activeArtReqId.load(std::memory_order_acquire) != reqId ||
+            session->isAborted()) {
             aborted = true;
             break;
         }
@@ -2950,11 +3210,11 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
         int avail = stream.available();
         if (avail > 0) {
             size_t toRead = static_cast<size_t>(avail);
-            if (toRead > sizeof(chunk)) toRead = sizeof(chunk);
+            if (toRead > kCatalogChunkBytes) toRead = kCatalogChunkBytes;
             if (expectedLen > 0U && (totalWritten + toRead) > expectedLen) {
                 toRead = expectedLen - totalWritten;
             }
-            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk.get()), toRead);
             if (nRead > 0U) {
                 if ((totalWritten + nRead) > MAX_CATALOG_BYTES) {
                     writeFailed = true;
@@ -2962,7 +3222,7 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
                 }
                 {
                     SdLockGuard guard(pdMS_TO_TICKS(500));
-                    if (!guard || outFile.write(chunk, nRead) != nRead) {
+                    if (!guard || outFile.write(chunk.get(), nRead) != nRead) {
                         writeFailed = true;
                         break;
                     }
@@ -2989,22 +3249,28 @@ bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
     } else {
         resp.consume();
     }
+    netBusyGuard.release();
+
+    const bool complete = !aborted && !writeFailed && totalWritten >= 4U &&
+                          (expectedLen == 0U || totalWritten == expectedLen);
+    if (!closeSdFileSafely(outFile, complete ? nullptr : tmpPath, complete)) {
+        return false;
+    }
 
     bool committed = false;
-    {
-        SdLockGuard guard(pdMS_TO_TICKS(500));
-        if (guard) {
-            outFile.flush();
-            outFile.close();
-            const bool complete = !aborted && !writeFailed && totalWritten >= 4U &&
-                                  (expectedLen == 0U || totalWritten == expectedLen);
-            if (complete) {
+    if (complete) {
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            esp_task_wdt_reset();
+            SdLockGuard guard(pdMS_TO_TICKS(500));
+            if (guard) {
                 if (sd.exists(finalPath)) sd.remove(finalPath);
                 committed = sd.rename(tmpPath, finalPath);
+                if (!committed && sd.exists(tmpPath)) {
+                    sd.remove(tmpPath);
+                }
+                break;
             }
-            if (!committed && sd.exists(tmpPath)) {
-                sd.remove(tmpPath);
-            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
     return committed;
@@ -3028,6 +3294,10 @@ bool FrontendSyncEngine::findMatchInCatalogFile(
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!catalogPath || catalogPath[0] == '\0') return false;
 
+    static constexpr size_t kScanChunkBytes = 1024U;
+    std::unique_ptr<uint8_t[]> chunk(new (std::nothrow) uint8_t[kScanChunkBytes]);
+    if (!chunk) return false;
+
     FsFile catFile{};
     {
         SdLockGuard guard(pdMS_TO_TICKS(300));
@@ -3045,7 +3315,6 @@ bool FrontendSyncEngine::findMatchInCatalogFile(
         }
     }
 
-    uint8_t chunk[1024];
     char lineBuf[192];
     size_t lineLen = 0U;
     bool lineOverflow = false;
@@ -3080,12 +3349,12 @@ bool FrontendSyncEngine::findMatchInCatalogFile(
                 cancelled = true;
                 break;
             }
-            nRead = catFile.read(chunk, sizeof(chunk));
+            nRead = catFile.read(chunk.get(), kScanChunkBytes);
         }
         if (nRead <= 0) break;
 
         for (int i = 0; i < nRead; ++i) {
-            char c = static_cast<char>(chunk[i]);
+            char c = static_cast<char>(chunk[static_cast<size_t>(i)]);
             if (c == '\r') continue;
             if (c == '\n') {
                 if (!lineOverflow && lineLen > 0U) {
@@ -3116,12 +3385,7 @@ bool FrontendSyncEngine::findMatchInCatalogFile(
         evaluateLine(lineBuf);
     }
 
-    {
-        SdLockGuard guard(pdMS_TO_TICKS(300));
-        if (guard) {
-            catFile.close();
-        }
-    }
+    (void)closeSdFileSafely(catFile, nullptr, false);
 
     if (cancelled || bestScore <= 0 || outMatchedFilename[0] == '\0') {
         outMatchedFilename[0] = '\0';
@@ -3150,6 +3414,9 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     if (outSavedPath && outCap > 0U) outSavedPath[0] = '\0';
     if (outDefinitive404) *outDefinitive404 = false;
 #if defined(ESP32) && !defined(UNIT_TEST)
+    if (!hardwareHAL.capabilities().hasPsram) {
+        return false;
+    }
     if (!remoteFolder || !remoteFilename || !saveFolder || !localStem ||
         remoteFolder[0] == '\0' || remoteFilename[0] == '\0' || localStem[0] == '\0') {
         return false;
@@ -3172,15 +3439,32 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
         return false;
     }
 
+    struct ArtNetBusyGuard {
+        std::atomic<bool>& flag;
+        bool engaged{true};
+        explicit ArtNetBusyGuard(std::atomic<bool>& f) : flag(f) {
+            flag.store(true, std::memory_order_seq_cst);
+        }
+        void release() {
+            if (engaged) {
+                engaged = false;
+                flag.store(false, std::memory_order_release);
+            }
+        }
+        ~ArtNetBusyGuard() { release(); }
+    } netBusyGuard(m_artNetBusy);
+
+    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+        m_activeArtReqId.load(std::memory_order_seq_cst) != reqId) {
+        return false;
+    }
+
     if (!session || session->isAborted() || session->state() == net::SessionState::Closed) {
         net::SecureHttpOptions opts;
         opts.ownerId = net::OWNER_ARTWORK;
-        opts.requestTimeoutMs = 3500;
-        opts.handshakeTimeoutSec = 3;
-        opts.keepAlive = true;
         opts.followRedirects = true;
-        opts.userAgent = "ArcadeMatrix-ESP32";
-        session.reset(new (std::nothrow) net::SecureHttpSession("raw.githubusercontent.com", 443, opts));
+        session.reset(new (std::nothrow) net::SecureHttpSession(
+            net::SecureHttpClient::session("raw.githubusercontent.com", 443, opts)));
         if (!session) return false;
     }
 
@@ -3190,6 +3474,13 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     LOGI("RetroFrontend", "Downloading Pixelcade art %s -> %s", urlPath.c_str(), finalPath);
 
     auto resp = session->get(urlPath);
+    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+        m_activeArtReqId.load(std::memory_order_acquire) != reqId ||
+        session->isAborted()) {
+        session->abort();
+        session.reset();
+        return false;
+    }
     if (!resp.ok()) {
         if (outDefinitive404 && resp.statusCode() == 404) {
             *outDefinitive404 = true;
@@ -3208,19 +3499,34 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
         return false;
     }
 
+    static constexpr size_t kDownloadChunkBytes = 1024U;
+    std::unique_ptr<uint8_t[]> chunk(new (std::nothrow) uint8_t[kDownloadChunkBytes]);
+    if (!chunk) {
+        session->abort();
+        session.reset();
+        return false;
+    }
+
     FsFile outFile{};
     {
         SdLockGuard guard(pdMS_TO_TICKS(500));
-        if (!guard) return false;
+        if (!guard) {
+            session->abort();
+            session.reset();
+            return false;
+        }
         if (!sd.exists("/pixelcade")) sd.mkdir("/pixelcade");
         if (!sd.exists(dirPath)) sd.mkdir(dirPath);
         if (sd.exists(tmpPath)) sd.remove(tmpPath);
         outFile = sd.open(tmpPath, FILE_OPEN_WRITE);
-        if (!outFile) return false;
+        if (!outFile) {
+            session->abort();
+            session.reset();
+            return false;
+        }
     }
 
     Stream& stream = resp.stream();
-    uint8_t chunk[1024];
     uint8_t hdrBuf[24];
     size_t hdrCollected = 0U;
     bool hdrValidated = false;
@@ -3255,7 +3561,8 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
 
     while (expectedLen == 0U || totalWritten < expectedLen) {
         if (m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+            m_activeArtReqId.load(std::memory_order_acquire) != reqId ||
+            session->isAborted()) {
             aborted = true;
             break;
         }
@@ -3263,11 +3570,11 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
         int avail = stream.available();
         if (avail > 0) {
             size_t toRead = static_cast<size_t>(avail);
-            if (toRead > sizeof(chunk)) toRead = sizeof(chunk);
+            if (toRead > kDownloadChunkBytes) toRead = kDownloadChunkBytes;
             if (expectedLen > 0U && (totalWritten + toRead) > expectedLen) {
                 toRead = expectedLen - totalWritten;
             }
-            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk.get()), toRead);
             if (nRead > 0U) {
                 if ((totalWritten + nRead) > maxArtBytes) {
                     failed = true;
@@ -3278,7 +3585,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
                         ? nRead
                         : (sizeof(hdrBuf) - hdrCollected);
                     if (copyN > 0U) {
-                        memcpy(hdrBuf + hdrCollected, chunk, copyN);
+                        memcpy(hdrBuf + hdrCollected, chunk.get(), copyN);
                         hdrCollected += copyN;
                     }
                     if (hdrCollected >= sizeof(hdrBuf) ||
@@ -3293,7 +3600,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
                 }
                 {
                     SdLockGuard guard(pdMS_TO_TICKS(500));
-                    if (!guard || outFile.write(chunk, nRead) != nRead) {
+                    if (!guard || outFile.write(chunk.get(), nRead) != nRead) {
                         failed = true;
                         break;
                     }
@@ -3325,22 +3632,28 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     } else {
         resp.consume();
     }
+    netBusyGuard.release();
+
+    const bool complete = !aborted && !failed && hdrValidated && totalWritten >= 32U &&
+                          (expectedLen == 0U || totalWritten == expectedLen);
+    if (!closeSdFileSafely(outFile, complete ? nullptr : tmpPath, complete)) {
+        return false;
+    }
 
     bool committed = false;
-    {
-        SdLockGuard guard(pdMS_TO_TICKS(500));
-        if (guard) {
-            outFile.flush();
-            outFile.close();
-            const bool complete = !aborted && !failed && hdrValidated && totalWritten >= 32U &&
-                                  (expectedLen == 0U || totalWritten == expectedLen);
-            if (complete) {
+    if (complete) {
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            esp_task_wdt_reset();
+            SdLockGuard guard(pdMS_TO_TICKS(500));
+            if (guard) {
                 if (sd.exists(finalPath)) sd.remove(finalPath);
                 committed = sd.rename(tmpPath, finalPath);
+                if (!committed && sd.exists(tmpPath)) {
+                    sd.remove(tmpPath);
+                }
+                break;
             }
-            if (!committed && sd.exists(tmpPath)) {
-                sd.remove(tmpPath);
-            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 

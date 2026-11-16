@@ -146,7 +146,7 @@ try {
     if ($system -eq "recalbox") {
         $TargetDir = "/recalbox/share/userscripts"
         Write-Host "Cleaning up previous install..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_companion_sync.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh; mkdir -p $TargetDir" | Out-Null
+        Invoke-RemoteCommand $activeUser "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_mqtt.sh' 2>/dev/null || true; rm -f '$TargetDir/arcadematrix_mqtt.sh'; mkdir -p '$TargetDir' /recalbox/share/system" | Out-Null
 
         Write-Host "Uploading daemon & companion sync (topic: $topic)..."
         Copy-ToRemote $activeUser $daemonLocal "/recalbox/share/arcadematrix_daemon.py"
@@ -157,13 +157,30 @@ try {
         [System.IO.File]::WriteAllText($launcherLocal, $launcherSrc.Replace("`r`n", "`n"))
         Copy-ToRemote $activeUser $launcherLocal "$TargetDir/arcadematrix_launcher(permanent).sh"
 
-        Write-Host "Rebooting $TargetIp to apply changes..."
-        Invoke-RemoteCommand $activeUser "chmod +x /recalbox/share/arcadematrix_companion_sync.py '$TargetDir/arcadematrix_launcher(permanent).sh' && sync && sleep 1 && reboot" | Out-Null
+        Write-Host "Configuring Recalbox boot persistence & starting daemon live..."
+        $recalboxStartCmd = @'
+chmod +x /recalbox/share/arcadematrix_companion_sync.py '/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh' 2>/dev/null || true
+if [ ! -f /recalbox/share/system/custom.sh ]; then
+    printf '#!/bin/sh\ncase "$1" in\n  ""|start) sh "/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh" -action start >/dev/null 2>&1 & ;;\nesac\n' > /recalbox/share/system/custom.sh
+elif ! grep -q 'arcadematrix_launcher' /recalbox/share/system/custom.sh; then
+    printf '\n# ArcadeMatrix Daemon\ncase "$1" in ""|start) sh "/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh" -action start >/dev/null 2>&1 & ;; esac\n' >> /recalbox/share/system/custom.sh
+fi
+chmod +x /recalbox/share/system/custom.sh 2>/dev/null || true
+: > /recalbox/share/userscripts/daemon.log
+if command -v setsid >/dev/null 2>&1; then
+    setsid python3 /recalbox/share/arcadematrix_daemon.py </dev/null >>/recalbox/share/userscripts/daemon.log 2>&1 &
+else
+    nohup python3 /recalbox/share/arcadematrix_daemon.py </dev/null >>/recalbox/share/userscripts/daemon.log 2>&1 &
+fi
+sync
+sleep 1
+'@
+        Invoke-RemoteCommand $activeUser ($recalboxStartCmd.Replace("`r`n", "`n")) | Out-Null
 
     } elseif ($system -eq "batocera") {
         $TargetDir = "/userdata/system/scripts"
         Write-Host "Cleaning up legacy daemons..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py 2>/dev/null; pkill -f arcadematrix_companion_sync.py 2>/dev/null; pkill -f arcadematrix_mqtt.sh 2>/dev/null; true" | Out-Null
+        Invoke-RemoteCommand $activeUser "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_mqtt.sh' 2>/dev/null || true" | Out-Null
         Write-Host "Removing legacy script files..."
         Invoke-RemoteCommand $activeUser "rm -f /userdata/system/arcadematrix_daemon.py $TargetDir/arcadematrix_hook.sh $TargetDir/arcadematrix_mqtt.sh $TargetDir/arcadematrix_companion_sync.py" | Out-Null
         Write-Host "Removing legacy ES event directories..."
@@ -207,7 +224,7 @@ try {
 
     } elseif ($system -eq "retropie") {
         Write-Host "Installing for RetroPie..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_companion_sync.py || true; mkdir -p /opt/retropie/configs/all" | Out-Null
+        Invoke-RemoteCommand $activeUser "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; mkdir -p /opt/retropie/configs/all" | Out-Null
 
         Write-Host "Uploading daemon & companion sync (topic: $topic)..."
         Copy-ToRemote $activeUser $daemonLocal "/opt/retropie/configs/all/arcadematrix_daemon.py"
@@ -233,7 +250,7 @@ if ! grep -q 'ArcadeMatrix Runcommand Hook' /opt/retropie/configs/all/runcommand
     cat >> /opt/retropie/configs/all/runcommand-onend.sh << 'EOF'
 # ArcadeMatrix Runcommand Hook
 cat > /tmp/es_state.inf << STATEEOF
-SystemId=
+SystemId=$1
 GamePath=
 State=stopped
 STATEEOF
@@ -242,9 +259,10 @@ fi
 chmod +x /opt/retropie/configs/all/runcommand-onend.sh
 
 if [ -f /opt/retropie/configs/all/autostart.sh ] && ! grep -q 'arcadematrix_daemon.py' /opt/retropie/configs/all/autostart.sh; then
-    sed -i '/emulationstation/i python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &' /opt/retropie/configs/all/autostart.sh
+    sed -i '/emulationstation/i setsid python3 /opt/retropie/configs/all/arcadematrix_daemon.py </dev/null >> /opt/retropie/configs/all/daemon.log 2>&1 &' /opt/retropie/configs/all/autostart.sh
 fi
-nohup python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &
+setsid python3 /opt/retropie/configs/all/arcadematrix_daemon.py </dev/null > /opt/retropie/configs/all/daemon.log 2>&1 &
+sleep 1
 '@
         Invoke-RemoteCommand $activeUser ($retroCmd.Replace("`r`n", "`n")) | Out-Null
     }
