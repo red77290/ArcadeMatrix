@@ -1055,23 +1055,171 @@ const char* resolveRegionalAliasNorm(const char* normKey) {
     return nullptr;
 }
 
+void addCharToFirstMask(char rawCh, uint32_t& mask) {
+    char c = asciiLower(rawCh);
+    if (c >= 'a' && c <= 'z') {
+        mask |= (1UL << static_cast<uint32_t>(c - 'a'));
+    } else if (c >= '0' && c <= '9') {
+        mask |= (1UL << 26U);
+    }
+}
+
+void addStringLeadsToFirstMask(const char* s, uint32_t& mask) {
+    if (!s || s[0] == '\0') return;
+    const size_t len = strlen(s);
+    size_t idx = 0U;
+    while (idx < len && (s[idx] == ' ' || s[idx] == '_' || s[idx] == '-' || s[idx] == '.' || s[idx] == '\'')) {
+        ++idx;
+    }
+    if (idx >= len) return;
+
+    char folded[4] = "";
+    foldNextUtf8ToAsciiLower(s, idx, len, folded);
+    if (folded[0] != '\0') {
+        addCharToFirstMask(folded[0], mask);
+    }
+
+    // Also include the char following any leading article (both spaced and normalized compact forms)
+    // so inverted articles like "Legend of Zelda, The.png" match "The Legend of Zelda" with 0 false negatives.
+    static const char* const kCompactArticles[] = {
+        "the", "les", "die", "der", "das", "los", "las", "le", "la", "el", "an", "a"
+    };
+    const char* sub = s + idx;
+    const size_t rem = len - idx;
+    for (const char* art : kCompactArticles) {
+        const size_t aLen = strlen(art);
+        if (rem > aLen && strEqIgnoreCaseLen(sub, aLen, art)) {
+            size_t nextIdx = idx + aLen;
+            while (nextIdx < len && (s[nextIdx] == ' ' || s[nextIdx] == '_' || s[nextIdx] == '-')) {
+                ++nextIdx;
+            }
+            if (nextIdx < len) {
+                char nextFolded[4] = "";
+                foldNextUtf8ToAsciiLower(s, nextIdx, len, nextFolded);
+                if (nextFolded[0] != '\0') {
+                    addCharToFirstMask(nextFolded[0], mask);
+                }
+            }
+        }
+    }
+}
+
+bool checkSubstrLeadAgainstMask(const char* s, uint32_t mask) {
+    if (!s || s[0] == '\0') return false;
+    while (*s == ' ' || *s == '_' || *s == '-' || *s == '.') ++s;
+    if (*s == '\0') return false;
+    const unsigned char b0 = static_cast<unsigned char>(*s);
+    if (b0 >= 0x80U || *s == '(' || *s == '[' || *s == '\'' || *s == '"') {
+        return true;
+    }
+    const char c = asciiLower(*s);
+    if (c >= 'a' && c <= 'z') {
+        if ((mask & (1UL << static_cast<uint32_t>(c - 'a'))) != 0U) return true;
+    } else if (c >= '0' && c <= '9') {
+        if ((mask & (1UL << 26U)) != 0U) return true;
+    } else {
+        return true;
+    }
+
+    // Check if candidate starts with a leading article ("The Outfoxies.png" vs "outfoxies")
+    size_t wLen = 0U;
+    while (s[wLen] != '\0' && s[wLen] != ' ' && s[wLen] != '_' && s[wLen] != '-') {
+        ++wLen;
+    }
+    if (wLen > 0U && s[wLen] != '\0' && isInvertedArticle(s, wLen)) {
+        const char* afterArt = s + wLen + 1U;
+        while (*afterArt == ' ' || *afterArt == '_' || *afterArt == '-') ++afterArt;
+        if (*afterArt != '\0') {
+            const unsigned char nb = static_cast<unsigned char>(*afterArt);
+            if (nb >= 0x80U) return true;
+            const char nc = asciiLower(*afterArt);
+            if (nc >= 'a' && nc <= 'z' && (mask & (1UL << static_cast<uint32_t>(nc - 'a'))) != 0U) return true;
+            if (nc >= '0' && nc <= '9' && (mask & (1UL << 26U)) != 0U) return true;
+        }
+    }
+    return false;
+}
+
+bool candidatePassesFirstCharFilter(const char* candidateFile, uint32_t mask) {
+    if (mask == 0U) return true;
+    if (checkSubstrLeadAgainstMask(candidateFile, mask)) return true;
+    const char* afterNum = skipFourDigitReleasePrefix(candidateFile);
+    if (afterNum && checkSubstrLeadAgainstMask(afterNum, mask)) return true;
+    return false;
+}
+
 } // namespace
 
-int PixelcadeArtResolver::scoreCatalogEntry(
-    const char* candidateFile,
+void PixelcadeArtResolver::buildQueryPlan(
     const char* rawGame,
     const char* rawTitle,
-    const char* normGame,
-    const char* normTitle
+    PixelcadeQueryPlan& outPlan
+) {
+    outPlan = PixelcadeQueryPlan{};
+    outPlan.rawGame = rawGame;
+    outPlan.rawTitle = rawTitle;
+    outPlan.gLen = (rawGame && rawGame[0] != '\0') ? stripKnownRomOrImageExtLen(rawGame, strlen(rawGame)) : 0U;
+    outPlan.tLen = (rawTitle && rawTitle[0] != '\0') ? stripKnownRomOrImageExtLen(rawTitle, strlen(rawTitle)) : 0U;
+
+    char scratch[112] = "";
+    if (outPlan.gLen > 0U) {
+        size_t copyG = (outPlan.gLen < sizeof(scratch) - 1U) ? outPlan.gLen : (sizeof(scratch) - 1U);
+        memcpy(scratch, rawGame, copyG);
+        scratch[copyG] = '\0';
+        stripRomOrArtExtensionAndTags(scratch, outPlan.gameStripped, sizeof(outPlan.gameStripped));
+        normalizeMarqueeKey(rawGame, outPlan.normGame, sizeof(outPlan.normGame));
+        extractMainTitleBeforeSubtitle(outPlan.gameStripped, scratch, sizeof(scratch));
+        if (scratch[0] != '\0') {
+            normalizeMarqueeKey(scratch, outPlan.gameMainNorm, sizeof(outPlan.gameMainNorm));
+        }
+    }
+    if (outPlan.tLen > 0U) {
+        size_t copyT = (outPlan.tLen < sizeof(scratch) - 1U) ? outPlan.tLen : (sizeof(scratch) - 1U);
+        memcpy(scratch, rawTitle, copyT);
+        scratch[copyT] = '\0';
+        stripRomOrArtExtensionAndTags(scratch, outPlan.titleStripped, sizeof(outPlan.titleStripped));
+        normalizeMarqueeKey(rawTitle, outPlan.normTitle, sizeof(outPlan.normTitle));
+        extractMainTitleBeforeSubtitle(outPlan.titleStripped, scratch, sizeof(scratch));
+        if (scratch[0] != '\0') {
+            normalizeMarqueeKey(scratch, outPlan.titleMainNorm, sizeof(outPlan.titleMainNorm));
+        }
+    }
+
+    outPlan.ngAlias = resolveRegionalAliasNorm(outPlan.normGame);
+    outPlan.ntAlias = resolveRegionalAliasNorm(outPlan.normTitle);
+
+    uint32_t mask = 0U;
+    addStringLeadsToFirstMask(rawGame, mask);
+    addStringLeadsToFirstMask(rawTitle, mask);
+    addStringLeadsToFirstMask(outPlan.gameStripped, mask);
+    addStringLeadsToFirstMask(outPlan.titleStripped, mask);
+    addStringLeadsToFirstMask(outPlan.normGame, mask);
+    addStringLeadsToFirstMask(outPlan.normTitle, mask);
+    addStringLeadsToFirstMask(outPlan.ngAlias, mask);
+    addStringLeadsToFirstMask(outPlan.ntAlias, mask);
+    addStringLeadsToFirstMask(outPlan.gameMainNorm, mask);
+    addStringLeadsToFirstMask(outPlan.titleMainNorm, mask);
+    outPlan.firstCharMask = mask;
+}
+
+int PixelcadeArtResolver::scoreCatalogEntryWithPlan(
+    const char* candidateFile,
+    const PixelcadeQueryPlan& plan
 ) {
     if (!candidateFile || candidateFile[0] == '\0') return 0;
     const size_t candLen = strlen(candidateFile);
     if (candLen < 5U) return 0;
 
+    const char* extPtr = candidateFile + candLen - 4U;
+    if (extPtr[0] != '.') return 0;
     bool isPng = false;
-    if (strEqIgnoreCase(candidateFile + candLen - 4U, ".png")) {
+    if (asciiLower(extPtr[1]) == 'p' && asciiLower(extPtr[2]) == 'n' && asciiLower(extPtr[3]) == 'g') {
         isPng = true;
-    } else if (!strEqIgnoreCase(candidateFile + candLen - 4U, ".gif")) {
+    } else if (!(asciiLower(extPtr[1]) == 'g' && asciiLower(extPtr[2]) == 'i' && asciiLower(extPtr[3]) == 'f')) {
+        return 0;
+    }
+
+    if (!candidatePassesFirstCharFilter(candidateFile, plan.firstCharMask)) {
         return 0;
     }
 
@@ -1081,54 +1229,26 @@ int PixelcadeArtResolver::scoreCatalogEntry(
     memcpy(candStem, candidateFile, stemLen);
     candStem[stemLen] = '\0';
 
-    const size_t gLen = (rawGame && rawGame[0] != '\0') ? stripKnownRomOrImageExtLen(rawGame, strlen(rawGame)) : 0U;
-    const size_t tLen = (rawTitle && rawTitle[0] != '\0') ? stripKnownRomOrImageExtLen(rawTitle, strlen(rawTitle)) : 0U;
-
     int baseScore = 0;
-    if (gLen > 0U && strEqIgnoreCaseLen(rawGame, gLen, candStem)) {
+    if (plan.gLen > 0U && strEqIgnoreCaseLen(plan.rawGame, plan.gLen, candStem)) {
         baseScore = 1000;
-    } else if (tLen > 0U && strEqIgnoreCaseLen(rawTitle, tLen, candStem)) {
+    } else if (plan.tLen > 0U && strEqIgnoreCaseLen(plan.rawTitle, plan.tLen, candStem)) {
         baseScore = 980;
     }
 
-    char candStripped[128];
-    stripRomOrArtExtensionAndTags(candStem, candStripped, sizeof(candStripped));
-
-    char scratchA[112] = "";
-    char scratchB[112] = "";
-
-    if (baseScore == 0 && gLen > 0U) {
-        size_t copyG = (gLen < sizeof(scratchA) - 1U) ? gLen : (sizeof(scratchA) - 1U);
-        memcpy(scratchA, rawGame, copyG);
-        scratchA[copyG] = '\0';
-        stripRomOrArtExtensionAndTags(scratchA, scratchB, sizeof(scratchB));
-        if (scratchB[0] != '\0' && strEqIgnoreCase(candStripped, scratchB)) {
+    char candStripped[128] = "";
+    if (baseScore == 0) {
+        stripRomOrArtExtensionAndTags(candStem, candStripped, sizeof(candStripped));
+        if (plan.gameStripped[0] != '\0' && strEqIgnoreCase(candStripped, plan.gameStripped)) {
             baseScore = 880;
-        }
-    }
-    if (baseScore == 0 && tLen > 0U) {
-        size_t copyT = (tLen < sizeof(scratchA) - 1U) ? tLen : (sizeof(scratchA) - 1U);
-        memcpy(scratchA, rawTitle, copyT);
-        scratchA[copyT] = '\0';
-        stripRomOrArtExtensionAndTags(scratchA, scratchB, sizeof(scratchB));
-        if (scratchB[0] != '\0' && strEqIgnoreCase(candStripped, scratchB)) {
+        } else if (plan.titleStripped[0] != '\0' && strEqIgnoreCase(candStripped, plan.titleStripped)) {
             baseScore = 860;
         }
     }
 
     if (baseScore == 0) {
-        char localNormGame[96] = "";
-        char localNormTitle[96] = "";
-        const char* ng = normGame;
-        if (!ng && rawGame && rawGame[0] != '\0') {
-            normalizeMarqueeKey(rawGame, localNormGame, sizeof(localNormGame));
-            ng = localNormGame;
-        }
-        const char* nt = normTitle;
-        if (!nt && rawTitle && rawTitle[0] != '\0') {
-            normalizeMarqueeKey(rawTitle, localNormTitle, sizeof(localNormTitle));
-            nt = localNormTitle;
-        }
+        const char* ng = plan.normGame;
+        const char* nt = plan.normTitle;
 
         char candNorm[96];
         normalizeMarqueeKey(candStripped, candNorm, sizeof(candNorm));
@@ -1138,9 +1258,6 @@ int PixelcadeArtResolver::scoreCatalogEntry(
         if (afterNumPfx) {
             normalizeMarqueeKey(afterNumPfx, candNormNoNum, sizeof(candNormNoNum));
         }
-
-        const char* ngAlias = resolveRegionalAliasNorm(ng);
-        const char* ntAlias = resolveRegionalAliasNorm(nt);
 
         auto matchesCandNorm = [&](const char* target) -> bool {
             if (!target || target[0] == '\0') return false;
@@ -1152,14 +1269,17 @@ int PixelcadeArtResolver::scoreCatalogEntry(
             baseScore = 760;
         } else if (matchesCandNorm(nt)) {
             baseScore = 750;
-        } else if (matchesCandNorm(ngAlias)) {
+        } else if (matchesCandNorm(plan.ngAlias)) {
             baseScore = 720;
-        } else if (matchesCandNorm(ntAlias)) {
+        } else if (matchesCandNorm(plan.ntAlias)) {
             baseScore = 710;
         } else {
             auto matchesMain = [](const char* mNorm, const char* target) -> bool {
-                return mNorm && mNorm[0] != '\0' && strlen(mNorm) >= 4U && target && strcmp(mNorm, target) == 0;
+                return mNorm && mNorm[0] != '\0' && strlen(mNorm) >= 4U && target && target[0] != '\0' && strcmp(mNorm, target) == 0;
             };
+
+            char scratchA[112] = "";
+            char scratchB[112] = "";
 
             // 1. Candidate has subtitle (`1943 - The Battle of Midway` vs `1943`)
             extractMainTitleBeforeSubtitle(candStripped, scratchA, sizeof(scratchA));
@@ -1180,25 +1300,10 @@ int PixelcadeArtResolver::scoreCatalogEntry(
             }
             // 2. Query/title has subtitle while candidate omits it
             if (baseScore == 0 && candNorm[0] != '\0' && strlen(candNorm) >= 5U) {
-                if (rawGame && rawGame[0] != '\0') {
-                    stripRomOrArtExtensionAndTags(rawGame, scratchA, sizeof(scratchA));
-                    extractMainTitleBeforeSubtitle(scratchA, scratchB, sizeof(scratchB));
-                    if (scratchB[0] != '\0') {
-                        normalizeMarqueeKey(scratchB, scratchA, sizeof(scratchA));
-                        if (strcmp(scratchA, candNorm) == 0) {
-                            baseScore = 530;
-                        }
-                    }
-                }
-                if (baseScore == 0 && rawTitle && rawTitle[0] != '\0') {
-                    stripRomOrArtExtensionAndTags(rawTitle, scratchA, sizeof(scratchA));
-                    extractMainTitleBeforeSubtitle(scratchA, scratchB, sizeof(scratchB));
-                    if (scratchB[0] != '\0') {
-                        normalizeMarqueeKey(scratchB, scratchA, sizeof(scratchA));
-                        if (strcmp(scratchA, candNorm) == 0) {
-                            baseScore = 530;
-                        }
-                    }
+                if (plan.gameMainNorm[0] != '\0' && strcmp(plan.gameMainNorm, candNorm) == 0) {
+                    baseScore = 530;
+                } else if (plan.titleMainNorm[0] != '\0' && strcmp(plan.titleMainNorm, candNorm) == 0) {
+                    baseScore = 530;
                 }
             }
         }
@@ -1206,7 +1311,9 @@ int PixelcadeArtResolver::scoreCatalogEntry(
 
     if (baseScore == 0) return 0;
 
-    int bonus = isPng ? 4 : 0;
+    // Prefer `.png` (+16) over `.gif` (+0): exact `<rom>.png` scores 1044 vs `<rom>.gif` 1028,
+    // preventing oversized multi-MB animated GIFs from shadowing clean 4 KB arcade marquee PNGs!
+    int bonus = isPng ? 16 : 0;
     if (strchr(candStem, '(') == nullptr) {
         bonus += 28;
     } else if (findSubstringIgnoreCase(candStem, "(World)")) {
@@ -1240,6 +1347,36 @@ int PixelcadeArtResolver::scoreCatalogEntry(
 
     int total = baseScore + bonus;
     return (total > 0) ? total : 1;
+}
+
+int PixelcadeArtResolver::scoreCatalogEntry(
+    const char* candidateFile,
+    const char* rawGame,
+    const char* rawTitle,
+    const char* normGame,
+    const char* normTitle
+) {
+    PixelcadeQueryPlan plan;
+    buildQueryPlan(rawGame, rawTitle, plan);
+    if (normGame && normGame[0] != '\0') {
+        size_t n = strlen(normGame);
+        if (n >= sizeof(plan.normGame)) n = sizeof(plan.normGame) - 1U;
+        memcpy(plan.normGame, normGame, n);
+        plan.normGame[n] = '\0';
+        plan.ngAlias = resolveRegionalAliasNorm(plan.normGame);
+        addStringLeadsToFirstMask(plan.normGame, plan.firstCharMask);
+        addStringLeadsToFirstMask(plan.ngAlias, plan.firstCharMask);
+    }
+    if (normTitle && normTitle[0] != '\0') {
+        size_t n = strlen(normTitle);
+        if (n >= sizeof(plan.normTitle)) n = sizeof(plan.normTitle) - 1U;
+        memcpy(plan.normTitle, normTitle, n);
+        plan.normTitle[n] = '\0';
+        plan.ntAlias = resolveRegionalAliasNorm(plan.normTitle);
+        addStringLeadsToFirstMask(plan.normTitle, plan.firstCharMask);
+        addStringLeadsToFirstMask(plan.ntAlias, plan.firstCharMask);
+    }
+    return scoreCatalogEntryWithPlan(candidateFile, plan);
 }
 
 int PixelcadeArtResolver::scoreSystemCatalogEntry(

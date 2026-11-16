@@ -1223,6 +1223,7 @@ void FrontendSyncEngine::stop() {
 #endif
     systemMappings.clear();
     m_mappingsLoaded = false;
+    freeCatalogPsramCache();
     freeStreamBuffersSafely();
 
     stopReconnectTask();
@@ -1651,6 +1652,15 @@ void FrontendSyncEngine::freeStreamBuffersSafely() {
         m_streamIoScratch = nullptr;
     }
     m_streamIoScratchCap = 0U;
+}
+
+void FrontendSyncEngine::freeCatalogPsramCache() {
+    if (m_cachedCatalogPsram) {
+        free(m_cachedCatalogPsram);
+        m_cachedCatalogPsram = nullptr;
+    }
+    m_cachedCatalogLen = 0U;
+    m_cachedCatalogPath[0] = '\0';
 }
 
 void FrontendSyncEngine::deleteAllShowcaseQueueHttp(
@@ -2946,59 +2956,87 @@ void FrontendSyncEngine::processWorkerArtJob(
             snprintf(catalogPath, sizeof(catalogPath), "/pixelcade/_catalog/%s.txt", folder);
 
             char matchedFilename[160] = "";
+            char fallbackFilename[160] = "";
             if (findMatchInCatalogFile(
                     catalogPath,
                     job,
                     job.isSystem ? &sysVariants : nullptr,
                     matchedFilename,
-                    sizeof(matchedFilename))) {
+                    sizeof(matchedFilename),
+                    fallbackFilename,
+                    sizeof(fallbackFilename))) {
                 if (isCancelled()) return;
 
-                // 1. Check if `pixelcade_sync` already placed the exact matched file on the SD card (0 network / 0 TLS!)
+                const char* candidates[2] = {
+                    matchedFilename,
+                    (fallbackFilename[0] != '\0' && strcasecmp(fallbackFilename, matchedFilename) != 0)
+                        ? fallbackFilename
+                        : nullptr
+                };
+
+                // 1. Check if `pixelcade_sync` already placed the matched file (or fallback) on the SD card (0 network / 0 TLS!)
                 {
                     SdLockGuard guard(pdMS_TO_TICKS(100));
                     if (guard) {
-                        char localCand1[224];
-                        char localCand2[224];
-                        const int n1 = snprintf(localCand1, sizeof(localCand1), "/pixelcade/%s/%s", folder, matchedFilename);
-                        const int n2 = snprintf(localCand2, sizeof(localCand2), "/%s/%s", folder, matchedFilename);
-                        if (n1 > 0 && static_cast<size_t>(n1) < sizeof(localCand1) &&
-                            static_cast<size_t>(n1) < sizeof(savedPath) && sd.exists(localCand1)) {
-                            copySafeCStr(savedPath, sizeof(savedPath), localCand1);
-                            downloaded = true;
-                            break;
-                        }
-                        if (n2 > 0 && static_cast<size_t>(n2) < sizeof(localCand2) &&
-                            static_cast<size_t>(n2) < sizeof(savedPath) && sd.exists(localCand2)) {
-                            copySafeCStr(savedPath, sizeof(savedPath), localCand2);
-                            downloaded = true;
-                            break;
+                        for (size_t ci = 0U; ci < 2U && !downloaded; ++ci) {
+                            const char* cand = candidates[ci];
+                            if (!cand || cand[0] == '\0') continue;
+                            char localCand1[224];
+                            char localCand2[224];
+                            const int n1 = snprintf(localCand1, sizeof(localCand1), "/pixelcade/%s/%s", folder, cand);
+                            const int n2 = snprintf(localCand2, sizeof(localCand2), "/%s/%s", folder, cand);
+                            if (n1 > 0 && static_cast<size_t>(n1) < sizeof(localCand1) &&
+                                static_cast<size_t>(n1) < sizeof(savedPath) && sd.exists(localCand1)) {
+                                copySafeCStr(savedPath, sizeof(savedPath), localCand1);
+                                downloaded = true;
+                                break;
+                            }
+                            if (n2 > 0 && static_cast<size_t>(n2) < sizeof(localCand2) &&
+                                static_cast<size_t>(n2) < sizeof(savedPath) && sd.exists(localCand2)) {
+                                copySafeCStr(savedPath, sizeof(savedPath), localCand2);
+                                downloaded = true;
+                                break;
+                            }
                         }
                     }
                 }
+                if (downloaded) break;
 
                 // 2. Live HTTPS download ONLY on PSRAM boards (`esp32s3`); non-PSRAM `esp32dev` stays strictly SD-only!
                 if (!hasPsram || WiFi.status() != WL_CONNECTED) {
                     continue;
                 }
 
-                bool file404 = false;
                 const char* saveDir = job.isSystem ? "console" : job.primaryFolder;
-                if (downloadExactPixelcadeFile(
-                        folder,
-                        matchedFilename,
-                        saveDir,
-                        job.localStem,
-                        job.reqId,
-                        session,
-                        savedPath,
-                        sizeof(savedPath),
-                        &file404)) {
-                    downloaded = true;
-                    lastArtActivityMs = millis() == 0U ? 1U : millis();
-                    break;
+                bool folderConfirmedPermanentSkip = true;
+                for (size_t ci = 0U; ci < 2U && !downloaded; ++ci) {
+                    const char* cand = candidates[ci];
+                    if (!cand || cand[0] == '\0') continue;
+                    if (isCancelled()) return;
+
+                    bool file404 = false;
+                    bool permanentSkip = false;
+                    if (downloadExactPixelcadeFile(
+                            folder,
+                            cand,
+                            saveDir,
+                            job.localStem,
+                            job.reqId,
+                            session,
+                            savedPath,
+                            sizeof(savedPath),
+                            &file404,
+                            &permanentSkip)) {
+                        downloaded = true;
+                        lastArtActivityMs = millis() == 0U ? 1U : millis();
+                        break;
+                    }
+                    if (!file404 && !permanentSkip) {
+                        folderConfirmedPermanentSkip = false;
+                        break;
+                    }
                 }
-                if (!file404) {
+                if (!downloaded && !folderConfirmedPermanentSkip) {
                     allFoldersConfirmedMiss = false;
                 }
             }
@@ -3287,115 +3325,251 @@ bool FrontendSyncEngine::findMatchInCatalogFile(
     const ArtDownloadJobSlot& job,
     const std::vector<SystemVariant>* sysVariants,
     char* outMatchedFilename,
-    size_t outCap
+    size_t outCap,
+    char* outFallbackFilename,
+    size_t fallbackCap
 ) {
+    if (outFallbackFilename && fallbackCap > 0U) outFallbackFilename[0] = '\0';
     if (!outMatchedFilename || outCap == 0U) return false;
     outMatchedFilename[0] = '\0';
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!catalogPath || catalogPath[0] == '\0') return false;
 
-    static constexpr size_t kScanChunkBytes = 1024U;
-    std::unique_ptr<uint8_t[]> chunk(new (std::nothrow) uint8_t[kScanChunkBytes]);
-    if (!chunk) return false;
+    // Heap-allocate scan state so `esp32dev` (`6144U` worker stack) uses 0 extra stack bytes!
+    struct CatalogScanState {
+        engines::PixelcadeQueryPlan plan{};
+        char lineBuf[192] = "";
+        char bestPngFile[160] = "";
+        char bestGifFile[160] = "";
+        int bestPngScore = 0;
+        int bestGifScore = 0;
+    };
+    std::unique_ptr<CatalogScanState> st(new (std::nothrow) CatalogScanState());
+    if (!st) return false;
 
-    FsFile catFile{};
-    {
-        SdLockGuard guard(pdMS_TO_TICKS(300));
-        if (!guard || !sd.exists(catalogPath)) return false;
-        catFile = sd.open(catalogPath, FILE_OPEN_READ);
-        if (!catFile) return false;
-    }
-
-    char normGame[128] = "";
-    char normTitle[128] = "";
     if (!job.isSystem) {
-        normalizeMarqueeKey(job.query, normGame, sizeof(normGame));
-        if (job.title[0] != '\0') {
-            normalizeMarqueeKey(job.title, normTitle, sizeof(normTitle));
-        }
+        engines::PixelcadeArtResolver::buildQueryPlan(job.query, job.title, st->plan);
     }
 
-    char lineBuf[192];
-    size_t lineLen = 0U;
-    bool lineOverflow = false;
-    int bestScore = 0;
-    bool cancelled = false;
-
-    auto evaluateLine = [&](const char* line) {
-        if (!line || line[0] == '\0' || line[0] == '#') return;
+    auto evaluateLine = [&](const char* line, size_t len) -> bool {
+        if (!line || len < 5U || line[0] == '#') return false;
         int sc = 0;
         if (job.isSystem && sysVariants) {
             sc = engines::PixelcadeArtResolver::scoreSystemCatalogEntry(line, *sysVariants);
         } else {
-            sc = scoreCatalogEntry(line, job.query, job.title, normGame, normTitle);
+            sc = engines::PixelcadeArtResolver::scoreCatalogEntryWithPlan(line, st->plan);
         }
-        if (sc > bestScore) {
-            bestScore = sc;
-            copySafeCStr(outMatchedFilename, outCap, line);
+        if (sc <= 0) return false;
+
+        const bool isPng = (strcasecmp(line + len - 4U, ".png") == 0);
+        if (isPng) {
+            if (sc > st->bestPngScore) {
+                st->bestPngScore = sc;
+                copySafeCStr(st->bestPngFile, sizeof(st->bestPngFile), line);
+            }
+        } else {
+            if (sc > st->bestGifScore) {
+                st->bestGifScore = sc;
+                copySafeCStr(st->bestGifFile, sizeof(st->bestGifFile), line);
+            }
         }
+        // Fast-exit ONLY on top `.png` match (`>= 2002` for system variant #0 `.png`, `>= 1044` for exact `<rom>.png`)
+        // so `.gif` NEVER preempts `.png` on the very next alphabetical line!
+        return (st->bestPngScore >= 2002 || (!job.isSystem && st->bestPngScore >= 1044));
     };
 
-    while (true) {
-        if (m_workerStopRequested.load(std::memory_order_acquire) ||
-            m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) {
-            cancelled = true;
-            break;
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    bool cancelled = false;
+    bool scannedFromPsram = false;
+
+    if (hasPsram) {
+        if (!m_cachedCatalogPsram || m_cachedCatalogLen < 4U ||
+            strcmp(m_cachedCatalogPath, catalogPath) != 0) {
+            freeCatalogPsramCache();
+
+            FsFile catFile{};
+            size_t fileSize = 0U;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(300));
+                if (guard && sd.exists(catalogPath)) {
+                    catFile = sd.open(catalogPath, FILE_OPEN_READ);
+                    if (catFile) {
+                        fileSize = catFile.size();
+                    }
+                }
+            }
+            if (catFile) {
+                static constexpr size_t kMaxPsramCatalogBytes = 384U * 1024U;
+                static constexpr size_t kPsramLoadChunk = 16384U;
+                if (fileSize >= 4U && fileSize <= kMaxPsramCatalogBytes) {
+                    char* psBuf = static_cast<char*>(
+                        heap_caps_malloc(fileSize + 1U, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                    );
+                    if (psBuf) {
+                        size_t totalRead = 0U;
+                        while (totalRead < fileSize) {
+                            if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) {
+                                cancelled = true;
+                                break;
+                            }
+                            const size_t want = ((fileSize - totalRead) < kPsramLoadChunk)
+                                ? (fileSize - totalRead)
+                                : kPsramLoadChunk;
+                            int nRead = 0;
+                            {
+                                SdLockGuard guard(pdMS_TO_TICKS(300));
+                                if (!guard) {
+                                    cancelled = true;
+                                    break;
+                                }
+                                nRead = catFile.read(reinterpret_cast<uint8_t*>(psBuf + totalRead), want);
+                            }
+                            if (nRead <= 0) break;
+                            totalRead += static_cast<size_t>(nRead);
+                            esp_task_wdt_reset();
+                        }
+                        if (!cancelled && totalRead == fileSize) {
+                            psBuf[totalRead] = '\0';
+                            m_cachedCatalogPsram = psBuf;
+                            m_cachedCatalogLen = totalRead;
+                            copySafeCStr(m_cachedCatalogPath, sizeof(m_cachedCatalogPath), catalogPath);
+                        } else {
+                            free(psBuf);
+                        }
+                    }
+                }
+                (void)closeSdFileSafely(catFile, nullptr, false);
+            }
         }
 
-        int nRead = 0;
+        if (!cancelled && m_cachedCatalogPsram && m_cachedCatalogLen >= 4U &&
+            strcmp(m_cachedCatalogPath, catalogPath) == 0) {
+            scannedFromPsram = true;
+            const char* buf = m_cachedCatalogPsram;
+            const size_t total = m_cachedCatalogLen;
+            size_t lineStart = 0U;
+            uint32_t linesChecked = 0U;
+
+            for (size_t pos = 0U; pos <= total; ++pos) {
+                const bool atEnd = (pos == total);
+                const char c = atEnd ? '\n' : buf[pos];
+                if (c == '\n') {
+                    size_t len = pos - lineStart;
+                    if (len > 0U && buf[lineStart + len - 1U] == '\r') {
+                        --len;
+                    }
+                    if (len > 0U && len + 1U < sizeof(st->lineBuf)) {
+                        memcpy(st->lineBuf, buf + lineStart, len);
+                        st->lineBuf[len] = '\0';
+                        if (evaluateLine(st->lineBuf, len)) {
+                            break;
+                        }
+                    }
+                    lineStart = pos + 1U;
+                    if ((++linesChecked & 511U) == 0U) {
+                        esp_task_wdt_reset();
+                        if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                            m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) {
+                            cancelled = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            esp_task_wdt_reset();
+        }
+    }
+
+    if (!cancelled && !scannedFromPsram) {
+        static constexpr size_t kScanChunkBytes = 2048U;
+        std::unique_ptr<uint8_t[]> chunk(new (std::nothrow) uint8_t[kScanChunkBytes]);
+        if (!chunk) return false;
+
+        FsFile catFile{};
         {
             SdLockGuard guard(pdMS_TO_TICKS(300));
-            if (!guard) {
+            if (!guard || !sd.exists(catalogPath)) return false;
+            catFile = sd.open(catalogPath, FILE_OPEN_READ);
+            if (!catFile) return false;
+        }
+
+        size_t lineLen = 0U;
+        bool lineOverflow = false;
+        while (true) {
+            if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) {
                 cancelled = true;
                 break;
             }
-            nRead = catFile.read(chunk.get(), kScanChunkBytes);
-        }
-        if (nRead <= 0) break;
 
-        for (int i = 0; i < nRead; ++i) {
-            char c = static_cast<char>(chunk[static_cast<size_t>(i)]);
-            if (c == '\r') continue;
-            if (c == '\n') {
-                if (!lineOverflow && lineLen > 0U) {
-                    lineBuf[lineLen] = '\0';
-                    evaluateLine(lineBuf);
-                    // Exact match fast-exit (`>= 1024` for games or top variant `.png` for systems)
-                    if (bestScore >= 1998 || (!job.isSystem && bestScore >= 1028)) {
-                        nRead = 0;
-                        break;
+            int nRead = 0;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(300));
+                if (!guard) {
+                    cancelled = true;
+                    break;
+                }
+                nRead = catFile.read(chunk.get(), kScanChunkBytes);
+            }
+            if (nRead <= 0) break;
+
+            for (int i = 0; i < nRead; ++i) {
+                char c = static_cast<char>(chunk[static_cast<size_t>(i)]);
+                if (c == '\r') continue;
+                if (c == '\n') {
+                    if (!lineOverflow && lineLen > 0U) {
+                        st->lineBuf[lineLen] = '\0';
+                        if (evaluateLine(st->lineBuf, lineLen)) {
+                            nRead = 0;
+                            break;
+                        }
+                    }
+                    lineLen = 0U;
+                    lineOverflow = false;
+                } else if (!lineOverflow) {
+                    if (lineLen + 1U < sizeof(st->lineBuf)) {
+                        st->lineBuf[lineLen++] = c;
+                    } else {
+                        lineOverflow = true;
                     }
                 }
-                lineLen = 0U;
-                lineOverflow = false;
-            } else if (!lineOverflow) {
-                if (lineLen + 1U < sizeof(lineBuf)) {
-                    lineBuf[lineLen++] = c;
-                } else {
-                    lineOverflow = true;
-                }
             }
+            esp_task_wdt_reset();
+            if (nRead == 0) break;
         }
-        esp_task_wdt_reset();
-        if (nRead == 0) break;
+
+        if (!cancelled && !lineOverflow && lineLen > 0U) {
+            st->lineBuf[lineLen] = '\0';
+            (void)evaluateLine(st->lineBuf, lineLen);
+        }
+
+        (void)closeSdFileSafely(catFile, nullptr, false);
     }
 
-    if (!cancelled && !lineOverflow && lineLen > 0U) {
-        lineBuf[lineLen] = '\0';
-        evaluateLine(lineBuf);
-    }
-
-    (void)closeSdFileSafely(catFile, nullptr, false);
-
-    if (cancelled || bestScore <= 0 || outMatchedFilename[0] == '\0') {
+    if (cancelled || (st->bestPngScore <= 0 && st->bestGifScore <= 0)) {
         outMatchedFilename[0] = '\0';
         return false;
     }
-    return true;
+
+    if (st->bestPngScore >= st->bestGifScore && st->bestPngScore > 0) {
+        copySafeCStr(outMatchedFilename, outCap, st->bestPngFile);
+        if (outFallbackFilename && fallbackCap > 0U && st->bestGifScore > 0) {
+            copySafeCStr(outFallbackFilename, fallbackCap, st->bestGifFile);
+        }
+    } else {
+        copySafeCStr(outMatchedFilename, outCap, st->bestGifFile);
+        if (outFallbackFilename && fallbackCap > 0U && st->bestPngScore > 0) {
+            copySafeCStr(outFallbackFilename, fallbackCap, st->bestPngFile);
+        }
+    }
+    return outMatchedFilename[0] != '\0';
 #else
     (void)catalogPath;
     (void)job;
     (void)sysVariants;
+    (void)outFallbackFilename;
+    (void)fallbackCap;
     return false;
 #endif
 }
@@ -3409,10 +3583,12 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     std::unique_ptr<net::SecureHttpSession>& session,
     char* outSavedPath,
     size_t outCap,
-    bool* outDefinitive404
+    bool* outDefinitive404,
+    bool* outPermanentSkip
 ) {
     if (outSavedPath && outCap > 0U) outSavedPath[0] = '\0';
     if (outDefinitive404) *outDefinitive404 = false;
+    if (outPermanentSkip) *outPermanentSkip = false;
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!hardwareHAL.capabilities().hasPsram) {
         return false;
@@ -3482,8 +3658,9 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
         return false;
     }
     if (!resp.ok()) {
-        if (outDefinitive404 && resp.statusCode() == 404) {
-            *outDefinitive404 = true;
+        if (resp.statusCode() == 404) {
+            if (outDefinitive404) *outDefinitive404 = true;
+            if (outPermanentSkip) *outPermanentSkip = true;
         }
         return false;
     }
@@ -3494,6 +3671,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     if (expectedLen > maxArtBytes) {
         LOGW("RetroFrontend", "Skipping oversized marquee (%u B > %u B): %s",
              static_cast<unsigned>(expectedLen), static_cast<unsigned>(maxArtBytes), remoteFilename);
+        if (outPermanentSkip) *outPermanentSkip = true;
         session->abort();
         session.reset();
         return false;
@@ -3533,6 +3711,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     size_t totalWritten = 0U;
     uint32_t lastReadMs = millis();
     bool failed = false;
+    bool permanentReject = false;
     bool aborted = false;
 
     auto validateImageHeader = [&](const uint8_t* h, size_t n) -> bool {
@@ -3578,6 +3757,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
             if (nRead > 0U) {
                 if ((totalWritten + nRead) > maxArtBytes) {
                     failed = true;
+                    permanentReject = true;
                     break;
                 }
                 if (!hdrValidated) {
@@ -3593,6 +3773,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
                         if (!validateImageHeader(hdrBuf, hdrCollected)) {
                             LOGW("RetroFrontend", "Rejected invalid/oversized image header in %s", remoteFilename);
                             failed = true;
+                            permanentReject = true;
                             break;
                         }
                         hdrValidated = true;
@@ -3623,7 +3804,13 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
 
     if (!hdrValidated && !aborted && !failed) {
         hdrValidated = validateImageHeader(hdrBuf, hdrCollected);
-        if (!hdrValidated) failed = true;
+        if (!hdrValidated) {
+            failed = true;
+            permanentReject = true;
+        }
+    }
+    if (permanentReject && outPermanentSkip) {
+        *outPermanentSkip = true;
     }
 
     if (aborted || failed) {
@@ -3669,6 +3856,7 @@ bool FrontendSyncEngine::downloadExactPixelcadeFile(
     (void)localStem;
     (void)reqId;
     (void)session;
+    (void)outPermanentSkip;
     return false;
 #endif
 }

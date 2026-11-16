@@ -4467,7 +4467,41 @@ void test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings(void) {
     TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("auto-lastplayed.png", lastPlayedVars) > 1900);
 
     auto arcadeVars = PixelcadeArtResolver::getSystemNameVariants("arcade");
-    TEST_ASSERT_TRUE(PixelcadeArtResolver::scoreSystemCatalogEntry("mame.png", arcadeVars) > 1900);
+    int dashArcadeScore = PixelcadeArtResolver::scoreSystemCatalogEntry("- Arcade.png", arcadeVars);
+    int mameFallbackScore = PixelcadeArtResolver::scoreSystemCatalogEntry("mame.png", arcadeVars);
+    TEST_ASSERT_TRUE(dashArcadeScore >= 2002);
+    TEST_ASSERT_TRUE(mameFallbackScore > 1900);
+    TEST_ASSERT_TRUE(dashArcadeScore > mameFallbackScore);
+
+    // 7. PNG preference over GIF + precomputed PixelcadeQueryPlan bitmask equivalence
+    engines::PixelcadeQueryPlan outrunPlan;
+    PixelcadeArtResolver::buildQueryPlan("outrun", "Out Run", outrunPlan);
+    int outrunGifScore = PixelcadeArtResolver::scoreCatalogEntryWithPlan("outrun.gif", outrunPlan);
+    int outrunPngScore = PixelcadeArtResolver::scoreCatalogEntryWithPlan("outrun.png", outrunPlan);
+    TEST_ASSERT_EQUAL_INT(1028, outrunGifScore);
+    TEST_ASSERT_EQUAL_INT(1044, outrunPngScore);
+    TEST_ASSERT_TRUE(outrunPngScore > outrunGifScore);
+    TEST_ASSERT_EQUAL_INT(0, PixelcadeArtResolver::scoreCatalogEntryWithPlan("pacman.png", outrunPlan));
+
+    const struct {
+        const char* candidate;
+        const char* rawGame;
+        const char* rawTitle;
+    } planCases[] = {
+        {"osman.png", "osman", "Osman (World)"},
+        {"Legend of Zelda, The - A Link to the Past.png", "The Legend of Zelda - A Link to the Past (France)", ""},
+        {"0168 - Mario Kart DS (USA).png", "Mario Kart DS (Europe) (En,Fr,De,Es,It)", "Mario Kart DS"},
+        {"Asterix and the Secret Mission (Europe).png", "Asterix and the Secret Mission (Europe, Brazil) (En,Fr,De)", "Ast\xC3\xA9rix and the Secret Mission"},
+        {"1943 - The Battle of Midway (USA).png", "1943 (Europe)", ""},
+        {"Street Fighter II.png", "outrun", "Out Run"},
+    };
+    for (const auto& tc : planCases) {
+        engines::PixelcadeQueryPlan plan;
+        PixelcadeArtResolver::buildQueryPlan(tc.rawGame, tc.rawTitle, plan);
+        int expectedScore = PixelcadeArtResolver::scoreCatalogEntry(tc.candidate, tc.rawGame, tc.rawTitle);
+        int plannedScore = PixelcadeArtResolver::scoreCatalogEntryWithPlan(tc.candidate, plan);
+        TEST_ASSERT_EQUAL_INT(expectedScore, plannedScore);
+    }
 
     // Recalbox / Batocera arcade manufacturer & sub-board wheel variants against real Pixelcade console.txt filenames
     auto technosVars = PixelcadeArtResolver::getSystemNameVariants("technos");
@@ -4501,7 +4535,9 @@ void test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings(void) {
 
     TEST_ASSERT_EQUAL_STRING(
         "A%2BM%2BO%2BK%20%28USA%29.png",
-        PixelcadeArtResolver::urlEncodeSegment("A+M+O+K (USA).png").c_str()
+        PixelcadeArtResolver::urlEncodeSegment("A+M+O%2BK (USA).png") == "A%2BM%2BO%252BK%20%28USA%29.png"
+            ? PixelcadeArtResolver::urlEncodeSegment("A+M+O+K (USA).png").c_str()
+            : ""
     );
     TEST_ASSERT_EQUAL_STRING(
         "100%25%20Dynamite%21%20%5B%21%5D.png",
