@@ -14,6 +14,7 @@
 #include "../core/net/DmdzStreamClient.h"
 #include "../core/net/RawMqttSocket.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/net/SecureHttpSession.h"
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
 #include <esp_task_wdt.h>
@@ -1041,7 +1042,7 @@ void FrontendSyncEngine::ensureShowcaseWorkerRunning() {
         return;
     }
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
-    const uint32_t stackBytes = hasPsram ? 6144U : 5120U;
+    const uint32_t stackBytes = hasPsram ? 8192U : 6144U;
     m_workerStopRequested.store(false, std::memory_order_release);
     m_workerExited.store(false, std::memory_order_release);
     if (xTaskCreatePinnedToCore(showcaseWorkerTaskFunc, "SyncShowcaseWkr", stackBytes, this, 2, &m_showcaseWorkerHandle, 0) != pdPASS) {
@@ -1068,6 +1069,12 @@ void FrontendSyncEngine::begin() {
     lastReconnectAttempt = 0;
     m_lastBrokerCacheCheckMs = 0;
     m_beginMs = millis();
+
+    m_activeArtReqId.store(0U, std::memory_order_release);
+    m_artResultPending.store(false, std::memory_order_release);
+    m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
+    m_artJobSlot = ArtDownloadJobSlot{};
+    m_artJobSeq.fetch_add(1U, std::memory_order_release);
 
     {
         ConfigSnapshotGuard guard = config.acquireSnapshot();
@@ -1152,9 +1159,16 @@ void FrontendSyncEngine::stop() {
     m_activeMarqueePath[0] = '\0';
     m_wasShowingInGame = false;
 
+    m_activeArtReqId.store(0U, std::memory_order_release);
+    m_artResultPending.store(false, std::memory_order_release);
+    m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
+    m_artJobSlot = ArtDownloadJobSlot{};
+    m_artJobSeq.fetch_add(1U, std::memory_order_release);
+
 #if defined(ESP32) && !defined(UNIT_TEST)
     m_workerStopRequested.store(true, std::memory_order_release);
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_INGAME_SYNC);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_ARTWORK);
     if (m_showcaseWorkerHandle || !m_workerExited.load(std::memory_order_acquire)) {
         for (int i = 0; i < 200 && !m_workerExited.load(std::memory_order_acquire); ++i) {
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -1188,6 +1202,33 @@ bool FrontendSyncEngine::loop() {
             if (message) message->deactivate();
         }
         return true;
+    }
+
+    // Consume any completed Core 0 Pixelcade artwork download result (100% lock-free seqlock)
+    if (m_artResultPending.exchange(false, std::memory_order_acq_rel)) {
+        ArtDownloadResultSlot res{};
+        bool validRead = false;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            uint32_t s1 = m_artResultSeq.load(std::memory_order_acquire);
+            if ((s1 & 1U) != 0U) continue;
+            ArtDownloadResultSlot tmp = m_artResultSlot;
+            uint32_t s2 = m_artResultSeq.load(std::memory_order_acquire);
+            if (s1 == s2) {
+                res = tmp;
+                validRead = true;
+                break;
+            }
+        }
+        if (validRead) {
+            if (res.missingHash != 0U) {
+                recordMissingArtHash(res.missingHash);
+            }
+            if (res.downloaded && res.savedPath[0] != '\0' &&
+                res.reqId == currentRequestId && isGamePlaying) {
+                LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", res.savedPath);
+                (void)tryPlayMarqueePath(res.savedPath);
+            }
+        }
     }
 
     // Check lock-free broker resolution state from Core 0 worker
@@ -1317,11 +1358,11 @@ bool FrontendSyncEngine::loop() {
     }
 
     if (hasPendingEvent) {
-        // Debounce browsing events by 150ms of quiet time so rapid navigation doesn't hammer SD card or broker.
-        // Non-browsing events (gameStart, gameStop, playing, stopped) are processed immediately.
+        // Snappy 40 ms debounce for rapid browsing; immediate (0 ms) on first event or gameStart/gameStop/playing/stopped.
         bool isBrowsing = (pendingPayload.indexOf("\"status\":\"browsing\"") != -1 ||
                            pendingPayload.indexOf("\"status\": \"browsing\"") != -1);
-        if (!isBrowsing || (millis() - pendingEventTime >= 150)) {
+        const unsigned long debounceMs = (!hasReceivedAnyEvent || !isBrowsing) ? 0UL : 40UL;
+        if ((millis() - pendingEventTime) >= debounceMs) {
             hasPendingEvent = false;
             uint32_t reqId = currentRequestId;
             handleGameEvent(pendingPayload, reqId);
@@ -1385,6 +1426,11 @@ void FrontendSyncEngine::handleMessage(String topic, String msg) {
         hasPendingEvent = true;
         pendingEventTime = millis();
         currentRequestId++;
+        if (currentRequestId == 0U) {
+            currentRequestId = 1U;
+        }
+        // Lock-free cancellation of any stale Core 0 artwork download immediately when user scrolls
+        m_activeArtReqId.store(currentRequestId, std::memory_order_release);
         return;
     }
 
@@ -1656,13 +1702,18 @@ void FrontendSyncEngine::showcaseWorkerTaskFunc(void* param) {
 void FrontendSyncEngine::showcaseWorkerLoop() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     static constexpr uint32_t INGAME_QUEUE_READY_TIMEOUT_MS = 120000U;
+    static constexpr uint32_t PIXELCADE_SESSION_IDLE_MS = 15000U;
     uint32_t lastHealthProbeMs = 0;
     uint32_t lastCheckedCfgGen = 0;
     uint8_t consecutiveHealthFailures = 0;
     bool currentShowcaseOnline = false;
     uint32_t lastProcessedJobToken = 0;
     uint32_t lastPurgedAtToken = 0;
+    uint32_t lastProcessedArtReqId = 0;
+    uint32_t lastArtActivityMs = 0;
     bool remoteSyncDirtyOnWorker = false;
+
+    std::unique_ptr<net::SecureHttpSession> pixelcadeSession;
 
     char activeQueueServerUrl[112] = "";
     char activeQueueClientId[48] = "";
@@ -1705,14 +1756,39 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
         out = m_jobSlot;
     };
 
+    auto readArtJobSlot = [&](ArtDownloadJobSlot& out) {
+        for (int i = 0; i < 4; ++i) {
+            uint32_t s1 = m_artJobSeq.load(std::memory_order_acquire);
+            if ((s1 & 1U) != 0U) continue;
+            ArtDownloadJobSlot tmp = m_artJobSlot;
+            uint32_t s2 = m_artJobSeq.load(std::memory_order_acquire);
+            if (s1 == s2) {
+                out = tmp;
+                return;
+            }
+        }
+        out = m_artJobSlot;
+    };
+
     while (!m_workerStopRequested.load(std::memory_order_acquire)) {
         WorkerConfigSlot wcfg;
         readWorkerCfg(wcfg);
         uint32_t curCfgGen = m_cfgGen.load(std::memory_order_acquire);
 
-        // 1. Periodic / config-triggered Showcase MQTT broker discovery
         uint32_t nowMs = millis();
         bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+        // Release idle keep-alive TLS socket on WebUI request, non-PSRAM, or after 15s idle
+        if (pixelcadeSession) {
+            if (!hasPsram ||
+                WebUiSyncEngine::isRequested() ||
+                WebUiSyncEngine::isReadyForServing() ||
+                (lastArtActivityMs > 0U && (nowMs - lastArtActivityMs) >= PIXELCADE_SESSION_IDLE_MS)) {
+                pixelcadeSession.reset();
+            }
+        }
+
+        // 1. Periodic / config-triggered Showcase MQTT broker discovery
         bool needProbe = (curCfgGen != lastCheckedCfgGen) ||
                          (lastHealthProbeMs == 0) ||
                          ((nowMs - lastHealthProbeMs) >= (currentShowcaseOnline ? (hasPsram ? 12000U : 30000U) : 5000U));
@@ -1808,267 +1884,293 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
             }
         }
 
-        // 2. Check for pending In-Game Showcase launch or cancellation
+        // 2. Process pending Pixelcade marquee/system artwork download BEFORE In-Game Showcase
+        //    so game launch first resolves and caches the marquee cleanly, then starts Showcase stream!
+        {
+            ArtDownloadJobSlot artJob;
+            readArtJobSlot(artJob);
+            if (artJob.active && artJob.reqId != 0U && artJob.reqId != lastProcessedArtReqId) {
+                lastProcessedArtReqId = artJob.reqId;
+                if (artJob.reqId == m_activeArtReqId.load(std::memory_order_acquire) &&
+                    !m_workerStopRequested.load(std::memory_order_acquire)) {
+                    processWorkerArtJob(artJob, pixelcadeSession, lastArtActivityMs);
+                }
+                if (!hasPsram) {
+                    pixelcadeSession.reset();
+                }
+                // Re-check immediately if user scrolled to another game while this download ran
+                continue;
+            }
+        }
+
+        // 3. Check for pending In-Game Showcase launch or cancellation
         InGameJobSlot job;
         readJobSlot(job);
         if (job.token != lastProcessedJobToken) {
+            // Guarantee zero mbedTLS DRAM overlap with In-Game Showcase video/card streaming!
+            pixelcadeSession.reset();
             cleanupActiveQueue();
             freeStreamBuffersSafely();
             lastProcessedJobToken = job.token;
 
-                uint16_t targetW = m_inGameEngine ? m_inGameEngine->surfaceWidth() : wcfg.panelW;
-                uint16_t targetH = m_inGameEngine ? m_inGameEngine->surfaceHeight() : wcfg.panelH;
-                if (targetW < 32) targetW = 128;
-                if (targetH < 16) targetH = 32;
+            uint16_t targetW = m_inGameEngine ? m_inGameEngine->surfaceWidth() : wcfg.panelW;
+            uint16_t targetH = m_inGameEngine ? m_inGameEngine->surfaceHeight() : wcfg.panelH;
+            if (targetW < 32) targetW = 128;
+            if (targetH < 16) targetH = 32;
 
-                char baseServerUrl[112] = "";
-                char resolvedShowcaseHost[96] = "";
-                char syncClientId[48] = "";
-                const bool targetResolved =
-                    wcfg.mqttEnabled && wcfg.showcaseEnabled &&
-                    WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8 &&
-                    resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost));
-                if (targetResolved) {
-                    net::ShowcaseDiscovery::formatClientId("games", targetW, targetH, true, syncClientId, sizeof(syncClientId));
-                }
+            char baseServerUrl[112] = "";
+            char resolvedShowcaseHost[96] = "";
+            char syncClientId[48] = "";
+            const bool targetResolved =
+                wcfg.mqttEnabled && wcfg.showcaseEnabled &&
+                WiFi.status() == WL_CONNECTED && strlen(wcfg.showcaseUrl) >= 8 &&
+                resolveBaseServerUrl(wcfg.showcaseUrl, baseServerUrl, sizeof(baseServerUrl), resolvedShowcaseHost, sizeof(resolvedShowcaseHost));
+            if (targetResolved) {
+                net::ShowcaseDiscovery::formatClientId("games", targetW, targetH, true, syncClientId, sizeof(syncClientId));
+            }
 
-                if (!job.active && job.cancelRemote && job.token != lastPurgedAtToken && targetResolved) {
-                    deleteAllShowcaseQueueHttp(baseServerUrl, syncClientId);
-                    lastPurgedAtToken = job.token;
-                }
+            if (!job.active && job.cancelRemote && job.token != lastPurgedAtToken && targetResolved) {
+                deleteAllShowcaseQueueHttp(baseServerUrl, syncClientId);
+                lastPurgedAtToken = job.token;
+            }
 
-                if (job.active && wcfg.ingameShowcaseEnabled && job.game[0] != '\0' && targetResolved) {
-                    // Arm active queue target BEFORE POST so a quick (<100ms) game exit still purges the sync slot
-                    copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
-                    copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
-                    activeQueueId[0] = '\0';
-                    remoteSyncDirtyOnWorker = true;
+            if (job.active && wcfg.ingameShowcaseEnabled && job.game[0] != '\0' && targetResolved) {
+                // Arm active queue target BEFORE POST so a quick (<100ms) game exit still purges the sync slot
+                copySafeCStr(activeQueueServerUrl, sizeof(activeQueueServerUrl), baseServerUrl);
+                copySafeCStr(activeQueueClientId, sizeof(activeQueueClientId), syncClientId);
+                activeQueueId[0] = '\0';
+                remoteSyncDirtyOnWorker = true;
 
-                    MqttConfig reqMqttCfg;
-                    reqMqttCfg.card_style_source = wcfg.cardStyleSource;
-                    reqMqttCfg.include_card_intro = wcfg.includeCardIntro;
-                    reqMqttCfg.card_layout = wcfg.cardLayout;
-                    reqMqttCfg.card_theme = wcfg.cardTheme;
-                    reqMqttCfg.show_poster = wcfg.showPoster;
-                    reqMqttCfg.show_synopsis = wcfg.showSynopsis;
-                    reqMqttCfg.text_scroll_speed = wcfg.textScrollSpeed;
-                    reqMqttCfg.jacket_panorama = wcfg.jacketPanorama;
-                    reqMqttCfg.marquee_panorama = wcfg.marqueePanorama;
-                    reqMqttCfg.snapshot_panorama_count = wcfg.snapshotPanoramaCount;
-                    reqMqttCfg.show_video = wcfg.showVideo;
-                    reqMqttCfg.video_max_duration_s = wcfg.videoMaxDurationS;
-                    reqMqttCfg.video_fps = wcfg.videoFps;
-                    reqMqttCfg.video_mode = wcfg.videoMode;
-                    reqMqttCfg.color_boost = wcfg.colorBoost;
+                MqttConfig reqMqttCfg;
+                reqMqttCfg.card_style_source = wcfg.cardStyleSource;
+                reqMqttCfg.include_card_intro = wcfg.includeCardIntro;
+                reqMqttCfg.card_layout = wcfg.cardLayout;
+                reqMqttCfg.card_theme = wcfg.cardTheme;
+                reqMqttCfg.show_poster = wcfg.showPoster;
+                reqMqttCfg.show_synopsis = wcfg.showSynopsis;
+                reqMqttCfg.text_scroll_speed = wcfg.textScrollSpeed;
+                reqMqttCfg.jacket_panorama = wcfg.jacketPanorama;
+                reqMqttCfg.marquee_panorama = wcfg.marqueePanorama;
+                reqMqttCfg.snapshot_panorama_count = wcfg.snapshotPanoramaCount;
+                reqMqttCfg.show_video = wcfg.showVideo;
+                reqMqttCfg.video_max_duration_s = wcfg.videoMaxDurationS;
+                reqMqttCfg.video_fps = wcfg.videoFps;
+                reqMqttCfg.video_mode = wcfg.videoMode;
+                reqMqttCfg.color_boost = wcfg.colorBoost;
 
-                    String postBody = buildShowcaseQueueRequestJson(
-                        reqMqttCfg,
-                        String(job.system),
-                        String(job.game),
-                        targetW,
-                        targetH,
-                        String(wcfg.lang),
-                        String(job.title)
-                    );
+                String postBody = buildShowcaseQueueRequestJson(
+                    reqMqttCfg,
+                    String(job.system),
+                    String(job.game),
+                    targetW,
+                    targetH,
+                    String(wcfg.lang),
+                    String(job.title)
+                );
 
-                    net::SecureHttpOptions qOpts;
-                    qOpts.ownerId = net::OWNER_INGAME_SYNC;
-                    qOpts.requestTimeoutMs = 3500;
-                    qOpts.keepAlive = false;
+                net::SecureHttpOptions qOpts;
+                qOpts.ownerId = net::OWNER_INGAME_SYNC;
+                qOpts.requestTimeoutMs = 3500;
+                qOpts.keepAlive = false;
 
-                    char endpointUrl[192];
-                    snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue/async", baseServerUrl, syncClientId);
+                char endpointUrl[192];
+                snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue/async", baseServerUrl, syncClientId);
 
-                    char readyItemId[80] = "";
-                    bool enqueuedOk = false;
-                    int postHttpStatus = 0;
-                    {
-                        auto qResp = net::SecureHttpClient::post(endpointUrl, "application/json", postBody, qOpts);
-                        postHttpStatus = qResp.statusCode();
-                        if (qResp.ok()) {
-                            StaticJsonDocument<192> qFilter;
-                            qFilter["queue_id"] = true;
-                            qFilter["status"] = true;
-                            qFilter["item_id"] = true;
-                            qFilter["item"]["queue_id"] = true;
-                            qFilter["item"]["status"] = true;
-                            qFilter["item"]["item_id"] = true;
+                char readyItemId[80] = "";
+                bool enqueuedOk = false;
+                int postHttpStatus = 0;
+                {
+                    auto qResp = net::SecureHttpClient::post(endpointUrl, "application/json", postBody, qOpts);
+                    postHttpStatus = qResp.statusCode();
+                    if (qResp.ok()) {
+                        StaticJsonDocument<192> qFilter;
+                        qFilter["queue_id"] = true;
+                        qFilter["status"] = true;
+                        qFilter["item_id"] = true;
+                        qFilter["item"]["queue_id"] = true;
+                        qFilter["item"]["status"] = true;
+                        qFilter["item"]["item_id"] = true;
 
-                            StaticJsonDocument<384> qDoc;
-                            if (deserializeJson(qDoc, qResp.stream(), DeserializationOption::Filter(qFilter)) == DeserializationError::Ok) {
-                                JsonVariantConst itemVar = qDoc.containsKey("item")
-                                    ? qDoc["item"].as<JsonVariantConst>()
-                                    : qDoc.as<JsonVariantConst>();
-                                const char* qId = itemVar["queue_id"] | "";
-                                const char* qStatus = itemVar["status"] | "";
-                                const char* qItemId = itemVar["item_id"] | "";
+                        StaticJsonDocument<384> qDoc;
+                        if (deserializeJson(qDoc, qResp.stream(), DeserializationOption::Filter(qFilter)) == DeserializationError::Ok) {
+                            JsonVariantConst itemVar = qDoc.containsKey("item")
+                                ? qDoc["item"].as<JsonVariantConst>()
+                                : qDoc.as<JsonVariantConst>();
+                            const char* qId = itemVar["queue_id"] | "";
+                            const char* qStatus = itemVar["status"] | "";
+                            const char* qItemId = itemVar["item_id"] | "";
 
-                                if (qId[0] != '\0') {
-                                    copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
-                                    if ((strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0) && qItemId[0] != '\0') {
-                                        copySafeCStr(readyItemId, sizeof(readyItemId), qItemId);
-                                    }
-                                    enqueuedOk = true;
+                            if (qId[0] != '\0') {
+                                copySafeCStr(activeQueueId, sizeof(activeQueueId), qId);
+                                if ((strcmp(qStatus, "ready") == 0 || strcmp(qStatus, "playing") == 0) && qItemId[0] != '\0') {
+                                    copySafeCStr(readyItemId, sizeof(readyItemId), qItemId);
                                 }
+                                enqueuedOk = true;
                             }
                         }
                     }
+                }
 
-                    if (!enqueuedOk) {
-                        LOGW("RetroFrontend", "Failed to enqueue In-Game Showcase for '%s' (%s): HTTP %d; keeping marquee.", job.game, job.system, postHttpStatus);
-                        if (postHttpStatus >= 400) {
-                            remoteSyncDirtyOnWorker = false;
-                        } else {
-                            cleanupActiveQueue();
-                        }
+                if (!enqueuedOk) {
+                    LOGW("RetroFrontend", "Failed to enqueue In-Game Showcase for '%s' (%s): HTTP %d; keeping marquee.", job.game, job.system, postHttpStatus);
+                    if (postHttpStatus >= 400) {
+                        remoteSyncDirtyOnWorker = false;
                     } else {
-                        if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
-                            m_workerStopRequested.load(std::memory_order_acquire)) {
-                            cleanupActiveQueue();
-                        } else {
-                            // Wait for async preparation while marquee stays undisturbed on the DMD
-                            uint32_t waitStartMs = millis();
-                            bool endedWithoutStreamableItem = false;
-                            snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue", baseServerUrl, syncClientId);
-                            while (readyItemId[0] == '\0' &&
-                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
-                                   m_playSessionToken.load(std::memory_order_acquire) == job.token &&
-                                   (millis() - waitStartMs) < INGAME_QUEUE_READY_TIMEOUT_MS) {
-                                for (int w = 0; w < 15; ++w) {
-                                    if (m_workerStopRequested.load(std::memory_order_acquire) ||
-                                        m_playSessionToken.load(std::memory_order_acquire) != job.token ||
-                                        m_readyWakeupHint.exchange(false, std::memory_order_acq_rel)) {
-                                        break;
-                                    }
-                                    vTaskDelay(pdMS_TO_TICKS(50));
-                                }
+                        cleanupActiveQueue();
+                    }
+                } else {
+                    if (m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                        m_workerStopRequested.load(std::memory_order_acquire)) {
+                        cleanupActiveQueue();
+                    } else {
+                        // Wait for async preparation while marquee stays undisturbed on the DMD
+                        uint32_t waitStartMs = millis();
+                        bool endedWithoutStreamableItem = false;
+                        snprintf(endpointUrl, sizeof(endpointUrl), "%s/api/v1/clients/%s/queue", baseServerUrl, syncClientId);
+                        while (readyItemId[0] == '\0' &&
+                               !m_workerStopRequested.load(std::memory_order_acquire) &&
+                               m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                               (millis() - waitStartMs) < INGAME_QUEUE_READY_TIMEOUT_MS) {
+                            for (int w = 0; w < 15; ++w) {
                                 if (m_workerStopRequested.load(std::memory_order_acquire) ||
-                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                    m_playSessionToken.load(std::memory_order_acquire) != job.token ||
+                                    m_readyWakeupHint.exchange(false, std::memory_order_acq_rel)) {
                                     break;
                                 }
+                                vTaskDelay(pdMS_TO_TICKS(50));
+                            }
+                            if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                                m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                break;
+                            }
 
-                                bool keepPolling = true;
-                                {
-                                    auto pResp = net::SecureHttpClient::get(endpointUrl, qOpts);
-                                    if (pResp.ok()) {
-                                        StaticJsonDocument<128> pFilter;
-                                        pFilter["items"][0]["queue_id"] = true;
-                                        pFilter["items"][0]["status"] = true;
-                                        pFilter["items"][0]["item_id"] = true;
+                            bool keepPolling = true;
+                            {
+                                auto pResp = net::SecureHttpClient::get(endpointUrl, qOpts);
+                                if (pResp.ok()) {
+                                    StaticJsonDocument<128> pFilter;
+                                    pFilter["items"][0]["queue_id"] = true;
+                                    pFilter["items"][0]["status"] = true;
+                                    pFilter["items"][0]["item_id"] = true;
 
-                                        StaticJsonDocument<768> pDoc;
-                                        if (deserializeJson(pDoc, pResp.stream(), DeserializationOption::Filter(pFilter)) == DeserializationError::Ok) {
-                                            JsonArrayConst itemsArr = pDoc["items"].as<JsonArrayConst>();
-                                            bool foundInQueue = false;
-                                            for (JsonObjectConst it : itemsArr) {
-                                                const char* itQid = it["queue_id"] | "";
-                                                if (strcmp(itQid, activeQueueId) == 0) {
-                                                    foundInQueue = true;
-                                                    const char* st = it["status"] | "";
-                                                    const char* iid = it["item_id"] | "";
-                                                    if ((strcmp(st, "ready") == 0 || strcmp(st, "playing") == 0) && iid[0] != '\0') {
-                                                        copySafeCStr(readyItemId, sizeof(readyItemId), iid);
-                                                    } else if (strcmp(st, "error") == 0) {
-                                                        foundInQueue = false;
-                                                    }
-                                                    break;
+                                    StaticJsonDocument<768> pDoc;
+                                    if (deserializeJson(pDoc, pResp.stream(), DeserializationOption::Filter(pFilter)) == DeserializationError::Ok) {
+                                        JsonArrayConst itemsArr = pDoc["items"].as<JsonArrayConst>();
+                                        bool foundInQueue = false;
+                                        for (JsonObjectConst it : itemsArr) {
+                                            const char* itQid = it["queue_id"] | "";
+                                            if (strcmp(itQid, activeQueueId) == 0) {
+                                                foundInQueue = true;
+                                                const char* st = it["status"] | "";
+                                                const char* iid = it["item_id"] | "";
+                                                if ((strcmp(st, "ready") == 0 || strcmp(st, "playing") == 0) && iid[0] != '\0') {
+                                                    copySafeCStr(readyItemId, sizeof(readyItemId), iid);
+                                                } else if (strcmp(st, "error") == 0) {
+                                                    foundInQueue = false;
                                                 }
+                                                break;
                                             }
-                                            if (!foundInQueue) {
-                                                keepPolling = false;
-                                                endedWithoutStreamableItem = true;
-                                            }
+                                        }
+                                        if (!foundInQueue) {
+                                            keepPolling = false;
+                                            endedWithoutStreamableItem = true;
                                         }
                                     }
                                 }
-                                if (!keepPolling) break;
                             }
-
-                            if (readyItemId[0] == '\0' &&
-                                !m_workerStopRequested.load(std::memory_order_acquire) &&
-                                m_playSessionToken.load(std::memory_order_acquire) == job.token) {
-                                if (endedWithoutStreamableItem) {
-                                    LOGW(
-                                        "RetroFrontend",
-                                        "In-Game Showcase preparation ended without streamable package for '%s' (%s); keeping marquee.",
-                                        job.game,
-                                        job.system
-                                    );
-                                } else {
-                                    LOGW(
-                                        "RetroFrontend",
-                                        "In-Game Showcase preparation timed out after %u s for '%s' (%s); aborting remote worker and keeping marquee.",
-                                        static_cast<unsigned>(INGAME_QUEUE_READY_TIMEOUT_MS / 1000U),
-                                        job.game,
-                                        job.system
-                                    );
-                                }
-                            }
-
-                            // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
-                            while (readyItemId[0] != '\0' &&
-                                   !m_workerStopRequested.load(std::memory_order_acquire) &&
-                                   m_playSessionToken.load(std::memory_order_acquire) == job.token) {
-                                uint32_t estStreamMs =
-                                    (wcfg.includeCardIntro ? 8000U : 0U) +
-                                    (wcfg.jacketPanorama ? 5000U : 0U) +
-                                    (wcfg.marqueePanorama ? 5000U : 0U) +
-                                    (static_cast<uint32_t>(wcfg.snapshotPanoramaCount) * 5000U) +
-                                    (wcfg.showVideo ? (static_cast<uint32_t>(wcfg.videoMaxDurationS) * 1000U) : 0U);
-                                if (estStreamMs < 12000U) estStreamMs = 12000U;
-
-                                bool playedOk = streamReadyItemOnce(
-                                    baseServerUrl,
-                                    syncClientId,
-                                    readyItemId,
-                                    job.token,
-                                    targetW,
-                                    targetH,
-                                    estStreamMs
-                                );
-                                if (!playedOk ||
-                                    m_workerStopRequested.load(std::memory_order_acquire) ||
-                                    m_playSessionToken.load(std::memory_order_acquire) != job.token) {
-                                    break;
-                                }
-
-                                readWorkerCfg(wcfg);
-                                if (strcasecmp(wcfg.cycleMode, "loop") == 0) {
-                                    continue;
-                                } else if (strcasecmp(wcfg.cycleMode, "alternating") == 0) {
-                                    // Yield display back to Pixelcade marquee (TransitionMode::RESUME) for marqueeIntervalSec
-                                    m_wantsInGameDisplay.store(false, std::memory_order_release);
-                                    uint32_t pauseMs = static_cast<uint32_t>(wcfg.marqueeIntervalSec) * 1000U;
-                                    uint32_t pauseT0 = millis();
-                                    while (!m_workerStopRequested.load(std::memory_order_acquire) &&
-                                           m_playSessionToken.load(std::memory_order_acquire) == job.token &&
-                                           (millis() - pauseT0) < pauseMs) {
-                                        vTaskDelay(pdMS_TO_TICKS(50));
-                                    }
-                                    continue;
-                                } else {
-                                    // `once`: release display back to marquee and clean up queue item
-                                    break;
-                                }
-                            }
-                            cleanupActiveQueue();
-                            freeStreamBuffersSafely();
+                            if (!keepPolling) break;
                         }
+
+                        if (readyItemId[0] == '\0' &&
+                            !m_workerStopRequested.load(std::memory_order_acquire) &&
+                            m_playSessionToken.load(std::memory_order_acquire) == job.token) {
+                            if (endedWithoutStreamableItem) {
+                                LOGW(
+                                    "RetroFrontend",
+                                    "In-Game Showcase preparation ended without streamable package for '%s' (%s); keeping marquee.",
+                                    job.game,
+                                    job.system
+                                );
+                            } else {
+                                LOGW(
+                                    "RetroFrontend",
+                                    "In-Game Showcase preparation timed out after %u s for '%s' (%s); aborting remote worker and keeping marquee.",
+                                    static_cast<unsigned>(INGAME_QUEUE_READY_TIMEOUT_MS / 1000U),
+                                    job.game,
+                                    job.system
+                                );
+                            }
+                        }
+
+                        // Stream ready item according to configured cycle mode (`once`, `loop`, `alternating`)
+                        while (readyItemId[0] != '\0' &&
+                               !m_workerStopRequested.load(std::memory_order_acquire) &&
+                               m_playSessionToken.load(std::memory_order_acquire) == job.token) {
+                            uint32_t estStreamMs =
+                                (wcfg.includeCardIntro ? 8000U : 0U) +
+                                (wcfg.jacketPanorama ? 5000U : 0U) +
+                                (wcfg.marqueePanorama ? 5000U : 0U) +
+                                (static_cast<uint32_t>(wcfg.snapshotPanoramaCount) * 5000U) +
+                                (wcfg.showVideo ? (static_cast<uint32_t>(wcfg.videoMaxDurationS) * 1000U) : 0U);
+                            if (estStreamMs < 12000U) estStreamMs = 12000U;
+
+                            bool playedOk = streamReadyItemOnce(
+                                baseServerUrl,
+                                syncClientId,
+                                readyItemId,
+                                job.token,
+                                targetW,
+                                targetH,
+                                estStreamMs
+                            );
+                            if (!playedOk ||
+                                m_workerStopRequested.load(std::memory_order_acquire) ||
+                                m_playSessionToken.load(std::memory_order_acquire) != job.token) {
+                                break;
+                            }
+
+                            readWorkerCfg(wcfg);
+                            if (strcasecmp(wcfg.cycleMode, "loop") == 0) {
+                                continue;
+                            } else if (strcasecmp(wcfg.cycleMode, "alternating") == 0) {
+                                // Yield display back to Pixelcade marquee (TransitionMode::RESUME) for marqueeIntervalSec
+                                m_wantsInGameDisplay.store(false, std::memory_order_release);
+                                uint32_t pauseMs = static_cast<uint32_t>(wcfg.marqueeIntervalSec) * 1000U;
+                                uint32_t pauseT0 = millis();
+                                while (!m_workerStopRequested.load(std::memory_order_acquire) &&
+                                       m_playSessionToken.load(std::memory_order_acquire) == job.token &&
+                                       (millis() - pauseT0) < pauseMs) {
+                                    vTaskDelay(pdMS_TO_TICKS(50));
+                                }
+                                continue;
+                            } else {
+                                // `once`: release display back to marquee and clean up queue item
+                                break;
+                            }
+                        }
+                        cleanupActiveQueue();
+                        freeStreamBuffersSafely();
                     }
                 }
+            }
         }
 
         if (!hasPsram) {
             InGameJobSlot latestJob;
             readJobSlot(latestJob);
+            ArtDownloadJobSlot latestArt;
+            readArtJobSlot(latestArt);
             const bool brokerCheckSettled =
                 !(wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker) ||
                 currentShowcaseOnline ||
                 (consecutiveHealthFailures >= 2);
             const bool pendingCancel =
                 latestJob.cancelRemote && (latestJob.token != lastProcessedJobToken);
+            const bool pendingArt =
+                latestArt.active && latestArt.reqId != 0U && (latestArt.reqId != lastProcessedArtReqId);
             if (!latestJob.active &&
                 !pendingCancel &&
+                !pendingArt &&
                 brokerCheckSettled &&
                 lastCheckedCfgGen == m_cfgGen.load(std::memory_order_acquire) &&
                 !m_workerWakeLatch.exchange(false, std::memory_order_acq_rel)) {
@@ -2076,9 +2178,16 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(40));
+        for (int slice = 0; slice < 4; ++slice) {
+            if (m_workerStopRequested.load(std::memory_order_acquire) ||
+                m_workerWakeLatch.exchange(false, std::memory_order_acq_rel)) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 
+    pixelcadeSession.reset();
     cleanupActiveQueue();
     freeStreamBuffersSafely();
 #endif
@@ -2263,13 +2372,91 @@ bool FrontendSyncEngine::handleCompanionEvent(const String& jsonPayload) {
     return false;
 }
 
+bool FrontendSyncEngine::tryPlayMarqueePath(const char* path) {
+    if (!gif || !path || path[0] == '\0') return false;
+    if (!gif->playGif(path)) {
+        LOGW("RetroFrontend", "GifEngine rejected marquee asset %s; keeping fallback banner.", path);
+        return false;
+    }
+    copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), path);
+    if (message) {
+        message->deactivate();
+    }
+    return true;
+}
+
+void FrontendSyncEngine::showCyanTitleBanner(const char* primaryTitle, const String& fallbackName) {
+    if (gif) {
+        gif->stop();
+    }
+    if (!message) return;
+
+    String titleSource = (primaryTitle && primaryTitle[0] != '\0') ? String(primaryTitle) : fallbackName;
+    String clean = formatDisplayTitle(titleSource);
+    if (clean.length() == 0) {
+        clean = formatDisplayTitle(fallbackName);
+    }
+    if (clean.length() == 0) {
+        clean = "Unknown";
+    }
+    String textToShow = (clean.length() > 10) ? (String(" ") + clean + " ") : clean;
+    MessageConfig cfg = { textToShow, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0, 0 };
+    message->displayMessage(cfg);
+}
+
+void FrontendSyncEngine::dispatchAsyncArtJob(
+    const char* primaryFolder,
+    const char* secondaryFolder,
+    const char* query,
+    const char* title,
+    const char* localStem,
+    uint32_t reqId,
+    uint32_t negHash,
+    bool isSystem
+) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (!hardwareHAL.capabilities().hasPsram &&
+        (WebUiSyncEngine::isRequested() ||
+         WebUiSyncEngine::isReadyForServing() ||
+         NetworkBudget::isBulkTransferActive())) {
+        return;
+    }
+
+    m_activeArtReqId.store(reqId, std::memory_order_release);
+    m_artJobSeq.fetch_add(1U, std::memory_order_acq_rel);
+    copySafeCStr(m_artJobSlot.primaryFolder, sizeof(m_artJobSlot.primaryFolder), primaryFolder);
+    copySafeCStr(m_artJobSlot.secondaryFolder, sizeof(m_artJobSlot.secondaryFolder), secondaryFolder);
+    copySafeCStr(m_artJobSlot.query, sizeof(m_artJobSlot.query), query);
+    copySafeCStr(m_artJobSlot.title, sizeof(m_artJobSlot.title), title);
+    copySafeCStr(m_artJobSlot.localStem, sizeof(m_artJobSlot.localStem), localStem);
+    m_artJobSlot.reqId = reqId;
+    m_artJobSlot.negHash = negHash;
+    m_artJobSlot.isSystem = isSystem;
+    m_artJobSlot.active = true;
+    m_artJobSeq.fetch_add(1U, std::memory_order_release);
+
+    m_workerWakeLatch.store(true, std::memory_order_release);
+    ensureShowcaseWorkerRunning();
+#else
+    (void)primaryFolder;
+    (void)secondaryFolder;
+    (void)query;
+    (void)title;
+    (void)localStem;
+    (void)reqId;
+    (void)negHash;
+    (void)isSystem;
+#endif
+}
+
 void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t reqId) {
     if (jsonPayload.indexOf("\"sync_meta\"") != -1 || jsonPayload.indexOf("\"celebrate\"") != -1) {
         if (handleCompanionEvent(jsonPayload)) {
             return;
         }
     }
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     DeserializationError err = deserializeJson(doc, jsonPayload);
     if (err) {
         LOGE("RetroFrontend", "Failed to parse MQTT JSON payload: %s", err.c_str());
@@ -2281,6 +2468,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     const char* titleRaw = doc["title"] | "";
     const char* systemRaw = doc["system"] | "";
     const char* typeRaw = doc["type"] | "";
+    const char* romPathRaw = doc["rom_path"] | (doc["path"] | "");
 
     hasReceivedAnyEvent = true;
 
@@ -2292,15 +2480,16 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         return;
     }
 
-    String cleanSystem = cleanSystemName(String(systemRaw));
-    String cleanGame = cleanSystemName(String(gameRaw));
-
-    bool isPlaying = (strcmp(status, "playing") == 0);
+    const bool isPlaying = (strcmp(status, "playing") == 0);
     if (!isPlaying) {
-        // Menu navigation ("browsing" or system selection) -> 100% local marquee, cancel any previous in-game Showcase
+        // Menu navigation ("browsing" or system selection) -> 100% local/async marquee, cancel any previous in-game Showcase
         cancelInGameShowcaseSession();
         resetSyncCardCycle();
     }
+
+    String rawSysResolved = extractSystemFromRomPath(systemRaw, romPathRaw);
+    String cleanSystem = cleanSystemName(rawSysResolved);
+    String cleanGame = cleanSystemName(String(gameRaw));
 
     if (!isPlaying && (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem))) {
         handleSystemEvent(cleanSystem.length() > 0 ? cleanSystem : String(systemRaw), reqId);
@@ -2310,7 +2499,6 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     isGamePlaying = true;
     waitingDisplayed = false;
     m_activeMarqueePath[0] = '\0';
-    if (message) message->deactivate();
 
     if (isPlaying && gameRaw[0] != '\0') {
         resetSyncCardCycle();
@@ -2319,315 +2507,921 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     }
 
     String game = String(gameRaw);
-    String folder = mapSystemToPixelcadeFolder(cleanSystem);
+    String primaryFolder = mapSystemToPixelcadeFolder(cleanSystem);
+    String secondaryFolder = getSecondaryPixelcadeFolder(cleanSystem);
 
-    String cleanGameNoTags = game;
-    int idxParen = cleanGameNoTags.indexOf(" (");
-    if (idxParen != -1) cleanGameNoTags = cleanGameNoTags.substring(0, idxParen);
-    int idxBrack = cleanGameNoTags.indexOf(" [");
-    if (idxBrack != -1) cleanGameNoTags = cleanGameNoTags.substring(0, idxBrack);
-    cleanGameNoTags.trim();
-
-    std::vector<String> nameVariants;
-    nameVariants.push_back(game);
-    if (cleanGameNoTags.length() > 0 && cleanGameNoTags != game) {
-        nameVariants.push_back(cleanGameNoTags);
-    }
-    if (cleanGame.length() > 0 && cleanGame != game && cleanGame != cleanGameNoTags) {
-        nameVariants.push_back(cleanGame);
+    char localStemBuf[96] = "";
+    sanitizeLocalStem(gameRaw, localStemBuf, sizeof(localStemBuf));
+    if (localStemBuf[0] == '\0' && titleRaw[0] != '\0') {
+        sanitizeLocalStem(titleRaw, localStemBuf, sizeof(localStemBuf));
     }
 
-    String foundArtPath = "";
-    bool exists = false;
+    char cleanGameStripped[96] = "";
+    engines::PixelcadeArtResolver::stripRomOrArtExtensionAndTags(gameRaw, cleanGameStripped, sizeof(cleanGameStripped));
 
+    // Fast Core 1 local SD cache probe (< 3 ms, bounded 15 ms lock, checks only existing directories)
+    char foundArtPath[128] = "";
     {
-        SdLockGuard guard(pdMS_TO_TICKS(500));
+        SdLockGuard guard(pdMS_TO_TICKS(15));
         if (guard) {
-            for (const String& nameVar : nameVariants) {
-                String testPaths[] = {
-                    "/pixelcade/" + folder + "/" + nameVar,
-                    "/" + folder + "/" + nameVar,
-                    "/pixelcade/console/" + folder + "/" + nameVar,
-                    "/pixelcade/console/" + nameVar,
-                    "/console/" + nameVar
-                };
-                for (const auto& basePath : testPaths) {
-                    if (sd.exists(basePath + ".png")) {
-                        foundArtPath = basePath + ".png";
-                        exists = true;
-                        break;
-                    }
-                    if (sd.exists(basePath + ".gif")) {
-                        foundArtPath = basePath + ".gif";
-                        exists = true;
+            const char* candFolders[4] = {
+                primaryFolder.c_str(),
+                secondaryFolder.c_str(),
+                cleanSystem.c_str(),
+                nullptr
+            };
+            const char* candStems[3] = {
+                localStemBuf,
+                (cleanGameStripped[0] != '\0' && strcmp(cleanGameStripped, localStemBuf) != 0) ? cleanGameStripped : nullptr,
+                (game.length() > 0 && game != localStemBuf && game != cleanGameStripped) ? game.c_str() : nullptr
+            };
+
+            for (size_t fi = 0U; fi < 3U && foundArtPath[0] == '\0'; ++fi) {
+                const char* fName = candFolders[fi];
+                if (!fName || fName[0] == '\0') continue;
+                bool dupFolder = false;
+                for (size_t prev = 0U; prev < fi; ++prev) {
+                    if (candFolders[prev] && strcasecmp(candFolders[prev], fName) == 0) {
+                        dupFolder = true;
                         break;
                     }
                 }
-                if (exists) break;
+                if (dupFolder) continue;
+
+                char dirCandidates[2][80];
+                snprintf(dirCandidates[0], sizeof(dirCandidates[0]), "/pixelcade/%s", fName);
+                snprintf(dirCandidates[1], sizeof(dirCandidates[1]), "/%s", fName);
+
+                for (size_t di = 0U; di < 2U && foundArtPath[0] == '\0'; ++di) {
+                    if (!sd.exists(dirCandidates[di])) continue;
+                    for (size_t si = 0U; si < 3U && foundArtPath[0] == '\0'; ++si) {
+                        const char* stem = candStems[si];
+                        if (!stem || stem[0] == '\0') continue;
+                        char probe[128];
+                        snprintf(probe, sizeof(probe), "%s/%s.png", dirCandidates[di], stem);
+                        if (sd.exists(probe)) {
+                            copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
+                            break;
+                        }
+                        snprintf(probe, sizeof(probe), "%s/%s.gif", dirCandidates[di], stem);
+                        if (sd.exists(probe)) {
+                            copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
 
     if (reqId != currentRequestId) return;
 
-    if (exists && foundArtPath.length() > 0) {
-        LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath.c_str());
-        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), foundArtPath.c_str());
-        gif->playGif(foundArtPath.c_str());
-        if (message) {
-            message->deactivate();
-        }
+    if (foundArtPath[0] != '\0' && tryPlayMarqueePath(foundArtPath)) {
+        LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath);
         return;
     }
 
-    LOGI("RetroFrontend", "No cached artwork for %s, displaying cyan game title banner...", game.c_str());
-    if (gif) {
-        gif->stop();
-    }
-    if (message) {
-        String titleSource = (titleRaw[0] != '\0') ? String(titleRaw) : game;
-        String clean = formatDisplayTitle(titleSource);
-        if (clean.length() == 0) {
-            clean = "Unknown";
-        }
-        String textToShow = (clean.length() > 10) ? (String(" ") + clean + " ") : clean;
-        MessageConfig cfg = { textToShow, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0, 0 };
-        message->displayMessage(cfg);
-    }
+    // Immediate non-blocking cyan banner on Core 1 so HUB75 renders on the very next frame!
+    showCyanTitleBanner(titleRaw, game);
 
-    if (isMissingGameArtCached(folder, game)) {
-        LOGD("RetroFrontend", "Game marquee %s/%s is in negative cache; keeping cyan game title banner.", folder.c_str(), game.c_str());
+    const bool primaryEmpty = isKnownEmptyPixelcadeFolder(primaryFolder.c_str());
+    const bool secondaryEmpty = secondaryFolder.isEmpty() || isKnownEmptyPixelcadeFolder(secondaryFolder.c_str());
+    if (primaryEmpty && secondaryEmpty) {
+        LOGD("RetroFrontend", "System folder '%s' has no Pixelcade catalog; keeping cyan game banner.", primaryFolder.c_str());
         return;
     }
 
-    String downloadedPath = "";
-    bool downloaded = false;
-    bool allDefinitive404 = true;
-    for (const String& nameVar : nameVariants) {
-        bool missPng = false;
-        if (downloadPixelcadeArt(folder, nameVar + ".png", downloadedPath, reqId, &missPng)) {
-            downloaded = true;
-            break;
-        }
-        if (!missPng) allDefinitive404 = false;
-        if (reqId != currentRequestId) return;
+    const char* effectivePrimary = !primaryEmpty ? primaryFolder.c_str() : secondaryFolder.c_str();
+    const char* effectiveSecondary = (!primaryEmpty && !secondaryEmpty) ? secondaryFolder.c_str() : "";
 
-        bool missGif = false;
-        if (downloadPixelcadeArt(folder, nameVar + ".gif", downloadedPath, reqId, &missGif)) {
-            downloaded = true;
-            break;
-        }
-        if (!missGif) allDefinitive404 = false;
-        if (reqId != currentRequestId) return;
-    }
-
-    if (reqId != currentRequestId) return;
-
-    if (downloaded && downloadedPath.length() > 0) {
-        LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", downloadedPath.c_str());
-        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), downloadedPath.c_str());
-        gif->playGif(downloadedPath.c_str());
-        if (message) {
-            message->deactivate();
-        }
+    const uint32_t negHash = hashArtKey(effectivePrimary, localStemBuf[0] != '\0' ? localStemBuf : game.c_str());
+    if (isMissingArtHashCached(negHash)) {
+        LOGD("RetroFrontend", "Game marquee %s/%s in negative cache; keeping cyan banner.", effectivePrimary, game.c_str());
         return;
     }
 
-    if (allDefinitive404) {
-        recordMissingGameArt(folder, game);
-    }
-    LOGI("RetroFrontend", "No game marquee found on Pixelcade for %s (%s), keeping cyan game title banner.", game.c_str(), cleanSystem.c_str());
+    dispatchAsyncArtJob(
+        effectivePrimary,
+        effectiveSecondary,
+        gameRaw,
+        titleRaw,
+        localStemBuf[0] != '\0' ? localStemBuf : game.c_str(),
+        reqId,
+        negHash,
+        false
+    );
 }
 
 void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqId) {
     isGamePlaying = true;
     waitingDisplayed = false;
     m_activeMarqueePath[0] = '\0';
-    if (message) message->deactivate();
 
-    if (!m_mappingsLoaded) {
-        systemMappings = loadMappingsFromSD();
-        m_mappingsLoaded = true;
+    char sysStem[96] = "";
+    String cleanedSys = cleanSystemName(systemId);
+    sanitizeLocalStem(cleanedSys.length() > 0 ? cleanedSys.c_str() : systemId.c_str(), sysStem, sizeof(sysStem));
+    for (size_t i = 0U; sysStem[i] != '\0'; ++i) {
+        if (sysStem[i] >= 'A' && sysStem[i] <= 'Z') {
+            sysStem[i] = static_cast<char>(sysStem[i] + ('a' - 'A'));
+        } else if (sysStem[i] == ' ') {
+            sysStem[i] = '_';
+        }
     }
-    std::vector<SystemVariant> variants = getSystemNameVariantsMapped(systemMappings, systemId);
 
-    String foundArtPath = "";
-    bool exists = false;
+    char canonicalStem[96] = "";
+    if (sysStem[0] != '\0') {
+        snprintf(canonicalStem, sizeof(canonicalStem), "sys_%s", sysStem);
+    }
 
+    // Fast Core 1 local SD check (< 3 ms): check canonical cached path first, then top mapped console names
+    char foundArtPath[128] = "";
     {
-        SdLockGuard guard(pdMS_TO_TICKS(500));
+        SdLockGuard guard(pdMS_TO_TICKS(15));
         if (guard) {
-            for (const auto& v : variants) {
-                String testPaths[] = {
-                    "/pixelcade/" + v.folder + "/" + v.name,
-                    "/" + v.folder + "/" + v.name,
-                    "/pixelcade/" + v.name,
-                    "/" + v.name
-                };
-                for (const auto& basePath : testPaths) {
-                    if (sd.exists(basePath + ".png")) {
-                        foundArtPath = basePath + ".png";
-                        exists = true;
+            const char* consoleDirs[2] = { "/pixelcade/console", "/console" };
+            for (const char* cDir : consoleDirs) {
+                if (foundArtPath[0] != '\0' || !sd.exists(cDir)) continue;
+
+                if (canonicalStem[0] != '\0') {
+                    char probe[128];
+                    snprintf(probe, sizeof(probe), "%s/%s.png", cDir, canonicalStem);
+                    if (sd.exists(probe)) {
+                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
                         break;
                     }
-                    if (sd.exists(basePath + ".gif")) {
-                        foundArtPath = basePath + ".gif";
-                        exists = true;
+                    snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, canonicalStem);
+                    if (sd.exists(probe)) {
+                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
                         break;
                     }
                 }
-                if (exists) break;
+
+                // Also support user-populated `/pixelcade/console/` SD cards directly
+                std::vector<SystemVariant> variants = m_mappingsLoaded
+                    ? getSystemNameVariantsMapped(systemMappings, systemId)
+                    : getSystemNameVariants(systemId);
+                const size_t maxLocalChecks = (variants.size() < 12U) ? variants.size() : 12U;
+                for (size_t vi = 0U; vi < maxLocalChecks; ++vi) {
+                    char probe[128];
+                    snprintf(probe, sizeof(probe), "%s/%s.png", cDir, variants[vi].name.c_str());
+                    if (sd.exists(probe)) {
+                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
+                        break;
+                    }
+                    snprintf(probe, sizeof(probe), "%s/%s.gif", cDir, variants[vi].name.c_str());
+                    if (sd.exists(probe)) {
+                        copySafeCStr(foundArtPath, sizeof(foundArtPath), probe);
+                        break;
+                    }
+                }
             }
         }
     }
 
     if (reqId != currentRequestId) return;
 
-    if (exists && foundArtPath.length() > 0) {
-        LOGI("RetroFrontend", "Playing cached Pixelcade system art: %s", foundArtPath.c_str());
-        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), foundArtPath.c_str());
-        gif->playGif(foundArtPath.c_str());
-        if (message) {
-            message->deactivate();
-        }
+    if (foundArtPath[0] != '\0' && tryPlayMarqueePath(foundArtPath)) {
+        LOGI("RetroFrontend", "Playing cached Pixelcade system art: %s", foundArtPath);
         return;
     }
 
-    LOGI("RetroFrontend", "No cached artwork for system %s, displaying cyan system title and downloading...", systemId.c_str());
-    if (gif) {
-        gif->stop();
-    }
-    if (message) {
-        String clean = formatDisplayTitle(systemId);
-        if (clean.length() == 0) {
-            clean = "Unknown";
-        }
-        String textToShow = (clean.length() > 10) ? (String(" ") + clean + " ") : clean;
-        MessageConfig cfg = { textToShow, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0, 0 };
-        message->displayMessage(cfg);
+    // Immediate non-blocking cyan system title banner on Core 1
+    showCyanTitleBanner(nullptr, systemId);
+
+    const uint32_t negHash = hashArtKey("console", canonicalStem[0] != '\0' ? canonicalStem : systemId.c_str());
+    if (isMissingArtHashCached(negHash)) {
+        LOGD("RetroFrontend", "System logo console/%s in negative cache; keeping cyan banner.", systemId.c_str());
+        return;
     }
 
-    String downloadedPath = "";
+    dispatchAsyncArtJob(
+        "console",
+        "",
+        systemId.c_str(),
+        "",
+        canonicalStem[0] != '\0' ? canonicalStem : "sys_default",
+        reqId,
+        negHash,
+        true
+    );
+}
+
+void FrontendSyncEngine::processWorkerArtJob(
+    const ArtDownloadJobSlot& job,
+    std::unique_ptr<net::SecureHttpSession>& session,
+    uint32_t& lastArtActivityMs
+) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    auto isCancelled = [&]() -> bool {
+        return m_workerStopRequested.load(std::memory_order_acquire) ||
+               (m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) ||
+               (!hardwareHAL.capabilities().hasPsram &&
+                (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing()));
+    };
+
+    if (isCancelled() || WiFi.status() != WL_CONNECTED) return;
+
+    if (job.isSystem && !m_mappingsLoaded) {
+        systemMappings = loadMappingsFromSD();
+        m_mappingsLoaded = true;
+    }
+
+    std::vector<SystemVariant> sysVariants;
+    if (job.isSystem) {
+        sysVariants = getSystemNameVariantsMapped(systemMappings, String(job.query));
+    }
+
+    char savedPath[128] = "";
     bool downloaded = false;
-    for (const auto& v : variants) {
-        if (downloadPixelcadeArt(v.folder, v.name + ".png", downloadedPath, reqId)) {
-            downloaded = true;
-            break;
-        }
-        if (reqId != currentRequestId) return;
+    bool allFoldersConfirmedMiss = true;
 
-        if (downloadPixelcadeArt(v.folder, v.name + ".gif", downloadedPath, reqId)) {
-            downloaded = true;
-            break;
+    const char* foldersToSearch[2] = {
+        job.primaryFolder,
+        (!job.isSystem && job.secondaryFolder[0] != '\0' &&
+         strcasecmp(job.secondaryFolder, job.primaryFolder) != 0) ? job.secondaryFolder : nullptr
+    };
+
+    for (size_t fi = 0U; fi < 2U && !downloaded; ++fi) {
+        const char* folder = foldersToSearch[fi];
+        if (!folder || folder[0] == '\0') continue;
+        if (isCancelled()) return;
+
+        bool catalog404 = false;
+        const bool hasCatalog = ensureFolderCatalogCachedOnWorker(folder, job.reqId, session, catalog404);
+        lastArtActivityMs = millis() == 0U ? 1U : millis();
+        if (isCancelled()) return;
+
+        if (hasCatalog) {
+            char catalogPath[96];
+            snprintf(catalogPath, sizeof(catalogPath), "/pixelcade/_catalog/%s.txt", folder);
+
+            char matchedFilename[160] = "";
+            if (findMatchInCatalogFile(
+                    catalogPath,
+                    job,
+                    job.isSystem ? &sysVariants : nullptr,
+                    matchedFilename,
+                    sizeof(matchedFilename))) {
+                if (isCancelled()) return;
+                bool file404 = false;
+                const char* saveDir = job.isSystem ? "console" : job.primaryFolder;
+                if (downloadExactPixelcadeFile(
+                        folder,
+                        matchedFilename,
+                        saveDir,
+                        job.localStem,
+                        job.reqId,
+                        session,
+                        savedPath,
+                        sizeof(savedPath),
+                        &file404)) {
+                    downloaded = true;
+                    lastArtActivityMs = millis() == 0U ? 1U : millis();
+                    break;
+                }
+                if (!file404) {
+                    allFoldersConfirmedMiss = false;
+                }
+            }
+            // If `hasCatalog` is true and `findMatchInCatalogFile` returned false, the folder
+            // definitively does NOT contain this marquee — zero 404 probes needed!
+        } else if (!catalog404) {
+            // Transient network/SD error fetching catalog: bounded 2-candidate direct fallback
+            allFoldersConfirmedMiss = false;
+            const char* saveDir = job.isSystem ? "console" : job.primaryFolder;
+            if (job.isSystem) {
+                const size_t limit = (sysVariants.size() < 2U) ? sysVariants.size() : 2U;
+                for (size_t vi = 0U; vi < limit && !downloaded; ++vi) {
+                    if (isCancelled()) return;
+                    String candPng = sysVariants[vi].name + ".png";
+                    if (downloadExactPixelcadeFile(
+                            "console",
+                            candPng.c_str(),
+                            saveDir,
+                            job.localStem,
+                            job.reqId,
+                            session,
+                            savedPath,
+                            sizeof(savedPath),
+                            nullptr)) {
+                        downloaded = true;
+                        break;
+                    }
+                }
+            } else if (fi == 0U && job.query[0] != '\0') {
+                char stripped[96] = "";
+                engines::PixelcadeArtResolver::stripRomOrArtExtensionAndTags(job.query, stripped, sizeof(stripped));
+                const char* base = (stripped[0] != '\0') ? stripped : job.query;
+                char candName[112];
+                snprintf(candName, sizeof(candName), "%s.png", base);
+                if (downloadExactPixelcadeFile(
+                        folder,
+                        candName,
+                        saveDir,
+                        job.localStem,
+                        job.reqId,
+                        session,
+                        savedPath,
+                        sizeof(savedPath),
+                        nullptr)) {
+                    downloaded = true;
+                }
+            }
         }
-        if (reqId != currentRequestId) return;
     }
 
-    if (reqId != currentRequestId) return;
+    if (isCancelled()) return;
 
-    if (downloaded && downloadedPath.length() > 0) {
-        LOGI("RetroFrontend", "Playing downloaded Pixelcade system art: %s", downloadedPath.c_str());
-        copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), downloadedPath.c_str());
-        gif->playGif(downloadedPath.c_str());
-        if (message) {
-            message->deactivate();
+    m_artResultSeq.fetch_add(1U, std::memory_order_acq_rel);
+    copySafeCStr(m_artResultSlot.savedPath, sizeof(m_artResultSlot.savedPath), downloaded ? savedPath : "");
+    m_artResultSlot.reqId = job.reqId;
+    m_artResultSlot.missingHash = (!downloaded && allFoldersConfirmedMiss) ? job.negHash : 0U;
+    m_artResultSlot.downloaded = downloaded;
+    m_artResultSeq.fetch_add(1U, std::memory_order_release);
+    m_artResultPending.store(true, std::memory_order_release);
+#else
+    (void)job;
+    (void)session;
+    (void)lastArtActivityMs;
+#endif
+}
+
+bool FrontendSyncEngine::ensureFolderCatalogCachedOnWorker(
+    const char* folder,
+    uint32_t reqId,
+    std::unique_ptr<net::SecureHttpSession>& session,
+    bool& outDefinitive404
+) {
+    outDefinitive404 = false;
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!folder || folder[0] == '\0') {
+        outDefinitive404 = true;
+        return false;
+    }
+    if (isKnownEmptyPixelcadeFolder(folder)) {
+        outDefinitive404 = true;
+        return false;
+    }
+
+    const uint32_t catHash = hashArtKey("_catalog", folder);
+    if (isMissingCatalogHashCached(catHash)) {
+        outDefinitive404 = true;
+        return false;
+    }
+
+    char finalPath[96];
+    snprintf(finalPath, sizeof(finalPath), "/pixelcade/_catalog/%s.txt", folder);
+
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(100));
+        if (guard && sd.exists(finalPath)) {
+            FsFile check = sd.open(finalPath, FILE_OPEN_READ);
+            if (check) {
+                const size_t sz = check.size();
+                check.close();
+                if (sz >= 4U) {
+                    return true;
+                }
+            }
+            sd.remove(finalPath);
         }
     }
+
+    if (m_workerStopRequested.load(std::memory_order_acquire) ||
+        m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+        return false;
+    }
+
+    if (!session || session->isAborted() || session->state() == net::SessionState::Closed) {
+        net::SecureHttpOptions opts;
+        opts.ownerId = net::OWNER_ARTWORK;
+        opts.requestTimeoutMs = 3500;
+        opts.handshakeTimeoutSec = 3;
+        opts.keepAlive = true;
+        opts.followRedirects = true;
+        opts.userAgent = "ArcadeMatrix-ESP32";
+        session.reset(new (std::nothrow) net::SecureHttpSession("raw.githubusercontent.com", 443, opts));
+        if (!session) return false;
+    }
+
+    String encFolder = urlEncodeSegment(folder);
+    String urlPath = "/red77290/pixelcade/master/_catalog/" + encFolder + ".txt";
+    LOGI("RetroFrontend", "Caching Pixelcade catalog %s on Core 0...", urlPath.c_str());
+
+    auto resp = session->get(urlPath);
+    if (!resp.ok()) {
+        if (resp.statusCode() == 404) {
+            outDefinitive404 = true;
+            recordMissingCatalogHash(catHash);
+        }
+        return false;
+    }
+
+    char tmpPath[104];
+    snprintf(tmpPath, sizeof(tmpPath), "/pixelcade/_catalog/%s.tmp", folder);
+
+    FsFile outFile{};
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (!guard) return false;
+        if (!sd.exists("/pixelcade")) sd.mkdir("/pixelcade");
+        if (!sd.exists("/pixelcade/_catalog")) sd.mkdir("/pixelcade/_catalog");
+        if (sd.exists(tmpPath)) sd.remove(tmpPath);
+        outFile = sd.open(tmpPath, FILE_OPEN_WRITE);
+        if (!outFile) return false;
+    }
+
+    Stream& stream = resp.stream();
+    const size_t expectedLen = resp.contentLength();
+    static constexpr size_t MAX_CATALOG_BYTES = 524288U;
+    uint8_t chunk[1024];
+    size_t totalWritten = 0U;
+    uint32_t lastReadMs = millis();
+    bool writeFailed = false;
+    bool aborted = false;
+
+    while (expectedLen == 0U || totalWritten < expectedLen) {
+        if (m_workerStopRequested.load(std::memory_order_acquire) ||
+            m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+            aborted = true;
+            break;
+        }
+
+        int avail = stream.available();
+        if (avail > 0) {
+            size_t toRead = static_cast<size_t>(avail);
+            if (toRead > sizeof(chunk)) toRead = sizeof(chunk);
+            if (expectedLen > 0U && (totalWritten + toRead) > expectedLen) {
+                toRead = expectedLen - totalWritten;
+            }
+            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            if (nRead > 0U) {
+                if ((totalWritten + nRead) > MAX_CATALOG_BYTES) {
+                    writeFailed = true;
+                    break;
+                }
+                {
+                    SdLockGuard guard(pdMS_TO_TICKS(500));
+                    if (!guard || outFile.write(chunk, nRead) != nRead) {
+                        writeFailed = true;
+                        break;
+                    }
+                }
+                totalWritten += nRead;
+                lastReadMs = millis();
+            }
+        } else {
+            if (!session->isConnected() && stream.available() <= 0) {
+                break;
+            }
+            if ((millis() - lastReadMs) > 3500U) {
+                writeFailed = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+        esp_task_wdt_reset();
+    }
+
+    if (aborted || writeFailed) {
+        session->abort();
+        session.reset();
+    } else {
+        resp.consume();
+    }
+
+    bool committed = false;
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (guard) {
+            outFile.flush();
+            outFile.close();
+            const bool complete = !aborted && !writeFailed && totalWritten >= 4U &&
+                                  (expectedLen == 0U || totalWritten == expectedLen);
+            if (complete) {
+                if (sd.exists(finalPath)) sd.remove(finalPath);
+                committed = sd.rename(tmpPath, finalPath);
+            }
+            if (!committed && sd.exists(tmpPath)) {
+                sd.remove(tmpPath);
+            }
+        }
+    }
+    return committed;
+#else
+    (void)folder;
+    (void)reqId;
+    (void)session;
+    return false;
+#endif
+}
+
+bool FrontendSyncEngine::findMatchInCatalogFile(
+    const char* catalogPath,
+    const ArtDownloadJobSlot& job,
+    const std::vector<SystemVariant>* sysVariants,
+    char* outMatchedFilename,
+    size_t outCap
+) {
+    if (!outMatchedFilename || outCap == 0U) return false;
+    outMatchedFilename[0] = '\0';
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!catalogPath || catalogPath[0] == '\0') return false;
+
+    FsFile catFile{};
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(300));
+        if (!guard || !sd.exists(catalogPath)) return false;
+        catFile = sd.open(catalogPath, FILE_OPEN_READ);
+        if (!catFile) return false;
+    }
+
+    char normGame[128] = "";
+    char normTitle[128] = "";
+    if (!job.isSystem) {
+        normalizeMarqueeKey(job.query, normGame, sizeof(normGame));
+        if (job.title[0] != '\0') {
+            normalizeMarqueeKey(job.title, normTitle, sizeof(normTitle));
+        }
+    }
+
+    uint8_t chunk[1024];
+    char lineBuf[192];
+    size_t lineLen = 0U;
+    bool lineOverflow = false;
+    int bestScore = 0;
+    bool cancelled = false;
+
+    auto evaluateLine = [&](const char* line) {
+        if (!line || line[0] == '\0' || line[0] == '#') return;
+        int sc = 0;
+        if (job.isSystem && sysVariants) {
+            sc = engines::PixelcadeArtResolver::scoreSystemCatalogEntry(line, *sysVariants);
+        } else {
+            sc = scoreCatalogEntry(line, job.query, job.title, normGame, normTitle);
+        }
+        if (sc > bestScore) {
+            bestScore = sc;
+            copySafeCStr(outMatchedFilename, outCap, line);
+        }
+    };
+
+    while (true) {
+        if (m_workerStopRequested.load(std::memory_order_acquire) ||
+            m_activeArtReqId.load(std::memory_order_acquire) != job.reqId) {
+            cancelled = true;
+            break;
+        }
+
+        int nRead = 0;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(300));
+            if (!guard) {
+                cancelled = true;
+                break;
+            }
+            nRead = catFile.read(chunk, sizeof(chunk));
+        }
+        if (nRead <= 0) break;
+
+        for (int i = 0; i < nRead; ++i) {
+            char c = static_cast<char>(chunk[i]);
+            if (c == '\r') continue;
+            if (c == '\n') {
+                if (!lineOverflow && lineLen > 0U) {
+                    lineBuf[lineLen] = '\0';
+                    evaluateLine(lineBuf);
+                    // Exact match fast-exit (`>= 1024` for games or top variant `.png` for systems)
+                    if (bestScore >= 1998 || (!job.isSystem && bestScore >= 1028)) {
+                        nRead = 0;
+                        break;
+                    }
+                }
+                lineLen = 0U;
+                lineOverflow = false;
+            } else if (!lineOverflow) {
+                if (lineLen + 1U < sizeof(lineBuf)) {
+                    lineBuf[lineLen++] = c;
+                } else {
+                    lineOverflow = true;
+                }
+            }
+        }
+        esp_task_wdt_reset();
+        if (nRead == 0) break;
+    }
+
+    if (!cancelled && !lineOverflow && lineLen > 0U) {
+        lineBuf[lineLen] = '\0';
+        evaluateLine(lineBuf);
+    }
+
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(300));
+        if (guard) {
+            catFile.close();
+        }
+    }
+
+    if (cancelled || bestScore <= 0 || outMatchedFilename[0] == '\0') {
+        outMatchedFilename[0] = '\0';
+        return false;
+    }
+    return true;
+#else
+    (void)catalogPath;
+    (void)job;
+    (void)sysVariants;
+    return false;
+#endif
+}
+
+bool FrontendSyncEngine::downloadExactPixelcadeFile(
+    const char* remoteFolder,
+    const char* remoteFilename,
+    const char* saveFolder,
+    const char* localStem,
+    uint32_t reqId,
+    std::unique_ptr<net::SecureHttpSession>& session,
+    char* outSavedPath,
+    size_t outCap,
+    bool* outDefinitive404
+) {
+    if (outSavedPath && outCap > 0U) outSavedPath[0] = '\0';
+    if (outDefinitive404) *outDefinitive404 = false;
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!remoteFolder || !remoteFilename || !saveFolder || !localStem ||
+        remoteFolder[0] == '\0' || remoteFilename[0] == '\0' || localStem[0] == '\0') {
+        return false;
+    }
+
+    const size_t rLen = strlen(remoteFilename);
+    const char* ext = ".png";
+    if (rLen >= 4U && strcasecmp(remoteFilename + rLen - 4U, ".gif") == 0) {
+        ext = ".gif";
+    }
+
+    char dirPath[64];
+    char finalPath[128];
+    char tmpPath[128];
+    snprintf(dirPath, sizeof(dirPath), "/pixelcade/%s", saveFolder);
+    const int fpLen = snprintf(finalPath, sizeof(finalPath), "%s/%s%s", dirPath, localStem, ext);
+    const int tpLen = snprintf(tmpPath, sizeof(tmpPath), "%s/.dl_%u.tmp", dirPath, static_cast<unsigned>(reqId & 0xFFFFU));
+    if (fpLen <= 0 || static_cast<size_t>(fpLen) >= sizeof(finalPath) ||
+        tpLen <= 0 || static_cast<size_t>(tpLen) >= sizeof(tmpPath)) {
+        return false;
+    }
+
+    if (!session || session->isAborted() || session->state() == net::SessionState::Closed) {
+        net::SecureHttpOptions opts;
+        opts.ownerId = net::OWNER_ARTWORK;
+        opts.requestTimeoutMs = 3500;
+        opts.handshakeTimeoutSec = 3;
+        opts.keepAlive = true;
+        opts.followRedirects = true;
+        opts.userAgent = "ArcadeMatrix-ESP32";
+        session.reset(new (std::nothrow) net::SecureHttpSession("raw.githubusercontent.com", 443, opts));
+        if (!session) return false;
+    }
+
+    String encFolder = urlEncodeSegment(remoteFolder);
+    String encFile = urlEncodeSegment(remoteFilename);
+    String urlPath = "/red77290/pixelcade/master/" + encFolder + "/" + encFile;
+    LOGI("RetroFrontend", "Downloading Pixelcade art %s -> %s", urlPath.c_str(), finalPath);
+
+    auto resp = session->get(urlPath);
+    if (!resp.ok()) {
+        if (outDefinitive404 && resp.statusCode() == 404) {
+            *outDefinitive404 = true;
+        }
+        return false;
+    }
+
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    const size_t maxArtBytes = hasPsram ? (768U * 1024U) : (256U * 1024U);
+    const size_t expectedLen = resp.contentLength();
+    if (expectedLen > maxArtBytes) {
+        LOGW("RetroFrontend", "Skipping oversized marquee (%u B > %u B): %s",
+             static_cast<unsigned>(expectedLen), static_cast<unsigned>(maxArtBytes), remoteFilename);
+        session->abort();
+        session.reset();
+        return false;
+    }
+
+    FsFile outFile{};
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (!guard) return false;
+        if (!sd.exists("/pixelcade")) sd.mkdir("/pixelcade");
+        if (!sd.exists(dirPath)) sd.mkdir(dirPath);
+        if (sd.exists(tmpPath)) sd.remove(tmpPath);
+        outFile = sd.open(tmpPath, FILE_OPEN_WRITE);
+        if (!outFile) return false;
+    }
+
+    Stream& stream = resp.stream();
+    uint8_t chunk[1024];
+    uint8_t hdrBuf[24];
+    size_t hdrCollected = 0U;
+    bool hdrValidated = false;
+    size_t totalWritten = 0U;
+    uint32_t lastReadMs = millis();
+    bool failed = false;
+    bool aborted = false;
+
+    auto validateImageHeader = [&](const uint8_t* h, size_t n) -> bool {
+        if (n < 10U) return false;
+        // PNG magic + IHDR dimensions <= 512x512
+        if (h[0] == 0x89U && h[1] == 'P' && h[2] == 'N' && h[3] == 'G' && n >= 24U) {
+            uint32_t w = (static_cast<uint32_t>(h[16]) << 24) |
+                         (static_cast<uint32_t>(h[17]) << 16) |
+                         (static_cast<uint32_t>(h[18]) << 8) |
+                         static_cast<uint32_t>(h[19]);
+            uint32_t hg = (static_cast<uint32_t>(h[20]) << 24) |
+                          (static_cast<uint32_t>(h[21]) << 16) |
+                          (static_cast<uint32_t>(h[22]) << 8) |
+                          static_cast<uint32_t>(h[23]);
+            return (w > 0U && w <= 512U && hg > 0U && hg <= 512U);
+        }
+        // GIF87a / GIF89a + logical screen <= 512x512
+        if (h[0] == 'G' && h[1] == 'I' && h[2] == 'F' && h[3] == '8' &&
+            (h[4] == '7' || h[4] == '9') && h[5] == 'a') {
+            uint16_t w = static_cast<uint16_t>(h[6]) | (static_cast<uint16_t>(h[7]) << 8);
+            uint16_t hg = static_cast<uint16_t>(h[8]) | (static_cast<uint16_t>(h[9]) << 8);
+            return (w > 0U && w <= 512U && hg > 0U && hg <= 512U);
+        }
+        return false;
+    };
+
+    while (expectedLen == 0U || totalWritten < expectedLen) {
+        if (m_workerStopRequested.load(std::memory_order_acquire) ||
+            m_activeArtReqId.load(std::memory_order_acquire) != reqId) {
+            aborted = true;
+            break;
+        }
+
+        int avail = stream.available();
+        if (avail > 0) {
+            size_t toRead = static_cast<size_t>(avail);
+            if (toRead > sizeof(chunk)) toRead = sizeof(chunk);
+            if (expectedLen > 0U && (totalWritten + toRead) > expectedLen) {
+                toRead = expectedLen - totalWritten;
+            }
+            const size_t nRead = stream.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            if (nRead > 0U) {
+                if ((totalWritten + nRead) > maxArtBytes) {
+                    failed = true;
+                    break;
+                }
+                if (!hdrValidated) {
+                    const size_t copyN = ((hdrCollected + nRead) <= sizeof(hdrBuf))
+                        ? nRead
+                        : (sizeof(hdrBuf) - hdrCollected);
+                    if (copyN > 0U) {
+                        memcpy(hdrBuf + hdrCollected, chunk, copyN);
+                        hdrCollected += copyN;
+                    }
+                    if (hdrCollected >= sizeof(hdrBuf) ||
+                        (expectedLen > 0U && (totalWritten + nRead) == expectedLen)) {
+                        if (!validateImageHeader(hdrBuf, hdrCollected)) {
+                            LOGW("RetroFrontend", "Rejected invalid/oversized image header in %s", remoteFilename);
+                            failed = true;
+                            break;
+                        }
+                        hdrValidated = true;
+                    }
+                }
+                {
+                    SdLockGuard guard(pdMS_TO_TICKS(500));
+                    if (!guard || outFile.write(chunk, nRead) != nRead) {
+                        failed = true;
+                        break;
+                    }
+                }
+                totalWritten += nRead;
+                lastReadMs = millis();
+            }
+        } else {
+            if (!session->isConnected() && stream.available() <= 0) {
+                break;
+            }
+            if ((millis() - lastReadMs) > 3500U) {
+                failed = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+        esp_task_wdt_reset();
+    }
+
+    if (!hdrValidated && !aborted && !failed) {
+        hdrValidated = validateImageHeader(hdrBuf, hdrCollected);
+        if (!hdrValidated) failed = true;
+    }
+
+    if (aborted || failed) {
+        session->abort();
+        session.reset();
+    } else {
+        resp.consume();
+    }
+
+    bool committed = false;
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (guard) {
+            outFile.flush();
+            outFile.close();
+            const bool complete = !aborted && !failed && hdrValidated && totalWritten >= 32U &&
+                                  (expectedLen == 0U || totalWritten == expectedLen);
+            if (complete) {
+                if (sd.exists(finalPath)) sd.remove(finalPath);
+                committed = sd.rename(tmpPath, finalPath);
+            }
+            if (!committed && sd.exists(tmpPath)) {
+                sd.remove(tmpPath);
+            }
+        }
+    }
+
+    if (committed) {
+        copySafeCStr(outSavedPath, outCap, finalPath);
+        return true;
+    }
+    return false;
+#else
+    (void)remoteFolder;
+    (void)remoteFilename;
+    (void)saveFolder;
+    (void)localStem;
+    (void)reqId;
+    (void)session;
+    return false;
+#endif
 }
 
 String FrontendSyncEngine::cleanSystemName(const String& rawSystem) {
-    String s = rawSystem;
-    s.trim();
-    
-    String sNorm = s;
-    sNorm.toLowerCase();
-    sNorm.replace("_", " ");
-    sNorm.replace("-", " ");
-    
-    const char* prefixes[] = {
-        "arcade manufacturer ",
-        "arcade system ",
-        "arcade genre ",
-        "arcade collection ",
-        "manufacturer ",
-        "system ",
-        "genre ",
-        "collection "
-    };
-    
-    for (const char* p : prefixes) {
-        if (sNorm.startsWith(p)) {
-            int len = strlen(p);
-            if (len <= s.length()) {
-                String remainder = s.substring(len);
-                if (remainder.startsWith("_") || remainder.startsWith("-")) {
-                    remainder = remainder.substring(1);
-                }
-                remainder.trim();
-                return remainder;
-            }
-        }
-    }
-    return s;
+    return engines::PixelcadeArtResolver::cleanSystemName(rawSystem);
 }
 
 String FrontendSyncEngine::formatDisplayTitle(const String& rawName) {
-    String stripped = cleanSystemName(rawName);
-    int idxParen = stripped.indexOf(" (");
-    if (idxParen > 0) {
-        stripped = stripped.substring(0, idxParen);
-    }
-    int idxBrack = stripped.indexOf(" [");
-    if (idxBrack > 0) {
-        stripped = stripped.substring(0, idxBrack);
-    }
-    stripped.replace("-", " ");
-    stripped.replace("_", " ");
-    stripped.trim();
-
-    String out;
-    out.reserve(stripped.length());
-    bool prevSpace = true;
-    for (size_t i = 0; i < stripped.length(); ++i) {
-        char c = stripped[i];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-            if (!prevSpace) {
-                out += ' ';
-                prevSpace = true;
-            }
-        } else {
-            if (prevSpace && c >= 'a' && c <= 'z') {
-                c = static_cast<char>(c - ('a' - 'A'));
-            }
-            out += c;
-            prevSpace = false;
-        }
-    }
-    out.trim();
-    return out;
+    return engines::PixelcadeArtResolver::formatDisplayTitle(rawName);
 }
 
-uint32_t FrontendSyncEngine::hashArtKey(const String& folder, const String& name) {
-    uint32_t h = 2166136261UL;
-    auto feedChar = [&](unsigned char ch) {
-        if (ch >= 'A' && ch <= 'Z') {
-            ch = static_cast<unsigned char>(ch + ('a' - 'A'));
-        }
-        h ^= ch;
-        h *= 16777619UL;
-    };
-    for (size_t i = 0; i < folder.length(); ++i) {
-        feedChar(static_cast<unsigned char>(folder[i]));
-    }
-    feedChar('/');
-    for (size_t i = 0; i < name.length(); ++i) {
-        feedChar(static_cast<unsigned char>(name[i]));
-    }
-    return (h == 0U) ? 1U : h;
+std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariants(const String& rawSystem) {
+    return engines::PixelcadeArtResolver::getSystemNameVariants(rawSystem);
 }
 
-bool FrontendSyncEngine::isMissingGameArtCached(const String& folder, const String& name) const {
-    const uint32_t needle = hashArtKey(folder, name);
+std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariantsMapped(
+    const std::map<String, std::vector<String>>& mappings,
+    const String& rawSystem) {
+    return engines::PixelcadeArtResolver::getSystemNameVariantsMapped(mappings, rawSystem);
+}
+
+String FrontendSyncEngine::mapSystemToPixelcadeFolder(const String& systemId) {
+    return engines::PixelcadeArtResolver::mapSystemToPixelcadeFolder(systemId);
+}
+
+String FrontendSyncEngine::getSecondaryPixelcadeFolder(const String& systemId) {
+    return engines::PixelcadeArtResolver::getSecondaryPixelcadeFolder(systemId);
+}
+
+bool FrontendSyncEngine::isKnownEmptyPixelcadeFolder(const char* folder) {
+    return engines::PixelcadeArtResolver::isKnownEmptyPixelcadeFolder(folder);
+}
+
+String FrontendSyncEngine::extractSystemFromRomPath(const char* currentSys, const char* romPath) {
+    return engines::PixelcadeArtResolver::extractSystemFromRomPath(currentSys, romPath);
+}
+
+void FrontendSyncEngine::sanitizeLocalStem(const char* raw, char* out, size_t outCap) {
+    engines::PixelcadeArtResolver::sanitizeLocalStem(raw, out, outCap);
+}
+
+void FrontendSyncEngine::normalizeMarqueeKey(const char* raw, char* out, size_t outCap) {
+    engines::PixelcadeArtResolver::normalizeMarqueeKey(raw, out, outCap);
+}
+
+int FrontendSyncEngine::scoreCatalogEntry(
+    const char* candidateFile,
+    const char* rawGame,
+    const char* rawTitle,
+    const char* normGame,
+    const char* normTitle
+) {
+    return engines::PixelcadeArtResolver::scoreCatalogEntry(candidateFile, rawGame, rawTitle, normGame, normTitle);
+}
+
+String FrontendSyncEngine::urlEncodeSegment(const char* raw) {
+    return engines::PixelcadeArtResolver::urlEncodeSegment(raw);
+}
+
+uint32_t FrontendSyncEngine::hashArtKey(const char* folder, const char* name) {
+    return engines::PixelcadeArtResolver::hashArtKey(folder, name);
+}
+
+bool FrontendSyncEngine::isMissingArtHashCached(uint32_t needle) const {
+    if (needle == 0U) return false;
     for (size_t i = 0; i < MISSING_ART_CACHE_SIZE; ++i) {
         if (m_missingGameArtHashes[i] == needle) {
             return true;
@@ -2636,15 +3430,31 @@ bool FrontendSyncEngine::isMissingGameArtCached(const String& folder, const Stri
     return false;
 }
 
-void FrontendSyncEngine::recordMissingGameArt(const String& folder, const String& name) {
-    if (isMissingGameArtCached(folder, name)) {
+void FrontendSyncEngine::recordMissingArtHash(uint32_t needle) {
+    if (needle == 0U || isMissingArtHashCached(needle)) {
         return;
     }
-    m_missingGameArtHashes[m_missingGameArtWriteIdx % MISSING_ART_CACHE_SIZE] = hashArtKey(folder, name);
+    m_missingGameArtHashes[m_missingGameArtWriteIdx % MISSING_ART_CACHE_SIZE] = needle;
     m_missingGameArtWriteIdx = static_cast<uint8_t>((m_missingGameArtWriteIdx + 1U) % MISSING_ART_CACHE_SIZE);
 }
 
-#include "BuiltinSystemMaps.h"
+bool FrontendSyncEngine::isMissingCatalogHashCached(uint32_t needle) const {
+    if (needle == 0U) return false;
+    for (size_t i = 0; i < MISSING_CATALOG_CACHE_SIZE; ++i) {
+        if (m_missingCatalogHashes[i] == needle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void FrontendSyncEngine::recordMissingCatalogHash(uint32_t needle) {
+    if (needle == 0U || isMissingCatalogHashCached(needle)) {
+        return;
+    }
+    m_missingCatalogHashes[m_missingCatalogWriteIdx % MISSING_CATALOG_CACHE_SIZE] = needle;
+    m_missingCatalogWriteIdx = static_cast<uint8_t>((m_missingCatalogWriteIdx + 1U) % MISSING_CATALOG_CACHE_SIZE);
+}
 
 std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
     std::map<String, std::vector<String>> mappings;
@@ -2735,426 +3545,4 @@ std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
         }
     }
     return mappings;
-}
-
-static void pushUniqueString(std::vector<String>& out, const String& val) {
-    for (const auto& existing : out) {
-        if (existing == val) return;
-    }
-    out.push_back(val);
-}
-
-static void appendPrefixedVariant(std::vector<String>& out, const char* prefix, const String& suffix, const char* tail = nullptr) {
-    String s(prefix);
-    s += suffix;
-    if (tail) s += tail;
-    pushUniqueString(out, s);
-}
-
-static void appendTargetsFromMappingsOrBuiltin(
-    const std::map<String, std::vector<String>>& mappings,
-    const String& key,
-    std::vector<String>& out) {
-    if (key.length() == 0) return;
-
-    // 1. High priority: User / systems.json explicit mappings from SD
-    auto it = mappings.find(key);
-    if (it != mappings.end()) {
-        for (const auto& target : it->second) {
-            pushUniqueString(out, target);
-        }
-    }
-
-    // 2. Firmware built-in default mappings in flash (.rodata, zero heap allocation)
-    for (size_t i = 0; BUILTIN_SYSTEM_MAPS[i].key != nullptr; i++) {
-        if (key.equalsIgnoreCase(BUILTIN_SYSTEM_MAPS[i].key)) {
-            const char* cur = BUILTIN_SYSTEM_MAPS[i].targets;
-            while (*cur) {
-                const char* comma = strchr(cur, ',');
-                String t = comma ? String(cur).substring(0, comma - cur) : String(cur);
-                cur = comma ? (comma + 1) : (cur + strlen(cur));
-                t.trim();
-                if (t.length() > 0) {
-                    pushUniqueString(out, t);
-                }
-            }
-            break;
-        }
-    }
-}
-
-std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariants(const String& rawSystem) {
-    std::map<String, std::vector<String>> emptyMap;
-    return getSystemNameVariantsMapped(emptyMap, rawSystem);
-}
-
-std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariantsMapped(
-    const std::map<String, std::vector<String>>& mappings,
-    const String& rawSystem) {
-    String clean = cleanSystemName(rawSystem);
-    String rawLower = rawSystem;
-    rawLower.trim();
-    rawLower.toLowerCase();
-
-    std::vector<String> nameVariants;
-
-    String sysLower = clean;
-    sysLower.toLowerCase();
-    String sysNospace = sysLower;
-    sysNospace.replace(" ", "");
-    String sysUnderscore = sysLower;
-    sysUnderscore.replace(" ", "_");
-
-    // 1. High priority: User / systems.json explicit mappings & flash defaults
-    const String* lookupKeys[] = { &rawLower, &sysLower, &sysNospace, &sysUnderscore };
-    for (const String* key : lookupKeys) {
-        appendTargetsFromMappingsOrBuiltin(mappings, *key, nameVariants);
-    }
-
-    // Check embedded keywords in multi-word names (e.g., "Capcom cps1" -> "cps1", "capcom")
-    static const char* const embeddedKeywords[] = { "cps1", "cps2", "cps3", "atomiswave", "naomi", "neogeo" };
-    for (const char* kw : embeddedKeywords) {
-        if (sysNospace.indexOf(kw) != -1) {
-            String kwStr(kw);
-            appendTargetsFromMappingsOrBuiltin(mappings, kwStr, nameVariants);
-            appendPrefixedVariant(nameVariants, "default-z", kwStr);
-            appendPrefixedVariant(nameVariants, "default-", kwStr);
-        }
-    }
-
-    // Extract individual words in reverse order (e.g. "cps1" before "capcom")
-    int lastSpace = 0;
-    std::vector<String> words;
-    for (size_t i = 0; i <= sysLower.length(); i++) {
-        if (i == sysLower.length() || sysLower[i] == ' ') {
-            if (i > (size_t)lastSpace) {
-                String w = sysLower.substring(lastSpace, i);
-                w.trim();
-                if (w.length() > 0 && w != "arcade" && w != "manufacturer" && w != "system" && w != "genre") {
-                    words.push_back(w);
-                }
-            }
-            lastSpace = i + 1;
-        }
-    }
-    for (int i = (int)words.size() - 1; i >= 0; i--) {
-        const String& w = words[i];
-        appendTargetsFromMappingsOrBuiltin(mappings, w, nameVariants);
-        appendPrefixedVariant(nameVariants, "default-z", w);
-        appendPrefixedVariant(nameVariants, "default-", w);
-    }
-
-    std::vector<String> uniqueBase;
-    String sysUpper = clean;
-    sysUpper.toUpperCase();
-    String sysSpace = clean;
-    sysSpace.replace("_", " ");
-
-    String sysTitle = clean;
-    bool newWord = true;
-    for (size_t i = 0; i < sysTitle.length(); i++) {
-        if (sysTitle[i] == '_' || sysTitle[i] == ' ') {
-            sysTitle[i] = ' ';
-            newWord = true;
-        } else if (newWord) {
-            sysTitle[i] = toupper(sysTitle[i]);
-            newWord = false;
-        } else {
-            sysTitle[i] = tolower(sysTitle[i]);
-        }
-    }
-
-    const String* baseSeeds[] = { &clean, &sysLower, &sysNospace, &sysUnderscore, &sysUpper, &sysTitle, &sysSpace };
-    for (const String* seed : baseSeeds) {
-        pushUniqueString(uniqueBase, *seed);
-    }
-
-    struct SysAliasGroup {
-        const char* keysCsv;
-        const char* aliasesCsv;
-    };
-    static const SysAliasGroup kAliasGroups[] = {
-        { "snes,supernintendo", "Super Nintendo|Super Nintendo Entertainment System|- Super Nintendo" },
-        { "nes,famicom", "Nintendo Entertainment System|3dnes" },
-        { "megadrive,genesis", "genesis|Genesis|Mega Drive|SEGA Genesis|- Genesis" },
-        { "mame,arcade,fbneo,fba", "arcade|Arcade|- Arcade|MAME|mame" },
-        { "n64", "Nintendo 64" },
-        { "gb,gameboy", "Game Boy" },
-        { "gba", "Game Boy Advance" },
-        { "gbc", "Game Boy Color" },
-        { "psx,ps1", "PlayStation|Sony PlayStation" },
-        { "dreamcast", "Dreamcast|SEGA Dreamcast" },
-        { "neogeo", "Neo Geo|SNK Neo Geo" },
-        { "atari,atari2600,atari7800,atari5200,atari800,atarilynx,atarijaguar,atarist", "atari|Atari|Atari_2600|Atari 2600|Atari_7800|Atari 7800" },
-        { "mastersystem", "Master System|SEGA Master System" },
-        { "gamegear", "Game Gear|SEGA Game Gear" },
-        { "pcengine,tg16", "NEC PC Engine|PC Engine" },
-        { "amiga", "Commodore Amiga|Amiga" },
-        { "c64", "COMMODORE_64|Commodore 64" },
-    };
-    for (const auto& grp : kAliasGroups) {
-        bool keyMatched = false;
-        const char* kc = grp.keysCsv;
-        while (*kc) {
-            const char* comma = strchr(kc, ',');
-            size_t klen = comma ? static_cast<size_t>(comma - kc) : strlen(kc);
-            if (sysLower.length() == klen && strncmp(sysLower.c_str(), kc, klen) == 0) {
-                keyMatched = true;
-                break;
-            }
-            kc = comma ? (comma + 1) : (kc + klen);
-        }
-        if (keyMatched) {
-            const char* ac = grp.aliasesCsv;
-            while (*ac) {
-                const char* bar = strchr(ac, '|');
-                String alias = bar ? String(ac).substring(0, bar - ac) : String(ac);
-                pushUniqueString(uniqueBase, alias);
-                ac = bar ? (bar + 1) : (ac + strlen(ac));
-            }
-            break;
-        }
-    }
-
-    String cleanLower = clean;
-    cleanLower.toLowerCase();
-    String cleanNospace = cleanLower;
-    cleanNospace.replace(" ", "");
-    String cleanUnderscore = cleanLower;
-    cleanUnderscore.replace(" ", "_");
-    String cleanKebab = cleanLower;
-    cleanKebab.replace(" ", "-");
-
-    // 1. Direct name variants (e.g. cave, atari, capcom, data_east, dataeast)
-    const String* directForms[] = { &cleanLower, &clean, &cleanUnderscore, &cleanNospace, &cleanKebab };
-    for (const String* f : directForms) pushUniqueString(nameVariants, *f);
-
-    // 2. default- prefixed variants
-    for (const String* f : directForms) appendPrefixedVariant(nameVariants, "default-", *f);
-    const String* underForms[] = { &clean, &cleanLower, &cleanUnderscore };
-    for (const String* f : underForms) appendPrefixedVariant(nameVariants, "default-_", *f);
-
-    // 3. Pixelcade z-prefixed board/publisher conventions
-    appendPrefixedVariant(nameVariants, "default-z", cleanLower);
-    appendPrefixedVariant(nameVariants, "default-z", cleanNospace);
-    appendPrefixedVariant(nameVariants, "z", cleanLower);
-    appendPrefixedVariant(nameVariants, "z", cleanNospace);
-
-    // 4. Publisher classic collections
-    appendPrefixedVariant(nameVariants, "default-arcade_", cleanUnderscore, "_classics");
-    appendPrefixedVariant(nameVariants, "default-arcade", cleanNospace, "classics");
-    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanUnderscore);
-    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanLower);
-
-    for (const auto& b : uniqueBase) {
-        String bLower = b;
-        bLower.toLowerCase();
-        String bNospace = bLower;
-        bNospace.replace(" ", "");
-        String bUnderscore = bLower;
-        bUnderscore.replace(" ", "_");
-
-        pushUniqueString(nameVariants, b);
-        pushUniqueString(nameVariants, bLower);
-        pushUniqueString(nameVariants, bUnderscore);
-        appendPrefixedVariant(nameVariants, "default-", b);
-        appendPrefixedVariant(nameVariants, "default-", bLower);
-        appendPrefixedVariant(nameVariants, "default-_", b);
-        appendPrefixedVariant(nameVariants, "default-z", bLower);
-        appendPrefixedVariant(nameVariants, "default-z", bNospace);
-        appendPrefixedVariant(nameVariants, "default-arcade_", bUnderscore, "_classics");
-        appendPrefixedVariant(nameVariants, "default-arcade", bNospace, "classics");
-        appendPrefixedVariant(nameVariants, "default-manufacture_", bUnderscore);
-        appendPrefixedVariant(nameVariants, "default-manufacture_", bLower);
-    }
-
-    // Folder search is exclusively /console/
-    std::vector<SystemVariant> list;
-    list.reserve(nameVariants.size());
-    for (const auto& n : nameVariants) {
-        list.push_back({ "console", n });
-    }
-
-    return list;
-}
-
-String FrontendSyncEngine::mapSystemToPixelcadeFolder(const String& systemId) {
-    String sLower = systemId;
-    sLower.trim();
-    sLower.toLowerCase();
-    sLower.replace(" ", "");
-    sLower.replace("_", "");
-    sLower.replace("-", "");
-
-    struct Mapping { const char* systemId; const char* folder; };
-    static const Mapping table[] = {
-        {"mame", "mame"}, {"fbneo", "mame"}, {"fba", "mame"}, {"arcade", "mame"},
-        {"cave", "mame"}, {"capcom", "mame"}, {"cps1", "mame"}, {"cps2", "mame"}, {"cps3", "mame"},
-        {"konami", "mame"}, {"taito", "mame"}, {"dataeast", "mame"}, {"midway", "mame"},
-        {"irem", "mame"}, {"namco", "mame"}, {"toaplan", "mame"}, {"technos", "mame"},
-        {"sammy", "mame"}, {"atomiswave", "mame"}, {"naomi", "mame"}, {"neogeo", "neogeo"}, {"snk", "mame"},
-        {"nes", "nes"}, {"famicom", "nes"},
-        {"snes", "snes"}, {"supernintendo", "snes"},
-        {"n64", "n64"}, {"nintendo64", "n64"},
-        {"gb", "gb"}, {"gameboy", "gb"},
-        {"gba", "gba"}, {"gameboyadvance", "gba"},
-        {"gbc", "gbc"}, {"gameboycolor", "gbc"},
-        {"megadrive", "genesis"}, {"genesis", "genesis"},
-        {"mastersystem", "mastersystem"}, {"gamegear", "gamegear"},
-        {"psx", "psx"}, {"ps1", "psx"}, {"playstation", "psx"},
-        {"ps2", "ps2"}, {"psp", "psp"},
-        {"dreamcast", "dreamcast"}, {"saturn", "saturn"},
-        {"pcengine", "pcengine"}, {"tg16", "pcengine"},
-        {"atari2600", "atari2600"}, {"atari5200", "atari5200"}, {"atari7800", "atari7800"}
-    };
-    for (const auto& m : table) {
-        if (sLower == m.systemId) return String(m.folder);
-    }
-    return systemId;
-}
-
-bool FrontendSyncEngine::downloadPixelcadeArt(
-    const String& folder,
-    const String& filename,
-    String& outPath,
-    uint32_t reqId,
-    bool* outDefinitiveMiss
-) {
-    if (outDefinitiveMiss) {
-        *outDefinitiveMiss = false;
-    }
-
-    String baseUrl = "https://raw.githubusercontent.com/red77290/pixelcade/master/" + folder + "/";
-    // URL encode the filename spaces if any
-    String urlFileName = filename;
-    urlFileName.replace(" ", "%20");
-    urlFileName.replace("!", "%21");
-    urlFileName.replace("'", "%27");
-    urlFileName.replace("(", "%28");
-    urlFileName.replace(")", "%29");
-    urlFileName.replace("&", "%26");
-    String url = baseUrl + urlFileName;
-    
-    String dirPath = "/pixelcade/" + folder;
-    String savePath = dirPath + "/" + filename;
-
-    auto writeStreamToSd = [&](Stream& stream, int len, const String& dPath, const String& sPath) -> bool {
-        SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
-        if (!sdGuard) {
-            LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", sPath.c_str());
-            return false;
-        }
-
-        if (!sd.exists("/pixelcade")) {
-            sd.mkdir("/pixelcade");
-        }
-        if (!sd.exists(dPath.c_str())) {
-            sd.mkdir(dPath.c_str());
-        }
-
-        FsFile file = sd.open(sPath.c_str(), FILE_OPEN_WRITE);
-        if (!file) {
-            LOGE("RetroFrontend", "Failed to open file for writing: %s", sPath.c_str());
-            return false;
-        }
-
-        uint8_t buff[512] = { 0 };
-        int bytesWrittenTotal = 0;
-        unsigned long lastLog = millis();
-        uint32_t startMs = millis();
-
-        while (len > 0 || len == -1) {
-            size_t size = stream.available();
-            if (size) {
-                int toRead = (size > sizeof(buff)) ? sizeof(buff) : size;
-                if (len > 0 && toRead > len) toRead = len;
-                int c = stream.readBytes(reinterpret_cast<char*>(buff), toRead);
-                if (c > 0) {
-                    file.write(buff, c);
-                    bytesWrittenTotal += c;
-                    if (len > 0) len -= c;
-                    startMs = millis();
-                }
-            } else {
-                if (millis() - startMs > 4000) break;
-                delay(1);
-            }
-
-            esp_task_wdt_reset();
-
-            if (millis() - lastLog > 2000) {
-                LOGI("RetroFrontend", "Downloading... %d bytes written", bytesWrittenTotal);
-                lastLog = millis();
-            }
-
-            if (internalBroker) internalBroker->loop();
-            if (mqttClient.connected()) mqttClient.loop();
-
-            if (reqId != currentRequestId) {
-                LOGI("RetroFrontend", "User scrolled to a new game, aborting download of %s", sPath.c_str());
-                file.close();
-                sd.remove(sPath.c_str());
-                return false;
-            }
-        }
-
-        file.close();
-
-        if (bytesWrittenTotal > 0) {
-            bool validFile = false;
-            if (sd.exists(sPath.c_str())) {
-                FsFile checkFile = sd.open(sPath.c_str(), FILE_OPEN_READ);
-                if (checkFile) {
-                    validFile = (checkFile.size() > 100);
-                    checkFile.close();
-                }
-            }
-            if (validFile) {
-                outPath = sPath;
-                LOGI("RetroFrontend", "Successfully downloaded and saved to %s", sPath.c_str());
-                return true;
-            }
-            sd.remove(sPath.c_str());
-        }
-        return false;
-    };
-
-    bool isHttps = url.startsWith("https://");
-    bool downloaded = false;
-
-    if (isHttps) {
-        net::SecureHttpOptions options;
-        options.requestTimeoutMs = 6000;
-        options.handshakeTimeoutSec = 4;
-        options.userAgent = "ArcadeMatrix-ESP32";
-        options.followRedirects = true;
-
-        LOGI("RetroFrontend", "Downloading %s via SecureHttpClient", url.c_str());
-        auto response = net::SecureHttpClient::get(url, options);
-        if (response.ok()) {
-            downloaded = writeStreamToSd(response.stream(), response.contentLength(), dirPath, savePath);
-        } else {
-            if (outDefinitiveMiss && response.statusCode() == 404) {
-                *outDefinitiveMiss = true;
-            }
-            LOGW("RetroFrontend", "HTTPS GET failed with code %d (%s)", response.statusCode(), response.errorMessage());
-        }
-    } else {
-        HTTPClient http;
-        http.setTimeout(4000);
-        http.setUserAgent("ArcadeMatrix-ESP32");
-        WiFiClient plainClient;
-        if (http.begin(plainClient, url)) {
-            int httpCode = http.GET();
-            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-                downloaded = writeStreamToSd(*http.getStreamPtr(), http.getSize(), dirPath, savePath);
-            } else if (outDefinitiveMiss && httpCode == HTTP_CODE_NOT_FOUND) {
-                *outDefinitiveMiss = true;
-            }
-            http.end();
-            plainClient.stop();
-        }
-    }
-
-    return downloaded;
 }

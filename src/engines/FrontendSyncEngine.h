@@ -3,18 +3,20 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <PicoMQTT.h>
-#include <HTTPClient.h>
 #include <atomic>
 #include <map>
+#include <memory>
 #include <vector>
 #include "../../include/core/EngineContract.h"
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
 #include "MessageEngine.h"
+#include "PixelcadeArtResolver.h"
 #include "showcase/ShowcaseStreamPlayer.h"
 #include "renderers/FireworksLutRenderer.h"
 #include "clocks/ClockSpriteBank.h"
 
+namespace net { class SecureHttpSession; }
 class IDrawingSurface;
 
 struct SyncHiScoreEntryPod {
@@ -331,16 +333,26 @@ public:
         const String& fallbackQuery = ""
     );
 
-    struct SystemVariant {
-        String folder;
-        String name;
-    };
+    using SystemVariant = engines::PixelcadeSystemVariant;
     static String cleanSystemName(const String& rawSystem);
     static String formatDisplayTitle(const String& rawName);
     static std::vector<SystemVariant> getSystemNameVariants(const String& systemId);
     static std::vector<SystemVariant> getSystemNameVariantsMapped(const std::map<String, std::vector<String>>& mappings, const String& systemId);
     static std::map<String, std::vector<String>> loadMappingsFromSD();
     static String mapSystemToPixelcadeFolder(const String& systemId);
+    static String getSecondaryPixelcadeFolder(const String& systemId);
+    static bool isKnownEmptyPixelcadeFolder(const char* folder);
+    static String extractSystemFromRomPath(const char* currentSys, const char* romPath);
+    static void sanitizeLocalStem(const char* raw, char* out, size_t outCap);
+    static void normalizeMarqueeKey(const char* raw, char* out, size_t outCap);
+    static int scoreCatalogEntry(
+        const char* candidateFile,
+        const char* rawGame,
+        const char* rawTitle,
+        const char* normGame = nullptr,
+        const char* normTitle = nullptr
+    );
+    static String urlEncodeSegment(const char* raw);
 
 private:
     MqttConfig mqttConfig;
@@ -374,12 +386,17 @@ private:
     bool m_mappingsLoaded = false;
     unsigned long m_lastBrokerCacheCheckMs = 0;
 
-    static constexpr size_t MISSING_ART_CACHE_SIZE = 32;
+    static constexpr size_t MISSING_ART_CACHE_SIZE = 64;
     uint32_t m_missingGameArtHashes[MISSING_ART_CACHE_SIZE] = {0};
     uint8_t m_missingGameArtWriteIdx = 0;
-    static uint32_t hashArtKey(const String& folder, const String& name);
-    bool isMissingGameArtCached(const String& folder, const String& name) const;
-    void recordMissingGameArt(const String& folder, const String& name);
+    static constexpr size_t MISSING_CATALOG_CACHE_SIZE = 16;
+    uint32_t m_missingCatalogHashes[MISSING_CATALOG_CACHE_SIZE] = {0};
+    uint8_t m_missingCatalogWriteIdx = 0;
+    static uint32_t hashArtKey(const char* folder, const char* name);
+    bool isMissingArtHashCached(uint32_t needle) const;
+    void recordMissingArtHash(uint32_t needle);
+    bool isMissingCatalogHashCached(uint32_t needle) const;
+    void recordMissingCatalogHash(uint32_t needle);
 
     std::atomic<bool> isReconnecting{false};
     std::atomic<bool> stopReconnectRequested{false};
@@ -387,7 +404,7 @@ private:
     TaskHandle_t reconnectTaskHandle = nullptr;
     static void reconnectTaskFunc(void* param);
 
-    // Lock-free Core 1 <-> Core 0 Showcase worker synchronization (zero std::mutex on Core 1)
+    // Lock-free Core 1 <-> Core 0 Showcase & Artwork worker synchronization (zero std::mutex on Core 1)
     struct WorkerConfigSlot {
         char showcaseUrl[96] = "http://dmdmediashowcase.local:8890";
         char localBroker[96] = "";
@@ -427,6 +444,25 @@ private:
         bool cancelRemote = false;
     };
 
+    struct ArtDownloadJobSlot {
+        char primaryFolder[36] = "";
+        char secondaryFolder[36] = "";
+        char query[96] = "";
+        char title[96] = "";
+        char localStem[96] = "";
+        uint32_t reqId = 0;
+        uint32_t negHash = 0;
+        bool isSystem = false;
+        bool active = false;
+    };
+
+    struct ArtDownloadResultSlot {
+        char savedPath[128] = "";
+        uint32_t reqId = 0;
+        uint32_t missingHash = 0;
+        bool downloaded = false;
+    };
+
     std::atomic<uint32_t> m_cfgSeq{0};
     WorkerConfigSlot m_workerCfg;
     std::atomic<uint32_t> m_cfgGen{1};
@@ -449,6 +485,13 @@ private:
     void updateSyncCardCycle();
     void resetSyncCardCycle();
     bool handleCompanionEvent(const String& jsonPayload);
+
+    std::atomic<uint32_t> m_artJobSeq{0};
+    ArtDownloadJobSlot m_artJobSlot;
+    std::atomic<uint32_t> m_activeArtReqId{0};
+    std::atomic<uint32_t> m_artResultSeq{0};
+    ArtDownloadResultSlot m_artResultSlot;
+    std::atomic<bool> m_artResultPending{false};
 
     std::atomic<bool> m_workerStopRequested{false};
     std::atomic<bool> m_workerExited{true};
@@ -496,13 +539,49 @@ private:
     unsigned long pendingEventTime = 0;
     String pendingPayload = "";
 
+    bool tryPlayMarqueePath(const char* path);
+    void showCyanTitleBanner(const char* primaryTitle, const String& fallbackName);
+    void dispatchAsyncArtJob(
+        const char* primaryFolder,
+        const char* secondaryFolder,
+        const char* query,
+        const char* title,
+        const char* localStem,
+        uint32_t reqId,
+        uint32_t negHash,
+        bool isSystem
+    );
+    void processWorkerArtJob(
+        const ArtDownloadJobSlot& job,
+        std::unique_ptr<net::SecureHttpSession>& session,
+        uint32_t& lastArtActivityMs
+    );
+    bool ensureFolderCatalogCachedOnWorker(
+        const char* folder,
+        uint32_t reqId,
+        std::unique_ptr<net::SecureHttpSession>& session,
+        bool& outDefinitive404
+    );
+    bool findMatchInCatalogFile(
+        const char* catalogPath,
+        const ArtDownloadJobSlot& job,
+        const std::vector<SystemVariant>* sysVariants,
+        char* outMatchedFilename,
+        size_t outCap
+    );
+    bool downloadExactPixelcadeFile(
+        const char* remoteFolder,
+        const char* remoteFilename,
+        const char* saveFolder,
+        const char* localStem,
+        uint32_t reqId,
+        std::unique_ptr<net::SecureHttpSession>& session,
+        char* outSavedPath,
+        size_t outCap,
+        bool* outDefinitive404 = nullptr
+    );
+
     void handleGameEvent(const String& jsonPayload, uint32_t reqId);
     void handleSystemEvent(const String& systemId, uint32_t reqId);
-    bool downloadPixelcadeArt(
-        const String& folder,
-        const String& name,
-        String& outPath,
-        uint32_t reqId,
-        bool* outDefinitiveMiss = nullptr
-    );
 };
+

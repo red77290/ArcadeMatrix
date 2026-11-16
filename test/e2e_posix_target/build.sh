@@ -18,6 +18,7 @@ CXX_BIN="${CXX:-c++}"
   "${REPO_ROOT}/src/core/drawing/DmdzStreamDecoder.cpp" \
   "${REPO_ROOT}/src/core/net/DmdzStreamClient.cpp" \
   "${REPO_ROOT}/src/core/net/ShowcaseDiscovery.cpp" \
+  "${REPO_ROOT}/src/engines/PixelcadeArtResolver.cpp" \
   "${REPO_ROOT}/src/engines/showcase/ShowcaseStreamPlayer.cpp" \
   -o "${OUT_BIN}"
 

@@ -3360,15 +3360,15 @@ void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
     ctx.height = 32;
     ctx.colorDepth = 8;
     ctx.hardware.hasPsram = false;
-    ctx.requestedPipeline = "canvas_single"; // Forces single buffer
+    ctx.requestedPipeline = "direct_single"; // Forces raw unbuffered DIRECT_DMA_SINGLE
 
-    // 1. Engine requires double-buffering but single-buffer was selected -> Incompatible!
+    // 1. Engine requires offscreen/double-buffering and raw direct_single was selected -> Incompatible!
     auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
     TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
     TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v1.primaryReason);
     TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
 
-    // 2. Engine prefers double buffer but supports single buffer -> CompatibleDegraded!
+    // 2. Engine prefers double buffer on raw direct_single -> CompatibleDegraded!
     EngineDescriptor prefDesc;
     prefDesc.metadata.id = "pref_engine";
     prefDesc.requirements.prefersDoubleBuffer = true;
@@ -3378,6 +3378,11 @@ void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
     TEST_ASSERT_TRUE(v2.degraded());
     TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v2.primaryReason);
     TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v2.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
+
+    // 2b. With Canvas + Single DMA (`canvas_single`), both engines render tear-free into offscreen RGB565 canvas -> Compatible!
+    ctx.requestedPipeline = "canvas_single";
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)CompatibilityEvaluator::evaluate(desc, ctx).status);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)CompatibilityEvaluator::evaluate(prefDesc, ctx).status);
 
     // 3. Single-buffer blanking budget exceeded:
     // Tight blanking budget 100µs on canvas_single where transfer estimate is ~150-250µs

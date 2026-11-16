@@ -101,6 +101,7 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "engines", "clocks", "ClockSpriteBank.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "AgendaIcsParser.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "AgendaEngine.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "engines", "PixelcadeArtResolver.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "WebUiSyncEngine.cpp"),
         os.path.join(PROJECT_ROOT, "src", "services", "IconService.cpp"),
         os.path.join(PROJECT_ROOT, "test", "native", "test_native_core.cpp"),

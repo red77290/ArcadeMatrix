@@ -245,8 +245,8 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     desc_visualizer.requirements.needsAudio = true;
     desc_visualizer.requirements.needsAudioInput = true;
     desc_visualizer.requirements.targetFps = 60;
-    desc_visualizer.requirements.requiresDoubleBuffer = true;
-    desc_visualizer.requirements.supportsSingleBuffer = false;
+    desc_visualizer.requirements.prefersDoubleBuffer = true;
+    desc_visualizer.requirements.supportsSingleBuffer = true;
     desc_visualizer.requirements.internalPersistentBytes = 10000;
     desc_visualizer.requirements.internalContiguousBytes = 8000;
     desc_visualizer.schema.fields = {
