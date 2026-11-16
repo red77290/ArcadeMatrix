@@ -9,7 +9,7 @@ static const struct BuiltinSystemMap {
     const char* targets;
 } BUILTIN_SYSTEM_MAPS[] = {
     // Arcade & Virtual Collections
-    {"arcade", "mame,- Arcade,arcade,default-_arcade,default-arcade"},
+    {"arcade", "- Arcade,default-_arcade,arcade,default-arcade,mame"},
     {"arcadeall", "mame,- Arcade,default-all_games,all_games"},
     {"-_arcade", "- Arcade,mame,default-_arcade"},
     {"- arcade", "- Arcade,mame,default-_arcade"},

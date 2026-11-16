@@ -501,6 +501,9 @@ private:
     TaskHandle_t m_showcaseWorkerHandle = nullptr;
     char* m_streamIoScratch = nullptr;
     size_t m_streamIoScratchCap = 0;
+    char m_cachedCatalogPath[96] = "";
+    char* m_cachedCatalogPsram = nullptr;
+    size_t m_cachedCatalogLen = 0;
 
     static void showcaseWorkerTaskFunc(void* param);
     void showcaseWorkerLoop();
@@ -516,6 +519,7 @@ private:
     void cancelInGameShowcaseSession(bool allowWorkerSpawn = true);
     bool ensureStreamScratchAllocated();
     void freeStreamBuffersSafely();
+    void freeCatalogPsramCache();
     bool streamReadyItemOnce(
         const char* resolvedServerUrl,
         const char* syncClientId,
@@ -584,7 +588,9 @@ private:
         const ArtDownloadJobSlot& job,
         const std::vector<SystemVariant>* sysVariants,
         char* outMatchedFilename,
-        size_t outCap
+        size_t outCap,
+        char* outFallbackFilename = nullptr,
+        size_t fallbackCap = 0
     );
     bool downloadExactPixelcadeFile(
         const char* remoteFolder,
@@ -595,7 +601,8 @@ private:
         std::unique_ptr<net::SecureHttpSession>& session,
         char* outSavedPath,
         size_t outCap,
-        bool* outDefinitive404 = nullptr
+        bool* outDefinitive404 = nullptr,
+        bool* outPermanentSkip = nullptr
     );
 
     void handleGameEvent(const String& jsonPayload, uint32_t reqId);
