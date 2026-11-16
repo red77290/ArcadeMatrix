@@ -341,6 +341,22 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.internalContiguousBytes = 8192;
         engines.push_back(d);
     }
+    // 23. Agenda
+    {
+        EngineDescriptor d;
+        d.metadata = {"agenda", "Connected Agenda (.ics)", "info", FIRMWARE_VERSION};
+        d.requirements.needsPsram = false;
+        d.requirements.needsNetwork = true;
+        d.requirements.needsTls = true;
+        d.requirements.needsSd = true;
+        d.requirements.targetFps = 30;
+        d.requirements.prefersDoubleBuffer = false;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 1200;
+        d.requirements.internalContiguousBytes = 8192;
+        d.requirements.shadowBytesPerFrame = 0;
+        engines.push_back(d);
+    }
 
     return engines;
 }

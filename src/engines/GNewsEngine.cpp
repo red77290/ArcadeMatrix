@@ -7,6 +7,10 @@
 #include <cmath>
 #include <cstdlib>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 namespace {
 uint32_t gnewsRandomU32() {
 #if defined(ESP32)

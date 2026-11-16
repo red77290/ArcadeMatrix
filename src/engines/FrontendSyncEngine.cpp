@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include "../core/drawing/IDrawingSurface.h"
 #include "../core/drawing/DmdzStreamDecoder.h"
+#include "../core/I18n.h"
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
@@ -21,6 +22,10 @@
 #if !defined(UNIT_TEST)
 #include <ESPmDNS.h>
 #endif
+#endif
+
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
 #endif
 
 extern ConfigLoader config;
@@ -110,11 +115,406 @@ void readSharedBrokerState(bool& outFromShowcase, char* outHost, size_t hostCap,
     outProbedOnce = false;
 }
 
+void drawSyncText(IDrawingSurface* s, int16_t x, int16_t y, const char* text, uint16_t color, int16_t maxWidthPx) {
+    if (!s || !text || text[0] == '\0' || maxWidthPx <= 0) return;
+    const int maxChars = maxWidthPx / 6;
+    if (maxChars <= 0) return;
+    s->setTextSize(1);
+    s->setTextColor(color);
+    for (int i = 0; i < maxChars && text[i] != '\0'; ++i) {
+        s->setCursor(static_cast<int16_t>(x + i * 6), y);
+        char ch[2] = {text[i], '\0'};
+        s->print(ch);
+    }
+}
+
+void drawSyncScrollingText(
+    IDrawingSurface* s,
+    int16_t x,
+    int16_t y,
+    int16_t widthPx,
+    const char* text,
+    uint16_t color,
+    uint32_t elapsedMs
+) {
+    if (!s || !text || text[0] == '\0' || widthPx <= 0) return;
+    const int textLen = static_cast<int>(strlen(text));
+    const int textPx = textLen * 6;
+    if (textPx <= widthPx) {
+        drawSyncText(s, x, y, text, color, widthPx);
+        return;
+    }
+    const int scrollSpan = textPx - widthPx + 18;
+    const int rawStep = static_cast<int>((elapsedMs / 45U) % static_cast<uint32_t>(scrollSpan + 24));
+    const int offsetPx = (rawStep > 12) ? std::min(scrollSpan, rawStep - 12) : 0;
+    const int firstChar = offsetPx / 6;
+    const int maxChars = (widthPx / 6) + 1;
+    s->setTextSize(1);
+    s->setTextColor(color);
+    for (int i = 0; i < maxChars && (firstChar + i) < textLen; ++i) {
+        int16_t cx = static_cast<int16_t>(x + i * 6);
+        if (cx + 5 <= x + widthPx) {
+            s->setCursor(cx, y);
+            char ch[2] = {text[firstChar + i], '\0'};
+            s->print(ch);
+        }
+    }
+}
+
+void drawTrophyIcon8x8(IDrawingSurface* s, int16_t x, int16_t y, uint16_t color) {
+    if (!s) return;
+    s->drawFastHLine(x + 1, y, 6, color);
+    s->drawPixel(x, y + 1, color);
+    s->drawFastHLine(x + 1, y + 1, 6, 0xFFE0);
+    s->drawPixel(x + 7, y + 1, color);
+    s->drawFastHLine(x, y + 2, 8, color);
+    s->drawFastHLine(x + 1, y + 3, 6, color);
+    s->drawFastHLine(x + 2, y + 4, 4, color);
+    s->drawFastVLine(x + 3, y + 5, 2, color);
+    s->drawFastVLine(x + 4, y + 5, 2, color);
+    s->drawFastHLine(x + 1, y + 7, 6, color);
+}
+
+uint16_t rankColor565(uint8_t rank) {
+    if (rank == 1U) return 0xFFE0; // Gold
+    if (rank == 2U) return 0xC618; // Silver
+    if (rank == 3U) return 0xFD20; // Bronze
+    return 0x07FF;                 // Cyan
+}
+
 } // namespace
 
 // ============================================================================
-// InGameShowcaseEngine (Core 1 lock-free RGB565 presenter)
+// SyncCelebrationEngine (Core 1 lock-free 60 FPS celebration presenter)
 // ============================================================================
+
+EngineError SyncCelebrationEngine::initialize(EngineContext* context, const EngineConfig* cfg) {
+    (void)cfg;
+    if (context) {
+        m_surface = context->getSurface();
+        m_geometry = context->getGeometry();
+    }
+    if (m_geometry.width == 0) m_geometry.width = 128;
+    if (m_geometry.height == 0) m_geometry.height = 32;
+    m_fireworks.reset(m_geometry.width, m_geometry.height);
+    m_dirty = false;
+    m_renderedNewFrame = false;
+    return EngineError::OK;
+}
+
+void SyncCelebrationEngine::triggerCelebration(const SyncCelebrationPayloadPod& payload) {
+    m_seq.fetch_add(1U, std::memory_order_acq_rel);
+    m_pendingPayload = payload;
+    m_seq.fetch_add(1U, std::memory_order_release);
+}
+
+void SyncCelebrationEngine::latchPendingPayload() {
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint32_t s1 = m_seq.load(std::memory_order_acquire);
+        if ((s1 & 1U) != 0U) continue;
+        SyncCelebrationPayloadPod tmp = m_pendingPayload;
+        uint32_t s2 = m_seq.load(std::memory_order_acquire);
+        if (s1 == s2) {
+            m_activePayload = tmp;
+            return;
+        }
+    }
+    m_activePayload = m_pendingPayload;
+}
+
+void SyncCelebrationEngine::activate() {
+    latchPendingPayload();
+    const uint16_t w = (m_surface && m_surface->width() > 0) ? static_cast<uint16_t>(m_surface->width()) : m_geometry.width;
+    const uint16_t h = (m_surface && m_surface->height() > 0) ? static_cast<uint16_t>(m_surface->height()) : m_geometry.height;
+    m_fireworks.reset(w, h);
+    m_lastUpdateMs = millis();
+    m_tickCount = 0;
+    m_dirty = true;
+    m_renderedNewFrame = false;
+}
+
+void SyncCelebrationEngine::update(EngineContext* context) {
+    if (context && context->getSurface()) {
+        m_surface = context->getSurface();
+        m_geometry = context->getGeometry();
+    }
+    latchPendingPayload();
+    const uint32_t now = millis();
+    if (m_lastUpdateMs == 0U || (now - m_lastUpdateMs) >= 15U) {
+        m_lastUpdateMs = (now == 0U) ? 1U : now;
+        const uint16_t w = (m_surface && m_surface->width() > 0) ? static_cast<uint16_t>(m_surface->width()) : m_geometry.width;
+        const uint16_t h = (m_surface && m_surface->height() > 0) ? static_cast<uint16_t>(m_surface->height()) : m_geometry.height;
+        m_fireworks.step(w, h);
+        ++m_tickCount;
+        m_dirty = true;
+    }
+}
+
+void SyncCelebrationEngine::render(EngineContext* context) {
+    if (!m_dirty) {
+        m_renderedNewFrame = false;
+        return;
+    }
+    IDrawingSurface* s = (context && context->getSurface()) ? context->getSurface() : m_surface;
+    if (!s) {
+        m_renderedNewFrame = false;
+        return;
+    }
+
+    const int16_t w = static_cast<int16_t>(s->width() > 0 ? s->width() : m_geometry.width);
+    const int16_t h = static_cast<int16_t>(s->height() > 0 ? s->height() : m_geometry.height);
+    const bool isTate = (h > w);
+
+    // 1. Background Q8.8 fixed-point fireworks
+    m_fireworks.render(s);
+
+    const Lang lang = I18n::parseLang(String(m_activePayload.lang[0] != '\0' ? m_activePayload.lang : "en"));
+    const bool isHighScore = (m_activePayload.kind == SyncCelebrationKind::HighScore);
+    const char* bannerTitle = isHighScore
+        ? I18n::getSyncNewRecordTitle(lang)
+        : I18n::getSyncUnlockedTitle(lang);
+    const int8_t bounceY = m_fireworks.currentHeaderBounceOffset();
+    const ClockSpriteBank::HeroFamily heroFam = ClockSpriteBank::classifySystemHero(m_activePayload.system);
+
+    if (isTate) {
+        // Tate celebration: fireworks sky at top, bouncing header in middle, hero + record/trophy stacked
+        const int16_t headerY = static_cast<int16_t>(16 + bounceY / 2);
+        drawTrophyIcon8x8(s, 2, headerY, 0xFFE0);
+        drawSyncText(s, 12, headerY, bannerTitle, 0xFFE0, w - 13);
+
+        ClockSpriteBank::drawCelebrationHero(s, heroFam, h - 2, static_cast<uint16_t>(w), static_cast<uint16_t>(h), m_tickCount);
+
+        if (isHighScore) {
+            char rankLine[16];
+            snprintf(rankLine, sizeof(rankLine), "#%u %s", static_cast<unsigned>(m_activePayload.rank), m_activePayload.tag[0] ? m_activePayload.tag : "AAA");
+            drawSyncText(s, 2, 28, rankLine, rankColor565(m_activePayload.rank), w - 4);
+            drawSyncText(s, 2, 37, m_activePayload.score, 0xFFFF, w - 4);
+        } else {
+            drawSyncScrollingText(s, 2, 28, w - 4, m_activePayload.title, 0xFFFF, static_cast<uint32_t>(m_tickCount) * 16U);
+            char ptsLine[20];
+            snprintf(ptsLine, sizeof(ptsLine), "+%u PTS%s", static_cast<unsigned>(m_activePayload.points), m_activePayload.hardcore ? " HC" : "");
+            drawSyncText(s, 2, 37, ptsLine, m_activePayload.hardcore ? 0xFFE0 : 0x07FF, w - 4);
+        }
+    } else {
+        // Yoko celebration: bouncing header at top, hero cameo along bottom, record/trophy details
+        const int16_t headerY = static_cast<int16_t>(1 + (bounceY < -2 ? -1 : 0));
+        drawTrophyIcon8x8(s, 2, headerY, 0xFFE0);
+        drawSyncText(s, 12, headerY, bannerTitle, 0xFFE0, w - 14);
+
+        ClockSpriteBank::drawCelebrationHero(s, heroFam, h - 1, static_cast<uint16_t>(w), static_cast<uint16_t>(h), m_tickCount);
+
+        const int16_t textX = (w >= 128) ? 28 : 20;
+        const int16_t availW = static_cast<int16_t>(w - textX - 2);
+        if (isHighScore) {
+            char line1[32];
+            if (w >= 128 && m_activePayload.game[0] != '\0') {
+                snprintf(line1, sizeof(line1), "#%u %s - %s", static_cast<unsigned>(m_activePayload.rank), m_activePayload.tag[0] ? m_activePayload.tag : "AAA", m_activePayload.game);
+            } else {
+                snprintf(line1, sizeof(line1), "#%u %s", static_cast<unsigned>(m_activePayload.rank), m_activePayload.tag[0] ? m_activePayload.tag : "AAA");
+            }
+            drawSyncText(s, textX, 12, line1, rankColor565(m_activePayload.rank), availW);
+            drawSyncText(s, textX, 22, m_activePayload.score, 0xFFFF, availW);
+        } else {
+            drawSyncScrollingText(s, textX, 12, availW, m_activePayload.title, 0xFFFF, static_cast<uint32_t>(m_tickCount) * 16U);
+            char ptsLine[28];
+            if (m_activePayload.hardcore) {
+                snprintf(ptsLine, sizeof(ptsLine), "+%u PTS [HARDCORE]", static_cast<unsigned>(m_activePayload.points));
+            } else {
+                snprintf(ptsLine, sizeof(ptsLine), "+%u PTS", static_cast<unsigned>(m_activePayload.points));
+            }
+            drawSyncText(s, textX, 22, ptsLine, m_activePayload.hardcore ? 0xFFE0 : 0x07FF, availW);
+        }
+    }
+
+    m_dirty = false;
+    m_renderedNewFrame = true;
+}
+
+void SyncCelebrationEngine::deactivate() {
+    m_dirty = false;
+    m_renderedNewFrame = false;
+}
+
+void SyncCelebrationEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    m_geometry = geometry;
+    m_dirty = true;
+}
+
+// ============================================================================
+// InGameShowcaseEngine (Core 1 lock-free RGB565 + Sync Cards presenter)
+// ============================================================================
+
+void InGameShowcaseEngine::publishSyncMeta(const SyncMetaPayloadPod& meta) {
+    m_syncMetaSeq.fetch_add(1U, std::memory_order_acq_rel);
+    m_pendingSyncMeta = meta;
+    m_syncMetaSeq.fetch_add(1U, std::memory_order_release);
+}
+
+void InGameShowcaseEngine::clearSyncMeta() {
+    m_activeCardMode.store(static_cast<uint8_t>(SyncCardMode::None), std::memory_order_release);
+    m_syncMetaSeq.fetch_add(1U, std::memory_order_acq_rel);
+    m_pendingSyncMeta = SyncMetaPayloadPod{};
+    m_syncMetaSeq.fetch_add(1U, std::memory_order_release);
+}
+
+void InGameShowcaseEngine::setActiveCardMode(SyncCardMode mode) {
+    const uint8_t prev = m_activeCardMode.exchange(static_cast<uint8_t>(mode), std::memory_order_acq_rel);
+    if (prev != static_cast<uint8_t>(mode)) {
+        m_cardActivatedMs = millis();
+        m_lastCardFrameMs = 0;
+        m_dirty = true;
+    }
+}
+
+void InGameShowcaseEngine::latchSyncMetaIfNeeded() {
+    const uint32_t curSeq = m_syncMetaSeq.load(std::memory_order_acquire);
+    if ((curSeq & 1U) != 0U || curSeq == m_latchedSyncMetaSeq) {
+        return;
+    }
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint32_t s1 = m_syncMetaSeq.load(std::memory_order_acquire);
+        if ((s1 & 1U) != 0U) continue;
+        SyncMetaPayloadPod tmp = m_pendingSyncMeta;
+        uint32_t s2 = m_syncMetaSeq.load(std::memory_order_acquire);
+        if (s1 == s2) {
+            m_activeSyncMeta = tmp;
+            m_latchedSyncMetaSeq = s1;
+            m_dirty = true;
+            return;
+        }
+    }
+}
+
+void InGameShowcaseEngine::renderHallOfFameCard(IDrawingSurface* s) {
+    if (!s) return;
+    s->clear(0);
+    const int16_t w = static_cast<int16_t>(s->width() > 0 ? s->width() : m_width);
+    const int16_t h = static_cast<int16_t>(s->height() > 0 ? s->height() : m_height);
+    const bool isTate = (h > w);
+    const Lang lang = I18n::parseLang(String(m_activeSyncMeta.lang[0] != '\0' ? m_activeSyncMeta.lang : "en"));
+    const char* titleStr = I18n::getSyncHighScoresTitle(lang);
+    const uint32_t elapsed = millis() - m_cardActivatedMs;
+
+    drawTrophyIcon8x8(s, 2, 0, 0xFFE0);
+    drawSyncText(s, 12, 0, titleStr, 0xFFE0, w - 14);
+    s->drawFastHLine(0, 8, w, 0x3186);
+
+    const uint8_t count = (m_activeSyncMeta.hiscoreCount <= 5U) ? m_activeSyncMeta.hiscoreCount : 5U;
+    if (count == 0U) return;
+
+    if (isTate) {
+        int16_t y = 11;
+        if (m_activeSyncMeta.title[0] != '\0' || m_activeSyncMeta.game[0] != '\0') {
+            const char* gName = m_activeSyncMeta.title[0] ? m_activeSyncMeta.title : m_activeSyncMeta.game;
+            drawSyncText(s, 2, y, gName, 0x07FF, w - 4);
+            y = static_cast<int16_t>(y + 9);
+        }
+        const uint8_t maxRows = (h >= 128) ? 5U : 3U;
+        for (uint8_t i = 0; i < count && i < maxRows; ++i) {
+            const auto& e = m_activeSyncMeta.hiscores[i];
+            const uint8_t rk = (e.rank > 0U) ? e.rank : static_cast<uint8_t>(i + 1U);
+            char rowBuf[24];
+            if (w <= 48) {
+                snprintf(rowBuf, sizeof(rowBuf), "#%u %s", static_cast<unsigned>(rk), e.tag[0] ? e.tag : "AAA");
+                drawSyncText(s, 1, y, rowBuf, rankColor565(rk), w - 2);
+                drawSyncText(s, 4, static_cast<int16_t>(y + 8), e.score, 0xFFFF, w - 5);
+                y = static_cast<int16_t>(y + 17);
+            } else {
+                snprintf(rowBuf, sizeof(rowBuf), "#%u %-3s %s", static_cast<unsigned>(rk), e.tag[0] ? e.tag : "AAA", e.score);
+                drawSyncText(s, 2, y, rowBuf, rankColor565(rk), w - 4);
+                y = static_cast<int16_t>(y + 10);
+            }
+        }
+    } else if (h >= 64) {
+        for (uint8_t i = 0; i < count; ++i) {
+            const auto& e = m_activeSyncMeta.hiscores[i];
+            const uint8_t rk = (e.rank > 0U) ? e.rank : static_cast<uint8_t>(i + 1U);
+            const int16_t rowY = static_cast<int16_t>(11 + i * 10);
+            char leftBuf[16];
+            snprintf(leftBuf, sizeof(leftBuf), "#%u %-3s", static_cast<unsigned>(rk), e.tag[0] ? e.tag : "AAA");
+            drawSyncText(s, 4, rowY, leftBuf, rankColor565(rk), 48);
+            drawSyncText(s, 56, rowY, e.score, 0xFFFF, w - 80);
+        }
+        ClockSpriteBank::drawPacman(s, w - 18, 22, static_cast<uint8_t>((elapsed / 120U) & 0x03U), true);
+    } else {
+        // 32px Yoko: show 2 rows at a time, paging every 4s if > 2 entries
+        const uint8_t pageOffset = (count > 2U && ((elapsed / 4000U) & 1U) != 0U) ? 2U : 0U;
+        for (uint8_t slot = 0; slot < 2U && (pageOffset + slot) < count; ++slot) {
+            const auto& e = m_activeSyncMeta.hiscores[pageOffset + slot];
+            const uint8_t rk = (e.rank > 0U) ? e.rank : static_cast<uint8_t>(pageOffset + slot + 1U);
+            const int16_t rowY = static_cast<int16_t>(11 + slot * 10);
+            char rowBuf[32];
+            snprintf(rowBuf, sizeof(rowBuf), "#%u %-3s %s", static_cast<unsigned>(rk), e.tag[0] ? e.tag : "AAA", e.score);
+            drawSyncText(s, 2, rowY, rowBuf, (slot == 0U && pageOffset == 0U) ? 0xFFE0 : rankColor565(rk), w - 4);
+        }
+    }
+}
+
+void InGameShowcaseEngine::renderRetroAchievementsCard(IDrawingSurface* s) {
+    if (!s) return;
+    s->clear(0);
+    const int16_t w = static_cast<int16_t>(s->width() > 0 ? s->width() : m_width);
+    const int16_t h = static_cast<int16_t>(s->height() > 0 ? s->height() : m_height);
+    const bool isTate = (h > w);
+    const Lang lang = I18n::parseLang(String(m_activeSyncMeta.lang[0] != '\0' ? m_activeSyncMeta.lang : "en"));
+    const char* titleStr = I18n::getSyncAchievementTitle(lang);
+    const uint32_t elapsed = millis() - m_cardActivatedMs;
+
+    drawTrophyIcon8x8(s, 2, 0, m_activeSyncMeta.ra.hardcore ? 0xFFE0 : 0x07FF);
+    drawSyncText(s, 12, 0, titleStr, m_activeSyncMeta.ra.hardcore ? 0xFFE0 : 0x07FF, w - 14);
+    s->drawFastHLine(0, 8, w, 0x3186);
+
+    const uint16_t unlocked = m_activeSyncMeta.ra.unlocked;
+    const uint16_t total = (m_activeSyncMeta.ra.total > 0U) ? m_activeSyncMeta.ra.total : 1U;
+    char statBuf[28];
+    snprintf(
+        statBuf,
+        sizeof(statBuf),
+        "%u/%u %uP%s",
+        static_cast<unsigned>(unlocked),
+        static_cast<unsigned>(m_activeSyncMeta.ra.total),
+        static_cast<unsigned>(m_activeSyncMeta.ra.points),
+        m_activeSyncMeta.ra.hardcore ? " HC" : ""
+    );
+
+    if (isTate) {
+        drawSyncText(s, 2, 12, statBuf, 0xFFFF, w - 4);
+        const int16_t barW = static_cast<int16_t>(w - 4);
+        s->drawRect(2, 22, barW, 5, 0x4208);
+        const int16_t fillW = static_cast<int16_t>((static_cast<uint32_t>(unlocked) * static_cast<uint32_t>(barW - 2)) / total);
+        if (fillW > 0) {
+            s->fillRect(3, 23, std::min<int16_t>(fillW, barW - 2), 3, 0x07E0);
+        }
+        if (m_activeSyncMeta.ra.recentTitle[0] != '\0') {
+            drawSyncScrollingText(s, 2, 32, w - 4, m_activeSyncMeta.ra.recentTitle, 0xFFE0, elapsed);
+        }
+        ClockSpriteBank::drawPacman(
+            s,
+            static_cast<int16_t>((w - 13) / 2),
+            45,
+            static_cast<uint8_t>((elapsed / 120U) & 0x03U),
+            true
+        );
+    } else {
+        drawSyncText(s, 2, 11, statBuf, 0xFFFF, w - 4);
+        if (w >= 128) {
+            const int16_t barX = 82;
+            const int16_t barW = static_cast<int16_t>(w - barX - 4);
+            if (barW >= 16) {
+                s->drawRect(barX, 12, barW, 5, 0x4208);
+                const int16_t fillW = static_cast<int16_t>((static_cast<uint32_t>(unlocked) * static_cast<uint32_t>(barW - 2)) / total);
+                if (fillW > 0) {
+                    s->fillRect(barX + 1, 13, std::min<int16_t>(fillW, barW - 2), 3, 0x07E0);
+                }
+            }
+        }
+        if (m_activeSyncMeta.ra.recentTitle[0] != '\0') {
+            drawSyncScrollingText(s, 2, 22, w - 4, m_activeSyncMeta.ra.recentTitle, 0xFFE0, elapsed);
+        } else if (m_activeSyncMeta.title[0] != '\0') {
+            drawSyncText(s, 2, 22, m_activeSyncMeta.title, 0x07FF, w - 4);
+        }
+    }
+}
 
 EngineError InGameShowcaseEngine::initialize(EngineContext* context, const EngineConfig* cfg) {
     (void)cfg;
@@ -146,21 +546,27 @@ uint32_t InGameShowcaseEngine::nextFrameDueInMs() const {
     if (m_streamPlayer.isCore1Streaming()) {
         return m_streamPlayer.computeCore1NextFrameDueInMs(millis());
     }
-    if (m_activeFramePtr.load(std::memory_order_acquire) == nullptr) {
-        return 0xFFFFFFFFU;
+    if (m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
+        const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
+        if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedSeq) {
+            return 1U;
+        }
+        return engines::showcase::ShowcaseStreamPlayer::computeSelfPacedWakeupMs(
+            m_nextStreamFrameDueMs.load(std::memory_order_relaxed),
+            millis()
+        );
     }
-    const uint32_t fSeq = m_frameSeq.load(std::memory_order_acquire);
-    if ((fSeq & 1U) == 0U && fSeq != m_lastRenderedSeq) {
-        return 1U;
+    if (activeCardMode() != SyncCardMode::None) {
+        return 33U;
     }
-    return engines::showcase::ShowcaseStreamPlayer::computeSelfPacedWakeupMs(
-        m_nextStreamFrameDueMs.load(std::memory_order_relaxed),
-        millis()
-    );
+    return 0xFFFFFFFFU;
 }
 
 void InGameShowcaseEngine::update(EngineContext* context) {
-    (void)context;
+    if (context && context->getSurface()) {
+        m_surface = context->getSurface();
+    }
+    latchSyncMetaIfNeeded();
     if (m_streamPlayer.isCore1Streaming()) {
         if (m_streamPlayer.shouldMarkCore1Dirty(millis())) {
             m_dirty = true;
@@ -170,6 +576,14 @@ void InGameShowcaseEngine::update(EngineContext* context) {
     uint32_t seq = m_frameSeq.load(std::memory_order_acquire);
     if ((seq & 1U) == 0U && seq != m_lastRenderedSeq && m_activeFramePtr.load(std::memory_order_acquire) != nullptr) {
         m_dirty = true;
+        return;
+    }
+    if (activeCardMode() != SyncCardMode::None) {
+        const uint32_t now = millis();
+        if (m_lastCardFrameMs == 0U || (now - m_lastCardFrameMs) >= 33U) {
+            m_lastCardFrameMs = (now == 0U) ? 1U : now;
+            m_dirty = true;
+        }
     }
 }
 
@@ -232,17 +646,35 @@ void InGameShowcaseEngine::render(EngineContext* context) {
     uint16_t fw = m_frameW.load(std::memory_order_relaxed);
     uint16_t fh = m_frameH.load(std::memory_order_relaxed);
 
-    if (s->width() != static_cast<int>(fw) || s->height() != static_cast<int>(fh)) {
-        s->clear(0);
-    }
     if (ptr && fw > 0 && fh > 0) {
+        if (s->width() != static_cast<int>(fw) || s->height() != static_cast<int>(fh)) {
+            s->clear(0);
+        }
         s->blit565(ptr, 0, 0, fw, fh);
         m_lastRenderedSeq = seq2;
         m_consumedFrameSeq.store(seq2, std::memory_order_release);
         m_presentedFrames.fetch_add(1U, std::memory_order_relaxed);
+        m_dirty = false;
+        m_renderedNewFrame = true;
+        return;
     }
+
+    const SyncCardMode cardMode = activeCardMode();
+    if (cardMode == SyncCardMode::HallOfFame) {
+        renderHallOfFameCard(s);
+        m_dirty = false;
+        m_renderedNewFrame = true;
+        return;
+    }
+    if (cardMode == SyncCardMode::RetroAchievements) {
+        renderRetroAchievementsCard(s);
+        m_dirty = false;
+        m_renderedNewFrame = true;
+        return;
+    }
+
     m_dirty = false;
-    m_renderedNewFrame = true;
+    m_renderedNewFrame = false;
 }
 
 void InGameShowcaseEngine::deactivate() {
@@ -285,12 +717,14 @@ FrontendSyncEngine::FrontendSyncEngine(
     const MqttConfig& cfg,
     GifEngine* gifEngine,
     MessageEngine* messageEngine,
-    InGameShowcaseEngine* inGameEngine
+    InGameShowcaseEngine* inGameEngine,
+    SyncCelebrationEngine* celebrationEngine
 )
     : mqttConfig(cfg),
       gif(gifEngine),
       message(messageEngine),
       m_inGameEngine(inGameEngine),
+      m_celebrationEngine(celebrationEngine),
       mqttClient(espClient) {
     instance = this;
     lastReconnectAttempt = 0;
@@ -364,6 +798,15 @@ void FrontendSyncEngine::updateRuntimeConfig(
 
     if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled) {
         cancelInGameShowcaseSession();
+    }
+    if (!mqttConfig.sync_show_hiscores && !mqttConfig.sync_show_ra) {
+        resetSyncCardCycle();
+    } else if (m_hasSessionSyncMeta && m_inGameEngine) {
+        m_sessionSyncMeta.showHiscores = mqttConfig.sync_show_hiscores ? 1U : 0U;
+        m_sessionSyncMeta.showRa = mqttConfig.sync_show_ra ? 1U : 0U;
+        m_sessionSyncMeta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20));
+        copySafeCStr(m_sessionSyncMeta.lang, sizeof(m_sessionSyncMeta.lang), m_systemLang.c_str());
+        m_inGameEngine->publishSyncMeta(m_sessionSyncMeta);
     }
 }
 
@@ -542,7 +985,7 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
     m_activeBrokerPort = (port > 0) ? port : 1883;
     lastReconnectAttempt = 0;
 
-    const uint16_t rxBufBytes = hardwareHAL.capabilities().hasPsram ? 1024U : 512U;
+    const uint16_t rxBufBytes = hardwareHAL.capabilities().hasPsram ? 1024U : 768U;
 
     if (fromShowcase && m_activeBrokerHost[0] != '\0') {
         if (internalBroker) {
@@ -696,6 +1139,7 @@ void FrontendSyncEngine::reconnectTaskFunc(void* param) {
 
 void FrontendSyncEngine::stop() {
     cancelInGameShowcaseSession(false);
+    resetSyncCardCycle();
     isGamePlaying = false;
     waitingDisplayed = false;
     hasPendingEvent = false;
@@ -796,8 +1240,11 @@ bool FrontendSyncEngine::loop() {
         }
     }
 
+    // Advance opportunistic High-Score / RetroAchievements card cycle when playing
+    updateSyncCardCycle();
+
     // Restore static PNG marquee cleanly onto shared surface when InGameShowcase yields back (`once` / `alternating`)
-    bool showingInGame = m_wantsInGameDisplay.load(std::memory_order_acquire);
+    bool showingInGame = wantsInGameShowcaseDisplay();
     if (m_wasShowingInGame && !showingInGame && isGamePlaying && gif && m_activeMarqueePath[0] != '\0') {
         size_t pLen = strlen(m_activeMarqueePath);
         if (pLen > 4 && strcasecmp(m_activeMarqueePath + pLen - 4, ".png") == 0) {
@@ -923,6 +1370,11 @@ void FrontendSyncEngine::callback(char* topic, byte* payload, unsigned int lengt
 void FrontendSyncEngine::handleMessage(String topic, String msg) {
     if (topic.startsWith("system/playing/")) {
         LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
+        if (msg.indexOf("\"sync_meta\"") != -1 || msg.indexOf("\"celebrate\"") != -1) {
+            if (handleCompanionEvent(msg)) {
+                return;
+            }
+        }
         pendingPayload = msg;
         hasPendingEvent = true;
         pendingEventTime = millis();
@@ -1626,7 +2078,191 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
 #endif
 }
 
+void FrontendSyncEngine::resetSyncCardCycle() {
+    m_wantsSyncCardDisplay.store(false, std::memory_order_release);
+    m_hasSessionSyncMeta = false;
+    m_syncCardsCompletedOnce = false;
+    m_syncCardPhaseStartedMs = 0;
+    m_lastSyncCardCycleEndedMs = 0;
+    m_currentSyncCardPhase = SyncCardMode::None;
+    m_sessionSyncMeta = SyncMetaPayloadPod{};
+    if (m_inGameEngine) {
+        m_inGameEngine->clearSyncMeta();
+    }
+}
+
+void FrontendSyncEngine::updateSyncCardCycle() {
+    if (!isGamePlaying || !m_hasSessionSyncMeta || !m_inGameEngine) {
+        if (m_currentSyncCardPhase != SyncCardMode::None || m_wantsSyncCardDisplay.load(std::memory_order_acquire)) {
+            m_currentSyncCardPhase = SyncCardMode::None;
+            m_wantsSyncCardDisplay.store(false, std::memory_order_release);
+            if (m_inGameEngine) {
+                m_inGameEngine->setActiveCardMode(SyncCardMode::None);
+            }
+        }
+        return;
+    }
+
+    // If a live DMDZ Showcase stream is currently occupying InGameShowcaseEngine, yield card mode to the stream
+    if (m_wantsInGameDisplay.load(std::memory_order_acquire)) {
+        if (m_currentSyncCardPhase != SyncCardMode::None) {
+            m_currentSyncCardPhase = SyncCardMode::None;
+            m_inGameEngine->setActiveCardMode(SyncCardMode::None);
+            m_wantsSyncCardDisplay.store(false, std::memory_order_release);
+            m_syncCardsCompletedOnce = true;
+            m_lastSyncCardCycleEndedMs = millis();
+        }
+        return;
+    }
+
+    const bool canShowHof = mqttConfig.sync_show_hiscores && (m_sessionSyncMeta.hiscoreCount > 0U);
+    const bool canShowRa = mqttConfig.sync_show_ra && (m_sessionSyncMeta.ra.valid != 0U) && (m_sessionSyncMeta.ra.total > 0U);
+    if (!canShowHof && !canShowRa) {
+        if (m_currentSyncCardPhase != SyncCardMode::None || m_wantsSyncCardDisplay.load(std::memory_order_acquire)) {
+            m_currentSyncCardPhase = SyncCardMode::None;
+            m_inGameEngine->setActiveCardMode(SyncCardMode::None);
+            m_wantsSyncCardDisplay.store(false, std::memory_order_release);
+        }
+        return;
+    }
+
+    const uint32_t now = millis();
+    const uint32_t cardDurMs = static_cast<uint32_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20)) * 1000UL;
+
+    if (m_currentSyncCardPhase == SyncCardMode::None) {
+        // Keep the initial Pixelcade marquee visible for at least 3.5s after game launch
+        if (m_gameStartedAtMs != 0U && (now - m_gameStartedAtMs) < 3500UL) {
+            return;
+        }
+        if (m_syncCardsCompletedOnce) {
+            if (!mqttConfig.ingame_cycle_mode.equalsIgnoreCase("loop") &&
+                !mqttConfig.ingame_cycle_mode.equalsIgnoreCase("alternating")) {
+                return;
+            }
+            const uint32_t intervalMs = static_cast<uint32_t>(constrain(mqttConfig.ingame_marquee_interval_sec, 5, 600)) * 1000UL;
+            if (m_lastSyncCardCycleEndedMs != 0U && (now - m_lastSyncCardCycleEndedMs) < intervalMs) {
+                return;
+            }
+        }
+        m_currentSyncCardPhase = canShowHof ? SyncCardMode::HallOfFame : SyncCardMode::RetroAchievements;
+        m_syncCardPhaseStartedMs = now;
+        m_inGameEngine->setActiveCardMode(m_currentSyncCardPhase);
+        m_wantsSyncCardDisplay.store(true, std::memory_order_release);
+        return;
+    }
+
+    if ((now - m_syncCardPhaseStartedMs) >= cardDurMs) {
+        if (m_currentSyncCardPhase == SyncCardMode::HallOfFame && canShowRa) {
+            m_currentSyncCardPhase = SyncCardMode::RetroAchievements;
+            m_syncCardPhaseStartedMs = now;
+            m_inGameEngine->setActiveCardMode(SyncCardMode::RetroAchievements);
+            m_wantsSyncCardDisplay.store(true, std::memory_order_release);
+        } else {
+            m_currentSyncCardPhase = SyncCardMode::None;
+            m_inGameEngine->setActiveCardMode(SyncCardMode::None);
+            m_wantsSyncCardDisplay.store(false, std::memory_order_release);
+            m_syncCardsCompletedOnce = true;
+            m_lastSyncCardCycleEndedMs = now;
+        }
+    }
+}
+
+bool FrontendSyncEngine::handleCompanionEvent(const String& jsonPayload) {
+    StaticJsonDocument<1024> doc;
+    if (deserializeJson(doc, jsonPayload) != DeserializationError::Ok) {
+        return false;
+    }
+    const char* status = doc["status"] | "";
+    if (strcmp(status, "sync_meta") == 0) {
+        hasReceivedAnyEvent = true;
+        if (!isGamePlaying || !m_inGameEngine) {
+            return true;
+        }
+        SyncMetaPayloadPod meta{};
+        copySafeCStr(meta.system, sizeof(meta.system), cleanSystemName(String(doc["system"] | "")).c_str());
+        copySafeCStr(meta.game, sizeof(meta.game), doc["game"] | "");
+        copySafeCStr(meta.title, sizeof(meta.title), doc["title"] | "");
+        copySafeCStr(meta.lang, sizeof(meta.lang), m_systemLang.c_str());
+        meta.showHiscores = mqttConfig.sync_show_hiscores ? 1U : 0U;
+        meta.showRa = mqttConfig.sync_show_ra ? 1U : 0U;
+        meta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20));
+
+        if (doc["hiscores"].is<JsonArrayConst>()) {
+            JsonArrayConst hsArr = doc["hiscores"].as<JsonArrayConst>();
+            uint8_t idx = 0;
+            for (JsonObjectConst hObj : hsArr) {
+                if (idx >= 5U) break;
+                const char* sc = hObj["score"] | "";
+                if (sc[0] == '\0') continue;
+                meta.hiscores[idx].rank = static_cast<uint8_t>(hObj["rank"] | (idx + 1U));
+                copySafeCStr(meta.hiscores[idx].tag, sizeof(meta.hiscores[idx].tag), hObj["tag"] | "AAA");
+                copySafeCStr(meta.hiscores[idx].score, sizeof(meta.hiscores[idx].score), sc);
+                ++idx;
+            }
+            meta.hiscoreCount = idx;
+        }
+
+        if (doc["ra"].is<JsonObjectConst>()) {
+            JsonObjectConst raObj = doc["ra"].as<JsonObjectConst>();
+            const uint16_t total = static_cast<uint16_t>(raObj["total"] | 0);
+            if (total > 0U) {
+                meta.ra.unlocked = static_cast<uint16_t>(raObj["unlocked"] | 0);
+                meta.ra.total = total;
+                meta.ra.points = static_cast<uint32_t>(raObj["points"] | 0);
+                meta.ra.hardcore = (raObj["hardcore"] | false) ? 1U : 0U;
+                meta.ra.valid = 1U;
+                if (raObj["recent"].is<JsonObjectConst>()) {
+                    JsonObjectConst recObj = raObj["recent"].as<JsonObjectConst>();
+                    copySafeCStr(meta.ra.recentTitle, sizeof(meta.ra.recentTitle), recObj["title"] | "");
+                    meta.ra.recentPoints = static_cast<uint16_t>(recObj["pts"] | (recObj["points"] | 0));
+                } else {
+                    copySafeCStr(meta.ra.recentTitle, sizeof(meta.ra.recentTitle), raObj["recent_title"] | "");
+                }
+            }
+        }
+
+        if (meta.hiscoreCount == 0U && meta.ra.valid == 0U) {
+            return true;
+        }
+        m_sessionSyncMeta = meta;
+        m_hasSessionSyncMeta = true;
+        m_syncCardsCompletedOnce = false;
+        m_inGameEngine->publishSyncMeta(m_sessionSyncMeta);
+        return true;
+    }
+
+    if (strcmp(status, "celebrate") == 0) {
+        hasReceivedAnyEvent = true;
+        if (!mqttConfig.sync_celebrate_events || !m_celebrationEngine) {
+            return true;
+        }
+        SyncCelebrationPayloadPod celeb{};
+        const char* kindStr = doc["kind"] | "achievement";
+        celeb.kind = (strcasecmp(kindStr, "highscore") == 0)
+            ? SyncCelebrationKind::HighScore
+            : SyncCelebrationKind::Achievement;
+        celeb.rank = static_cast<uint8_t>(constrain(static_cast<int>(doc["rank"] | 1), 1, 99));
+        celeb.points = static_cast<uint16_t>(doc["points"] | (doc["pts"] | 0));
+        celeb.hardcore = (doc["hardcore"] | false) ? 1U : 0U;
+        copySafeCStr(celeb.system, sizeof(celeb.system), cleanSystemName(String(doc["system"] | "")).c_str());
+        copySafeCStr(celeb.game, sizeof(celeb.game), doc["game"] | "");
+        copySafeCStr(celeb.title, sizeof(celeb.title), doc["title"] | "");
+        copySafeCStr(celeb.tag, sizeof(celeb.tag), doc["tag"] | "AAA");
+        copySafeCStr(celeb.score, sizeof(celeb.score), doc["score"] | "");
+        copySafeCStr(celeb.lang, sizeof(celeb.lang), m_systemLang.c_str());
+        m_celebrationEngine->triggerCelebration(celeb);
+        return true;
+    }
+
+    return false;
+}
+
 void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t reqId) {
+    if (jsonPayload.indexOf("\"sync_meta\"") != -1 || jsonPayload.indexOf("\"celebrate\"") != -1) {
+        if (handleCompanionEvent(jsonPayload)) {
+            return;
+        }
+    }
     StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, jsonPayload);
     if (err) {
@@ -1645,6 +2281,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     if (strcmp(status, "stopped") == 0) {
         LOGI("RetroFrontend", "Received stopped event, releasing any In-Game Showcase and keeping last marquee.");
         cancelInGameShowcaseSession();
+        resetSyncCardCycle();
         hasPendingEvent = false;
         return;
     }
@@ -1656,6 +2293,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     if (!isPlaying) {
         // Menu navigation ("browsing" or system selection) -> 100% local marquee, cancel any previous in-game Showcase
         cancelInGameShowcaseSession();
+        resetSyncCardCycle();
     }
 
     if (!isPlaying && (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem))) {
@@ -1669,6 +2307,8 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     if (message) message->deactivate();
 
     if (isPlaying && gameRaw[0] != '\0') {
+        resetSyncCardCycle();
+        m_gameStartedAtMs = (millis() == 0U) ? 1U : millis();
         startInGameShowcaseSession(cleanSystem, String(gameRaw), String(titleRaw));
     }
 

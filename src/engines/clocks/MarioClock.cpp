@@ -1,8 +1,53 @@
 #include "MarioClock.h"
 #include "MarioAssets.h"
 #include "MarioFont.h"
+#include "ClockSpriteBank.h"
 #include <string.h>
 #include <math.h>
+
+namespace ClockSpriteBank {
+SpriteFrameRef marioClockGetSpriteRef(CameoSprite sprite, uint8_t frameIndex) {
+    SpriteFrameRef ref;
+    ref.maskColor = _MASK;
+    switch (sprite) {
+        case CameoSprite::MARIO_IDLE:
+            ref.pixels565 = MARIO_IDLE;
+            ref.w = 13;
+            ref.h = 16;
+            break;
+        case CameoSprite::MARIO_RUN: {
+            uint8_t idx = frameIndex % 3;
+            ref.pixels565 = MARIO_RUN[idx];
+            ref.w = MARIO_RUN_W[idx];
+            ref.h = 16;
+            break;
+        }
+        case CameoSprite::MARIO_JUMP:
+            ref.pixels565 = MARIO_JUMP;
+            ref.w = 17;
+            ref.h = 16;
+            break;
+        case CameoSprite::GOLD_COIN:
+            ref.pixels565 = GOLD_COIN;
+            ref.w = 8;
+            ref.h = 8;
+            break;
+        case CameoSprite::KOOPA_SHELL:
+            ref.pixels565 = KOOPA_SHELL;
+            ref.w = KOOPA_SHELL_W;
+            ref.h = KOOPA_SHELL_H;
+            break;
+        case CameoSprite::GROUND_TILE_MARIO:
+            ref.pixels565 = GROUND;
+            ref.w = 8;
+            ref.h = 8;
+            break;
+        default:
+            break;
+    }
+    return ref;
+}
+} // namespace ClockSpriteBank
 
 // Sprite sizes, as they are in the source artwork.
 namespace {

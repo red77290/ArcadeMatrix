@@ -4,6 +4,10 @@
 #include "WebRadioService.h"
 #include <esp_mac.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 DLNAService dlnaService;
 
 #define SSDP_MULTICAST_IP IPAddress(239, 255, 255, 250)

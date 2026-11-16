@@ -10,6 +10,10 @@
 #include <memory>
 #include <new>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 extern SemaphoreHandle_t sdMutex;
 
 ConfigLoader::ConfigLoader() {
@@ -182,6 +186,7 @@ void ConfigLoader::setDefaults() {
     system.idle_fighter_speed = 100;
     system.api_auth_enabled = false;
     system.api_token = "";
+    system.ota_auto_check = true;
     publishSnapshot();
 }
 
@@ -221,6 +226,8 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         system.idle_fighter_speed = sys["idle_fighter_speed"] | system.idle_fighter_speed;
         system.api_auth_enabled = sys["api_auth_enabled"] | system.api_auth_enabled;
         if (sys.containsKey("api_token")) system.api_token = sys["api_token"].as<String>();
+        if (sys.containsKey("ota_auto_check")) system.ota_auto_check = sys["ota_auto_check"].as<bool>();
+        else if (sys.containsKey("otaAutoCheck")) system.ota_auto_check = sys["otaAutoCheck"].as<bool>();
     }
 
     JsonObjectConst disp;
@@ -333,6 +340,11 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (m.containsKey("video_fps")) mqtt.video_fps = m["video_fps"].as<int>();
         if (m.containsKey("video_mode")) mqtt.video_mode = m["video_mode"].as<String>();
         if (m.containsKey("color_boost")) mqtt.color_boost = m["color_boost"].as<String>();
+        if (m.containsKey("sync_show_hiscores")) mqtt.sync_show_hiscores = m["sync_show_hiscores"].as<bool>();
+        if (m.containsKey("sync_show_ra")) mqtt.sync_show_ra = m["sync_show_ra"].as<bool>();
+        if (m.containsKey("sync_celebrate_events")) mqtt.sync_celebrate_events = m["sync_celebrate_events"].as<bool>();
+        if (m.containsKey("sync_card_duration_sec")) mqtt.sync_card_duration_sec = m["sync_card_duration_sec"].as<int>();
+        if (m.containsKey("ra_web_api_key")) mqtt.ra_web_api_key = m["ra_web_api_key"].as<String>();
     }
 
     // Older builds also stored "enabled" and "topic_prefix" here; they are no longer used and are
@@ -481,6 +493,7 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     sysObj["idle_fighter_speed"] = system.idle_fighter_speed;
     sysObj["api_auth_enabled"] = system.api_auth_enabled;
     sysObj["api_token"] = system.api_token;
+    sysObj["ota_auto_check"] = system.ota_auto_check;
 
     JsonObject dispObj = doc.createNestedObject("display");
     dispObj["width"] = matrix.width;
@@ -538,6 +551,11 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     mObj["video_fps"] = mqtt.video_fps;
     mObj["video_mode"] = mqtt.video_mode;
     mObj["color_boost"] = mqtt.color_boost;
+    mObj["sync_show_hiscores"] = mqtt.sync_show_hiscores;
+    mObj["sync_show_ra"] = mqtt.sync_show_ra;
+    mObj["sync_celebrate_events"] = mqtt.sync_celebrate_events;
+    mObj["sync_card_duration_sec"] = mqtt.sync_card_duration_sec;
+    mObj["ra_web_api_key"] = mqtt.ra_web_api_key;
 
     JsonObject dObj = doc.createNestedObject("data_mqtt");
     dObj["broker"] = dataMqtt.broker;

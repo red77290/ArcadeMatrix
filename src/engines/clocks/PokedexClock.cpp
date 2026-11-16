@@ -6,8 +6,23 @@
 #include "PokedexFont.h"
 #include "ClockwiseScene.h"
 #include "ClockFaceFont.h"
+#include "ClockSpriteBank.h"
 #include <stdio.h>
 #include <time.h>
+
+namespace ClockSpriteBank {
+SpriteFrameRef pokedexClockGetSpriteRef(CameoSprite sprite, uint8_t frameIndex) {
+    SpriteFrameRef ref;
+    ref.maskColor = 0x0000;
+    if (sprite == CameoSprite::PIKACHU) {
+        static const uint16_t* const POKES[7] = { pokemon1, pokemon2, pokemon3, pokemon4, pokemon5, pokemon6, pokemon7 };
+        ref.pixels565 = POKES[frameIndex % 7];
+        ref.w = 16;
+        ref.h = 16;
+    }
+    return ref;
+}
+} // namespace ClockSpriteBank
 
 namespace {
 // Colours and positions as they are in the original face.

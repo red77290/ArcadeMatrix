@@ -6,6 +6,10 @@
 #include "AudioAnalysisService.h"
 #include <esp_heap_caps.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 WebRadioService webRadioService;
 
 #define RADIO_CHUNK_SIZE 2048

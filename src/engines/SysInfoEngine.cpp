@@ -3,6 +3,10 @@
 #include "../core/Logger.h"
 #include "../core/CpuLoad.h"
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 extern ConfigLoader config;
 
 SysInfoEngine::SysInfoEngine()

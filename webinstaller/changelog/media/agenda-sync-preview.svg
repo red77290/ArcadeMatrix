@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 200" width="640" height="200">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#070712"/>
+      <stop offset="100%" stop-color="#110922"/>
+    </linearGradient>
+    <linearGradient id="cyanGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00f0ff"/>
+      <stop offset="100%" stop-color="#00ff88"/>
+    </linearGradient>
+    <linearGradient id="goldGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffcc00"/>
+      <stop offset="100%" stop-color="#ff0055"/>
+    </linearGradient>
+    <pattern id="ledGrid" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="none"/>
+      <circle cx="4" cy="4" r="2.7" fill="rgba(255,255,255,0.035)"/>
+    </pattern>
+    <filter id="neon" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Outer HUB75 Bezel -->
+  <rect x="2" y="2" width="636" height="196" rx="14" fill="url(#bgGrad)" stroke="#00f0ff" stroke-opacity="0.35" stroke-width="2"/>
+  <rect x="10" y="10" width="620" height="180" rx="10" fill="url(#ledGrid)"/>
+
+  <!-- Left Panel: iCal Agenda Engine -->
+  <g transform="translate(22, 22)">
+    <rect x="0" y="0" width="285" height="156" rx="10" fill="rgba(0, 240, 255, 0.05)" stroke="rgba(0, 240, 255, 0.3)"/>
+    <rect x="12" y="12" width="68" height="20" rx="4" fill="#00f0ff" opacity="0.2"/>
+    <text x="46" y="26" fill="#00f0ff" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle">ICAL SYNC</text>
+    <text x="90" y="26" fill="#ffffff" font-family="monospace" font-size="12" font-weight="bold">AGENDA ENGINE</text>
+
+    <!-- Calendar Day Box -->
+    <rect x="14" y="44" width="56" height="58" rx="6" fill="#141829" stroke="#ff0055" stroke-width="1.5"/>
+    <rect x="14" y="44" width="56" height="16" rx="4" fill="#ff0055"/>
+    <text x="42" y="56" fill="#ffffff" font-family="monospace" font-size="10" font-weight="bold" text-anchor="middle">NOV</text>
+    <text x="42" y="88" fill="#ffffff" font-family="monospace" font-size="22" font-weight="bold" text-anchor="middle" filter="url(#neon)">16</text>
+
+    <!-- Event Feed -->
+    <g transform="translate(82, 46)">
+      <rect x="0" y="0" width="188" height="26" rx="4" fill="rgba(0, 240, 255, 0.12)"/>
+      <circle cx="10" cy="13" r="4" fill="#00ff88">
+        <animate attributeName="opacity" values="1;0.3;1" dur="1.6s" repeatCount="indefinite"/>
+      </circle>
+      <text x="22" y="17" fill="#00ff88" font-family="monospace" font-size="11" font-weight="bold">14:00 ARCADE TOURNEY</text>
+
+      <rect x="0" y="32" width="188" height="26" rx="4" fill="rgba(255, 255, 255, 0.05)"/>
+      <circle cx="10" cy="45" r="4" fill="#00f0ff"/>
+      <text x="22" y="49" fill="#d0d8e8" font-family="monospace" font-size="11">18:30 STREAM NIGHT</text>
+    </g>
+
+    <!-- Scrolling Ticker Simulation -->
+    <rect x="14" y="116" width="256" height="26" rx="4" fill="#080b14" stroke="rgba(255,255,255,0.1)"/>
+    <text x="24" y="133" fill="#00f0ff" font-family="monospace" font-size="11" filter="url(#neon)">
+      ▶ NEXT: STREET FIGHTER III 3RD STRIKE
+      <animate attributeName="opacity" values="1;0.65;1" dur="2.2s" repeatCount="indefinite"/>
+    </text>
+  </g>
+
+  <!-- Right Panel: RetroAchievements & High Score Celebration -->
+  <g transform="translate(330, 22)">
+    <rect x="0" y="0" width="288" height="156" rx="10" fill="rgba(255, 0, 85, 0.06)" stroke="rgba(255, 180, 0, 0.4)"/>
+    <rect x="12" y="12" width="96" height="20" rx="4" fill="url(#goldGlow)" opacity="0.25"/>
+    <text x="60" y="26" fill="#ffcc00" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle">TROPHY UNLOCK</text>
+    <text x="118" y="26" fill="#ffffff" font-family="monospace" font-size="12" font-weight="bold">RETROACHIEVEMENTS</text>
+
+    <!-- Animated Trophy Pixel Icon -->
+    <g transform="translate(20, 48)" filter="url(#neon)">
+      <rect x="8" y="4" width="32" height="24" rx="3" fill="#ffcc00"/>
+      <rect x="2" y="8" width="6" height="12" rx="2" fill="#ff9900"/>
+      <rect x="40" y="8" width="6" height="12" rx="2" fill="#ff9900"/>
+      <rect x="18" y="28" width="12" height="10" fill="#ffcc00"/>
+      <rect x="10" y="38" width="28" height="6" rx="2" fill="#ffaa00"/>
+      <animateTransform attributeName="transform" type="translate" values="20,48; 20,44; 20,48" dur="1.8s" repeatCount="indefinite"/>
+    </g>
+
+    <!-- Unlock Details -->
+    <text x="82" y="64" fill="#ffcc00" font-family="monospace" font-size="13" font-weight="bold" filter="url(#neon)">★ SHORYUKEN MASTER! ★</text>
+    <text x="82" y="83" fill="#ffffff" font-family="monospace" font-size="11">NEW HI-SCORE: 984,500 PTS</text>
+    <text x="82" y="100" fill="#9ba1a6" font-family="monospace" font-size="10">HARDCORE MODE • +50 RA PTS</text>
+
+    <!-- Celebration Progress Bar -->
+    <rect x="16" y="120" width="256" height="20" rx="5" fill="#090b14" stroke="rgba(255, 204, 0, 0.35)"/>
+    <rect x="18" y="122" width="220" height="16" rx="4" fill="url(#goldGlow)">
+      <animate attributeName="width" values="120;252;120" dur="3.5s" repeatCount="indefinite"/>
+    </rect>
+    <text x="144" y="134" fill="#ffffff" font-family="monospace" font-size="10" font-weight="bold" text-anchor="middle">PREEMPTIVE CELEBRATION OVERLAY</text>
+  </g>
+</svg>

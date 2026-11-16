@@ -1,10 +1,69 @@
 #include "MegamanClock.h"
 #include "MegamanAssets.h"
+#include "ClockSpriteBank.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
 using namespace MegamanAssets;
+
+namespace ClockSpriteBank {
+SpriteFrameRef megamanClockGetSpriteRef(CameoSprite sprite, uint8_t frameIndex) {
+    SpriteFrameRef ref;
+    ref.maskColor = MASK;
+    switch (sprite) {
+        case CameoSprite::MEGAMAN_RUN:
+            if ((frameIndex & 1U) == 0U) {
+                ref.pixels565 = MEGAMAN_RUN1;
+                ref.w = MEGAMAN_RUN1_W;
+                ref.h = MEGAMAN_RUN1_H;
+            } else {
+                ref.pixels565 = MEGAMAN_RUN2;
+                ref.w = MEGAMAN_RUN2_W;
+                ref.h = MEGAMAN_RUN2_H;
+            }
+            break;
+        case CameoSprite::MEGAMAN_SHOOT:
+            ref.pixels565 = MEGAMAN_SHOOT;
+            ref.w = MEGAMAN_SHOOT_W;
+            ref.h = MEGAMAN_SHOOT_H;
+            break;
+        case CameoSprite::MEGAMAN_JUMP_SHOOT:
+            ref.pixels565 = MEGAMAN_JUMP_SHOOT;
+            ref.w = MEGAMAN_JUMP_SHOOT_W;
+            ref.h = MEGAMAN_JUMP_SHOOT_H;
+            break;
+        case CameoSprite::BUSTER_BULLET:
+            ref.pixels565 = BUSTER_BULLET;
+            ref.w = BULLET_W;
+            ref.h = BULLET_H;
+            break;
+        case CameoSprite::HIT_SPARK:
+            ref.pixels565 = HIT_SPARK;
+            ref.w = SPARK_W;
+            ref.h = SPARK_H;
+            break;
+        case CameoSprite::METOOL_SLEEP:
+            ref.pixels565 = METOOL_SLEEP;
+            ref.w = METOOL_W;
+            ref.h = METOOL_H;
+            break;
+        case CameoSprite::METOOL_PEEK:
+            ref.pixels565 = METOOL_PEEK;
+            ref.w = METOOL_W;
+            ref.h = METOOL_H;
+            break;
+        case CameoSprite::GROUND_TILE_MEGAMAN:
+            ref.pixels565 = GROUND_TILE;
+            ref.w = GROUND_TILE_W;
+            ref.h = GROUND_TILE_H;
+            break;
+        default:
+            break;
+    }
+    return ref;
+}
+} // namespace ClockSpriteBank
 
 namespace {
 struct Building {

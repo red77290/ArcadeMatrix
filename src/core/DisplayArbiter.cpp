@@ -11,6 +11,9 @@ DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
     if (name.equalsIgnoreCase("INGAME_SHOWCASE") || name.equalsIgnoreCase("FRONTEND_SYNC")) {
         return DisplaySourceId::INGAME_SHOWCASE;
     }
+    if (name.equalsIgnoreCase("SYNC_CELEBRATION") || name.equalsIgnoreCase("CELEBRATION")) {
+        return DisplaySourceId::SYNC_CELEBRATION;
+    }
     if (name.equalsIgnoreCase("MARQUEE")) {
         return DisplaySourceId::MARQUEE;
     }

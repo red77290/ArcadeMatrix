@@ -13,6 +13,7 @@ enum class DisplaySourceId : uint16_t {
     MQTT = 40,
     INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
+    SYNC_CELEBRATION = 55,
     ALERT = 100,
     WEBUI_SYNC = 110
 };
@@ -24,6 +25,7 @@ enum class DisplayPriority : uint8_t {
     MQTT = 40,
     INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
+    SYNC_CELEBRATION = 55,
     ALERT = 100,
     WEBUI_SYNC = 110
 };

@@ -10,7 +10,9 @@
 #include "../core/SDUtils.h"
 #include <functional>
 #include <Update.h>
+#include <nvs.h>
 #include <esp_ota_ops.h>
+#include <esp_system.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
@@ -53,6 +55,39 @@
 #endif
 
 extern ConfigLoader config;
+
+static const char* getOrCreateInstallUuid() {
+    static char s_installUuid[40] = "";
+    if (s_installUuid[0] != '\0') {
+        return s_installUuid;
+    }
+#if defined(ESP32) && !defined(UNIT_TEST)
+    nvs_handle_t h = 0;
+    if (nvs_open("arcadematrix", NVS_READWRITE, &h) == ESP_OK) {
+        size_t len = sizeof(s_installUuid);
+        if (nvs_get_str(h, "inst_id", s_installUuid, &len) != ESP_OK || strlen(s_installUuid) != 36U) {
+            uint8_t b[16];
+            esp_fill_random(b, sizeof(b));
+            b[6] = static_cast<uint8_t>((b[6] & 0x0FU) | 0x40U);
+            b[8] = static_cast<uint8_t>((b[8] & 0x3FU) | 0x80U);
+            snprintf(
+                s_installUuid,
+                sizeof(s_installUuid),
+                "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            );
+            nvs_set_str(h, "inst_id", s_installUuid);
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+#endif
+    if (s_installUuid[0] == '\0') {
+        strcpy(s_installUuid, "00000000-0000-4000-8000-000000000000");
+    }
+    return s_installUuid;
+}
 
 static inline size_t freeInternal8BitHeap() {
 #if defined(ESP32)
@@ -1533,9 +1568,18 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: Return version with Git commit and build timestamp
+    // API: Return version with Git commit, build timestamp, anonymous install UUID, and matrix resolution
     server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
-        SpiRamJsonDocument doc(256);
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const auto& snap = guard.get();
+        const int totalW = (snap.matrix.width > 0 ? snap.matrix.width : 64) *
+                           (snap.matrix.chainLength > 0 ? snap.matrix.chainLength : 1);
+        const int totalH = (snap.matrix.height > 0 ? snap.matrix.height : 32);
+        char resBuf[24];
+        snprintf(resBuf, sizeof(resBuf), "%dx%d", totalW, totalH);
+
+        SpiRamJsonDocument doc(384);
         doc["version"] = FIRMWARE_VERSION;
         doc["git_commit"] = BUILD_GIT_COMMIT;
         doc["build_timestamp"] = BUILD_TIMESTAMP;
@@ -1543,6 +1587,9 @@ void WebServerAPI::setupRoutes() {
         doc["board_env"] = currentBoardEnv();
         const esp_partition_t* running = esp_ota_get_running_partition();
         doc["partition"] = running ? running->label : "app0";
+        doc["install_id"] = getOrCreateInstallUuid();
+        doc["res"] = resBuf;
+        doc["ota_auto_check"] = snap.system.ota_auto_check;
         sendJsonResponse(request, doc);
     });
 
@@ -1887,6 +1934,7 @@ void WebServerAPI::setupRoutes() {
         doc["wifi_hostname"] = snap.wifi.hostname;
         doc["api_auth_enabled"] = snap.system.api_auth_enabled;
         doc["api_token_configured"] = snap.system.api_token.length() > 0;
+        doc["ota_auto_check"] = snap.system.ota_auto_check;
 
         // MQTT
         doc["mqtt_enabled"] = snap.mqtt.enabled;
@@ -1916,6 +1964,11 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_video_fps"] = snap.mqtt.video_fps;
         doc["mqtt_video_mode"] = snap.mqtt.video_mode;
         doc["mqtt_color_boost"] = snap.mqtt.color_boost;
+        doc["mqtt_sync_show_hiscores"] = snap.mqtt.sync_show_hiscores;
+        doc["mqtt_sync_show_ra"] = snap.mqtt.sync_show_ra;
+        doc["mqtt_sync_celebrate_events"] = snap.mqtt.sync_celebrate_events;
+        doc["mqtt_sync_card_duration_sec"] = snap.mqtt.sync_card_duration_sec;
+        doc["mqtt_ra_web_api_key"] = snap.mqtt.ra_web_api_key;
 
         // MQTT Data broker (used only while the mqttdata engine is on screen)
         doc["data_mqtt_broker"] = snap.dataMqtt.broker;
@@ -2181,6 +2234,12 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_video_fps"].isNull()) cfg.mqtt.video_fps = doc["mqtt_video_fps"].as<int>();
             if (!doc["mqtt_video_mode"].isNull()) cfg.mqtt.video_mode = doc["mqtt_video_mode"].as<String>();
             if (!doc["mqtt_color_boost"].isNull()) cfg.mqtt.color_boost = doc["mqtt_color_boost"].as<String>();
+            if (!doc["mqtt_sync_show_hiscores"].isNull()) cfg.mqtt.sync_show_hiscores = doc["mqtt_sync_show_hiscores"].as<bool>();
+            if (!doc["mqtt_sync_show_ra"].isNull()) cfg.mqtt.sync_show_ra = doc["mqtt_sync_show_ra"].as<bool>();
+            if (!doc["mqtt_sync_celebrate_events"].isNull()) cfg.mqtt.sync_celebrate_events = doc["mqtt_sync_celebrate_events"].as<bool>();
+            if (!doc["mqtt_sync_card_duration_sec"].isNull()) cfg.mqtt.sync_card_duration_sec = doc["mqtt_sync_card_duration_sec"].as<int>();
+            if (!doc["mqtt_ra_web_api_key"].isNull()) cfg.mqtt.ra_web_api_key = doc["mqtt_ra_web_api_key"].as<String>();
+            if (!doc["ota_auto_check"].isNull()) cfg.system.ota_auto_check = doc["ota_auto_check"].as<bool>();
             ConfigSanitizer::sanitize(cfg);
             // Read when the mqttdata engine next connects: no reboot.
             if (!doc["data_mqtt_broker"].isNull()) cfg.dataMqtt.broker = (const char*)doc["data_mqtt_broker"];
@@ -2451,6 +2510,7 @@ void WebServerAPI::setupRoutes() {
             sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
             sys["api_auth_enabled"] = snap.system.api_auth_enabled;
             sys["api_token_configured"] = snap.system.api_token.length() > 0;
+            sys["ota_auto_check"] = snap.system.ota_auto_check;
 
             struct tm timeinfo;
             bool hasTime = getLocalTime(&timeinfo, 0);
@@ -2545,6 +2605,11 @@ void WebServerAPI::setupRoutes() {
             mqtt["video_fps"] = snap.mqtt.video_fps;
             mqtt["video_mode"] = snap.mqtt.video_mode;
             mqtt["color_boost"] = snap.mqtt.color_boost;
+            mqtt["sync_show_hiscores"] = snap.mqtt.sync_show_hiscores;
+            mqtt["sync_show_ra"] = snap.mqtt.sync_show_ra;
+            mqtt["sync_celebrate_events"] = snap.mqtt.sync_celebrate_events;
+            mqtt["sync_card_duration_sec"] = snap.mqtt.sync_card_duration_sec;
+            mqtt["ra_web_api_key"] = snap.mqtt.ra_web_api_key;
         }
 
         if (section.isEmpty() || section == "data_mqtt") {
@@ -2723,6 +2788,11 @@ void WebServerAPI::setupRoutes() {
                 changed = true;
                 domainMask |= CONFIG_DOMAIN_SYSTEM;
             }
+            if (!sys["ota_auto_check"].isNull()) {
+                cfg.system.ota_auto_check = sys["ota_auto_check"].as<bool>();
+                changed = true;
+                domainMask |= CONFIG_DOMAIN_SYSTEM;
+            }
             if (!sys["api_token"].isNull()) {
                 String newTok = sys["api_token"].as<String>();
                 if (newTok.length() > 0) {
@@ -2879,6 +2949,11 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["video_fps"].isNull()) cfg.mqtt.video_fps = mq["video_fps"].as<int>();
                 if (!mq["video_mode"].isNull()) cfg.mqtt.video_mode = mq["video_mode"].as<String>();
                 if (!mq["color_boost"].isNull()) cfg.mqtt.color_boost = mq["color_boost"].as<String>();
+                if (!mq["sync_show_hiscores"].isNull()) cfg.mqtt.sync_show_hiscores = mq["sync_show_hiscores"].as<bool>();
+                if (!mq["sync_show_ra"].isNull()) cfg.mqtt.sync_show_ra = mq["sync_show_ra"].as<bool>();
+                if (!mq["sync_celebrate_events"].isNull()) cfg.mqtt.sync_celebrate_events = mq["sync_celebrate_events"].as<bool>();
+                if (!mq["sync_card_duration_sec"].isNull()) cfg.mqtt.sync_card_duration_sec = mq["sync_card_duration_sec"].as<int>();
+                if (!mq["ra_web_api_key"].isNull()) cfg.mqtt.ra_web_api_key = mq["ra_web_api_key"].as<String>();
                 changed = true;
                 domainMask |= CONFIG_DOMAIN_NETWORK;
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
@@ -3059,14 +3134,19 @@ void WebServerAPI::setupRoutes() {
         }
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
-        bool mqttEnabled = guard.get().mqtt.enabled;
+        const auto& mq = guard.get().mqtt;
 
-        StaticJsonDocument<256> doc;
+        StaticJsonDocument<384> doc;
         doc["host"] = brokerHost;
         doc["port"] = brokerPort;
         doc["source"] = source;
-        doc["mqtt_enabled"] = mqttEnabled;
+        doc["mqtt_enabled"] = mq.enabled;
         doc["showcase_broker_active"] = showcaseActive;
+        doc["sync_show_hiscores"] = mq.sync_show_hiscores;
+        doc["sync_show_ra"] = mq.sync_show_ra;
+        doc["sync_celebrate_events"] = mq.sync_celebrate_events;
+        doc["sync_card_duration_sec"] = mq.sync_card_duration_sec;
+        doc["ra_web_api_key"] = mq.ra_web_api_key;
         sendJsonResponse(request, doc);
     });
 

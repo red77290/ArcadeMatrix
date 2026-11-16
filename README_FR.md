@@ -278,6 +278,7 @@ ArcadeMatrix se synchronise en temps réel avec vos consoles **Recalbox**, **Bat
 | **Crypto en Temps Réel (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
 | **Bourse & Graphiques Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
 | **Actualités en Direct (`gnews`)** | `news` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS (API GNews) |
+| **Agenda Connecté (`agenda`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, Micro-SD (`.ics` / `webcal://` Google, iCloud, Outlook, Proton) |
 | **Météo en Direct (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
 | **Date & Calendrier (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Heure système locale & fond sprite optionnel |
 | **Défilement de Texte (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Scroller textuel sous-pixel à 60 FPS |

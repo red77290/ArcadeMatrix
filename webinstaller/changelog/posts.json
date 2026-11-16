@@ -1,0 +1,103 @@
+{
+  "project": "esp32",
+  "latest_version": "v3.0.1",
+  "posts": [
+    {
+      "version": "v3.0.1",
+      "date": "2026-11-16",
+      "channel": "stable",
+      "tags": ["NEW", "PERF", "FIX"],
+      "media": "changelog/media/agenda-sync-preview.svg",
+      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v3.0.1",
+      "title": {
+        "en": "iCal Agenda Engine, RetroAchievements Celebrations & Edge OTA Proxy",
+        "fr": "Moteur Agenda iCal, Célébrations RetroAchievements & Proxy OTA Edge",
+        "es": "Motor Agenda iCal, Celebraciones RetroAchievements y Proxy OTA Edge"
+      },
+      "summary": {
+        "en": "Turn your HUB75 LED matrix into a live schedule companion and arcade trophy celebration marquee, backed by a zero-rate-limit Cloudflare Edge OTA proxy.",
+        "fr": "Transformez votre matrice LED HUB75 en compagnon d'agenda iCal en direct et afficheur de trophées d'arcade, propulsé par un proxy OTA Cloudflare Edge sans limite de débit.",
+        "es": "Convierte tu matriz LED HUB75 en un compañero de agenda iCal en vivo y marquesina de trofeos arcade, respaldado por un proxy OTA en Cloudflare Edge."
+      },
+      "before_after": {
+        "before": {
+          "en": "Direct GitHub API polling could hit the 60 req/hr/IP limit on multi-matrix setups, and calendar/achievement events required external scripts.",
+          "fr": "Les requêtes directes vers l'API GitHub pouvaient atteindre la limite de 60 req/h/IP avec plusieurs matrices, et les événements d'agenda/succès nécessitaient des scripts externes.",
+          "es": "Las consultas directas a la API de GitHub podían alcanzar el límite de 60 req/h/IP con varias matrices, y los eventos de calendario/logros requerían scripts externos."
+        },
+        "after": {
+          "en": "Native iCal Agenda engine, preemptive RetroAchievements & High Score fireworks, and 10-min Edge-cached OTA releases with anonymous UUID v4 version tracking.",
+          "fr": "Moteur Agenda iCal natif, célébrations préemptives RetroAchievements & High Scores, et cache Edge OTA de 10 min avec suivi anonyme de migration UUID v4.",
+          "es": "Motor Agenda iCal nativo, celebraciones preemptivas de RetroAchievements y High Scores, y caché OTA Edge de 10 min con conteo anónimo UUID v4."
+        }
+      },
+      "highlights": {
+        "en": [
+          "NEW — iCal Agenda Engine ('agenda'): Synchronizes ICS feeds in the background on Core 0 and renders upcoming events, countdown badges, and urgency alerts at 60 FPS on Core 1.",
+          "NEW — RetroAchievements & High Scores Celebrations: Preemptive trophy unlock & personal record overlays triggered from Recalbox, Batocera, RetroArch, or MiSTer.",
+          "PERF — Cloudflare Edge OTA Proxy: Eliminates GitHub API 403 rate limits and tracks anonymous UUID v4 version migrations (v3.0.0 → v3.0.1) with zero IP storage.",
+          "FIX — Tate (90°/270°) rotation layout alignment on 64x128 and 64x256 vertical cabinets."
+        ],
+        "fr": [
+          "NEW — Moteur Agenda iCal ('agenda') : Synchronise les flux ICS en tâche de fond sur le Core 0 et affiche les événements à venir, comptes à rebours et alertes à 60 FPS sur le Core 1.",
+          "NEW — Célébrations RetroAchievements & High Scores : Superpositions préemptives de trophées débloqués et records personnels depuis Recalbox, Batocera, RetroArch ou MiSTer.",
+          "PERF — Proxy OTA Cloudflare Edge : Élimine les erreurs 403 de limite GitHub API et suit les migrations de versions via UUID v4 anonyme (v3.0.0 → v3.0.1) sans stocker d'IP.",
+          "FIX — Alignement du rendu en rotation Tate (90°/270°) sur les bornes verticales 64x128 et 64x256."
+        ],
+        "es": [
+          "NEW — Motor Agenda iCal ('agenda'): Sincroniza calendarios ICS en segundo plano en Core 0 y muestra próximos eventos y alertas a 60 FPS en Core 1.",
+          "NEW — Celebraciones RetroAchievements y High Scores: Superposiciones preemptivas de trofeos y récords desde Recalbox, Batocera, RetroArch o MiSTer.",
+          "PERF — Proxy OTA Cloudflare Edge: Elimina los límites 403 de la API de GitHub y registra migraciones de versión mediante UUID v4 anónimo (v3.0.0 → v3.0.1) sin guardar IP.",
+          "FIX — Alineación del diseño en rotación Tate (90°/270°) para paneles verticales de 64x128 y 64x256."
+        ]
+      }
+    },
+    {
+      "version": "v3.0.0",
+      "date": "2026-10-25",
+      "channel": "stable",
+      "tags": ["NEW", "PERF"],
+      "media": "changelog/media/showcase-dmdz-preview.svg",
+      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v3.0.0",
+      "title": {
+        "en": "DMDZ Lossless Showcase Streaming & SRSW Triple-Buffered Core 1",
+        "fr": "Streaming Lossless DMDZ Showcase & Triple-Buffering SRSW Core 1",
+        "es": "Streaming Sin Pérdida DMDZ Showcase y Triple-Buffer SRSW en Core 1"
+      },
+      "summary": {
+        "en": "Major real-time architecture milestone introducing pre-indexed Heatshrink LZSS (.dmdz) streaming and lock-free SRSW configuration snapshots.",
+        "fr": "Jalon majeur d'architecture temps réel introduisant le streaming Heatshrink LZSS pré-indexé (.dmdz) et les snapshots de configuration SRSW sans verrou.",
+        "es": "Hito de arquitectura en tiempo real que introduce streaming Heatshrink LZSS preindexado (.dmdz) e instantáneas de configuración SRSW sin bloqueos."
+      },
+      "before_after": {
+        "before": {
+          "en": "High-resolution 256x64 GIF decoding strained SD SPI throughput and caused occasional frame pacing jitter during WebUI saves.",
+          "fr": "Le décodage GIF haute résolution 256x64 saturait le bus SPI SD et provoquait de légères saccades lors des sauvegardes WebUI.",
+          "es": "La decodificación GIF de alta resolución 256x64 saturaba el bus SPI SD y causaba tirones ocasionales al guardar en la WebUI."
+        },
+        "after": {
+          "en": "Zero-allocation Core 1 render loop with DMDZ RGB565 streaming and wait-free ConfigSnapshotGuard across all 35+ engines.",
+          "fr": "Boucle de rendu Core 1 zéro allocation avec streaming RGB565 DMDZ et ConfigSnapshotGuard sans attente sur les 35+ moteurs.",
+          "es": "Bucle de renderizado Core 1 sin asignaciones con streaming RGB565 DMDZ y ConfigSnapshotGuard sin esperas en los más de 35 motores."
+        }
+      },
+      "highlights": {
+        "en": [
+          "NEW — Showcase Engine with native .dmdz Heatshrink decompression for ultra-smooth 256x64 arcade attract sequences.",
+          "PERF — Lock-free SRSW Triple Buffer for RuntimeConfig: Core 1 never blocks on NVS/SD writes.",
+          "NEW — Hardware compatibility evaluator with automatic PSRAM & DMA memory budgeting per engine."
+        ],
+        "fr": [
+          "NEW — Moteur Showcase avec décompression native Heatshrink .dmdz pour des séquences attract mode 256x64 ultra-fluides.",
+          "PERF — Triple-Buffer SRSW sans verrou pour RuntimeConfig : le Core 1 ne bloque jamais lors des écritures NVS/SD.",
+          "NEW — Évaluateur de compatibilité matérielle avec budget mémoire PSRAM et DMA automatique par moteur."
+        ],
+        "es": [
+          "NEW — Motor Showcase con descompresión nativa Heatshrink .dmdz para secuencias attract mode 256x64 ultrafluidas.",
+          "PERF — Triple-Buffer SRSW sin bloqueos para RuntimeConfig: Core 1 nunca espera escrituras en NVS/SD.",
+          "NEW — Evaluador de compatibilidad de hardware con presupuesto automático de PSRAM y DMA por motor."
+        ]
+      }
+    }
+  ]
+}

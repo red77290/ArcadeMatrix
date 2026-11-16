@@ -1,10 +1,47 @@
 #include "SonicClock.h"
 #include "SonicAssets.h"
+#include "ClockSpriteBank.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
 using namespace SonicAssets;
+
+namespace ClockSpriteBank {
+SpriteFrameRef sonicClockGetSpriteRef(CameoSprite sprite, uint8_t frameIndex) {
+    SpriteFrameRef ref;
+    ref.maskColor = MASK;
+    switch (sprite) {
+        case CameoSprite::SONIC_SMS_RUN:
+            ref.indexedPixels = SONIC_SMS_RUN_PIXELS[frameIndex & 3U];
+            ref.palette = SONIC_SMS_IDLE_PAL;
+            ref.w = 20;
+            ref.h = 24;
+            break;
+        case CameoSprite::SONIC_MD_RUN:
+            ref.indexedPixels = SONIC_MD_RUN_PIXELS[frameIndex & 3U];
+            ref.palette = SONIC_MD_IDLE_PAL;
+            ref.w = 32;
+            ref.h = 36;
+            break;
+        case CameoSprite::SONIC_MD_BALL:
+            ref.indexedPixels = SONIC_MD_BALL_PIXELS[frameIndex & 3U];
+            ref.palette = SONIC_MD_IDLE_PAL;
+            ref.w = 24;
+            ref.h = 24;
+            break;
+        case CameoSprite::SONIC_RING:
+            ref.indexedPixels = SONIC_RING_PIXELS[frameIndex & 3U];
+            ref.palette = SONIC_RING_PALS[frameIndex & 3U];
+            ref.w = 16;
+            ref.h = 16;
+            break;
+        default:
+            break;
+    }
+    return ref;
+}
+} // namespace ClockSpriteBank
 
 SonicClock::SonicClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {

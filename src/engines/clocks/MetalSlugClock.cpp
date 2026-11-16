@@ -3,11 +3,33 @@
 #if !defined(HARDWARE_PROFILE_ESP32_DEV)
 
 #include "MetalSlugAssets.h"
+#include "ClockSpriteBank.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
 using namespace MetalSlugAssets;
+
+namespace ClockSpriteBank {
+SpriteFrameRef metalSlugClockGetSpriteRef(CameoSprite sprite, uint8_t frameIndex) {
+    SpriteFrameRef ref;
+    ref.maskColor = MASK;
+    if (sprite == CameoSprite::MARCO_VICTORY) {
+        if ((frameIndex & 1U) == 0U) {
+            ref.indexedPixels = MARCO_IDLE_0_PIXELS;
+            ref.palette = MARCO_IDLE_0_PAL;
+            ref.w = MARCO_IDLE_0_W;
+            ref.h = MARCO_IDLE_0_H;
+        } else {
+            ref.indexedPixels = MARCO_IDLE_1_PIXELS;
+            ref.palette = MARCO_IDLE_1_PAL;
+            ref.w = MARCO_IDLE_1_W;
+            ref.h = MARCO_IDLE_1_H;
+        }
+    }
+    return ref;
+}
+} // namespace ClockSpriteBank
 
 MetalSlugClock::MetalSlugClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {

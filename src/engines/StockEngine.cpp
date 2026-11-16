@@ -10,6 +10,10 @@
 #include <WiFiClient.h>
 #include <esp_task_wdt.h>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 StockEngine::StockEngine() 
     : currentSymbolIndex(0), lastItemSwitchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {

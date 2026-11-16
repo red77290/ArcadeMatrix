@@ -77,6 +77,21 @@ public:
     // WebUI Priority Load Sync Notice (ESP32_STD without PSRAM)
     static const char* getWebUiLoadingTitleLabel(Lang l);
     static const char* getWebUiLoadingSubLabel(Lang l);
+
+    // Agenda & Calendar
+    static const char* getAgendaTodayLabel(Lang l, bool shortForm = false);
+    static const char* getAgendaTomorrowLabel(Lang l, bool shortForm = false);
+    static const char* getAgendaActiveNowLabel(Lang l);
+    static void formatAgendaImminent(char* out, size_t outSize, int minutes, Lang l);
+    static const char* getAgendaFreePlayLabel(Lang l, bool compact = false);
+    static const char* getAgendaNextPrefix(Lang l);
+    static const char* getAgendaAllDayLabel(Lang l);
+
+    // Console Sync: High Scores & RetroAchievements
+    static const char* getSyncHighScoresTitle(Lang l);
+    static const char* getSyncNewRecordTitle(Lang l);
+    static const char* getSyncAchievementTitle(Lang l);
+    static const char* getSyncUnlockedTitle(Lang l);
 };
 
 #endif // I18N_H

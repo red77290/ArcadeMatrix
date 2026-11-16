@@ -10,6 +10,10 @@
 #include <ArduinoJson.h>
 #include <vector>
 
+#if defined(HARDWARE_PROFILE_ESP32_DEV)
+#pragma GCC optimize("Os")
+#endif
+
 struct CastMessage {
     int protocolVersion = 0;
     String sourceId;

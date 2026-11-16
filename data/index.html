@@ -1984,6 +1984,43 @@ select.input option {
                   </div>
                 </div>
               </div>
+
+              <div id="mqtt-companion-sync-panel" style="margin-top: 1.25rem; padding: 1rem; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                <h4 style="margin: 0 0 0.85rem 0; font-size: 0.95rem;" data-i18n="fsync_companion_title">🏆 RetroAchievements & High Scores Companion</h4>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label data-i18n="fsync_show_hiscores">Show Arcade High Scores (Hall of Fame)</label>
+                    <select id="hw-mqtt-sync-hiscores" class="input">
+                      <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                      <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label data-i18n="fsync_show_ra">Show RetroAchievements Progress Card</label>
+                    <select id="hw-mqtt-sync-ra" class="input">
+                      <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                      <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-grid" style="margin-top: 0.75rem;">
+                  <div class="form-group">
+                    <label data-i18n="fsync_celebrate_events">Live Fireworks & Hero Celebration (Trophy / Top 3 Record)</label>
+                    <select id="hw-mqtt-sync-celebrate" class="input">
+                      <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                      <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label data-i18n="fsync_card_duration">Companion Card Duration (sec)</label>
+                    <input type="number" id="hw-mqtt-sync-card-duration" class="input" min="4" max="20" value="8">
+                  </div>
+                </div>
+                <div class="form-group" style="margin-top: 0.75rem;">
+                  <label data-i18n="fsync_ra_api_key">RetroAchievements Web API Key (Optional)</label>
+                  <input type="password" id="hw-mqtt-ra-api-key" class="input" placeholder="Optional" data-i18n-placeholder="ph_optional">
+                </div>
+              </div>
               <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="mqtt_save_btn">Save MQTT Settings</button>
               
               <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
@@ -2179,6 +2216,16 @@ select.input option {
               <a id="btn-ota-direct-download" class="btn btn-secondary" style="flex: 1; display: none; text-align: center; text-decoration: none;" target="_blank" download data-i18n="ota_save_bin">
                 💾 Save .bin to PC
               </a>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid rgba(255,255,255,0.08);">
+              <label style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem;">
+                <input type="checkbox" id="ota-auto-check" checked style="accent-color: var(--primary);">
+                <span data-i18n="ota_auto_check_label">Automatically check for updates (1x/12h)</span>
+              </label>
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <a href="https://red77290.github.io/ArcadeMatrix/#changelog" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration: none;" data-i18n="ota_changelog_btn">📰 Visual Changelog</a>
+                <a href="https://red77290.github.io/ArcadeMatrix/#stats" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration: none;" data-i18n="ota_stats_btn">📊 Public Fleet Stats</a>
+              </div>
             </div>
           </div>
 
@@ -3279,6 +3326,51 @@ const translations = {
     engine_desc_mqttdata: "Subscribes to Home Assistant, Jeedom, or custom MQTT topics to display smart-home sensors, alerts, and metrics.",
     engine_desc_fighter: "Animated arcade fighting game characters battling across the bottom of idle rotation screens.",
     engine_desc_frontend_sync: "Real-time console and arcade frontend synchronization for Recalbox, Batocera, and RetroPie.",
+    engine_agenda: "Connected Agenda",
+    engine_desc_agenda: "Persistent SD-cached iCal (.ics) agenda for Google, iCloud, Outlook, and Proton calendars with pixel-art sprite cameos, RRULE recurrences, and zero idle RAM.",
+    field_ics_url_1: "Primary Calendar URL (.ics)",
+    field_desc_ics_url_1: "Private iCal (.ics or webcal://) URL for your primary calendar (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
+    field_ics_label_1: "Primary Calendar Badge",
+    field_desc_ics_label_1: "Short label displayed for the first calendar.",
+    field_ics_color_1: "Primary Calendar Color",
+    field_desc_ics_color_1: "Accent color for the first calendar.",
+    field_ics_url_2: "Secondary Calendar URL (.ics)",
+    field_desc_ics_url_2: "Optional second iCal (.ics) URL merged and sorted chronologically with the primary feed.",
+    field_ics_label_2: "Secondary Calendar Badge",
+    field_desc_ics_label_2: "Short label displayed for the second calendar.",
+    field_ics_color_2: "Secondary Calendar Color",
+    field_desc_ics_color_2: "Accent color for the second calendar.",
+    field_horizon_days: "Lookahead Horizon (days)",
+    field_desc_horizon_days: "Number of upcoming days to scan for events.",
+    field_events_shown: "Max Events per Cycle",
+    field_desc_events_shown: "Maximum number of upcoming events displayed per rotation cycle.",
+    field_empty_behavior: "Empty Schedule Behavior",
+    field_desc_empty_behavior: "Action when no upcoming event is scheduled: 'chill' shows retro Free Play scene, 'skip' advances rotation immediately.",
+    field_imminent_min: "Imminent Alert Threshold (min)",
+    field_desc_imminent_min: "Arcade VS-Fighting countdown gauge when an event starts within N minutes (0 = disabled).",
+    field_fun_sprites: "Contextual Pixel-Art Sprites",
+    field_desc_fun_sprites: "Display animated contextual arcade sprites (birthday cake, cyber call, heart, pizza, cameos).",
+    field_max_events: "Max Cached Events",
+    field_desc_max_events: "Maximum number of upcoming events retained in the binary SD cache (1 to 12).",
+    field_lookahead_days: "Lookahead Window (Days)",
+    field_desc_lookahead_days: "Horizon in days for filtering upcoming events and expanding recurring RRULE entries (1 to 30).",
+    field_events_per_rotation: "Events per Rotation",
+    field_desc_events_per_rotation: "Number of upcoming appointments displayed before yielding to the next rotation screen.",
+    field_event_duration_sec: "Seconds per Event",
+    field_desc_event_duration_sec: "Display duration for each appointment card in seconds (4 to 30).",
+    field_empty_mode: "When No Upcoming Events",
+    field_desc_empty_mode: "Behavior when no events fall within the lookahead window (Show Chill Free Play scene or Skip rotation slot).",
+    field_imminent_alert_min: "Imminent Alert Threshold (min)",
+    field_desc_imminent_alert_min: "Minutes before start time to trigger the imminent countdown badge and arcade cameo animation (5 to 60).",
+    fsync_companion_title: "🏆 RetroAchievements & High Scores Companion",
+    fsync_show_hiscores: "Show Arcade High Scores (Hall of Fame)",
+    fsync_show_ra: "Show RetroAchievements Progress Card",
+    fsync_celebrate_events: "Live Fireworks & Hero Celebration (Trophy / Top 3 Record)",
+    fsync_card_duration: "Companion Card Duration (sec)",
+    fsync_ra_api_key: "RetroAchievements Web API Key (Optional)",
+    ota_auto_check_label: "Automatically check for updates (1x/12h)",
+    ota_changelog_btn: "📰 Visual Changelog",
+    ota_stats_btn: "📊 Public Fleet Stats",
     field_client_id: "Spotify Client ID",
     field_client_secret: "Spotify Client Secret",
     field_clock_glow: "Glow Outline",
@@ -4352,6 +4444,51 @@ const translations = {
     engine_desc_mqttdata: "Affiche les capteurs domotiques, alertes et mesures Home Assistant, Jeedom ou MQTT personnalisés en temps réel.",
     engine_desc_fighter: "Personnages de jeux de combat arcade animés s'affrontant en surimpression sur vos écrans de rotation.",
     engine_desc_frontend_sync: "Synchronisation temps réel des frontends consoles et bornes d'arcade pour Recalbox, Batocera et RetroPie.",
+    engine_agenda: "Agenda Connecté",
+    engine_desc_agenda: "Agenda iCal (.ics) persistant sur carte SD pour Google, iCloud, Outlook et Proton avec caméos pixel-art, récurrences RRULE et zéro RAM au repos.",
+    field_ics_url_1: "URL Calendrier Principal (.ics)",
+    field_desc_ics_url_1: "Lien privé iCal (.ics ou webcal://) de votre agenda principal (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
+    field_ics_label_1: "Badge Calendrier Principal",
+    field_desc_ics_label_1: "Libellé court affiché pour le premier agenda.",
+    field_ics_color_1: "Couleur Calendrier Principal",
+    field_desc_ics_color_1: "Couleur d'accentuation du premier agenda.",
+    field_ics_url_2: "URL Calendrier Secondaire (.ics)",
+    field_desc_ics_url_2: "Second flux iCal (.ics) optionnel fusionné et trié chronologiquement avec l'agenda principal.",
+    field_ics_label_2: "Badge Calendrier Secondaire",
+    field_desc_ics_label_2: "Libellé court affiché pour le second agenda.",
+    field_ics_color_2: "Couleur Calendrier Secondaire",
+    field_desc_ics_color_2: "Couleur d'accentuation du second agenda.",
+    field_horizon_days: "Horizon de Prévision (jours)",
+    field_desc_horizon_days: "Nombre de jours à venir analysés pour les événements.",
+    field_events_shown: "Événements Max par Cycle",
+    field_desc_events_shown: "Nombre maximum de prochains rendez-vous affichés par cycle de rotation.",
+    field_empty_behavior: "Comportement Agenda Vide",
+    field_desc_empty_behavior: "Action lorsqu'aucun rendez-vous n'est prévu : 'chill' affiche la scène Free Play rétro, 'skip' passe immédiatement au tour suivant.",
+    field_imminent_min: "Seuil d'Alerte Imminente (min)",
+    field_desc_imminent_min: "Jauge de compte à rebours arcade lorsqu'un rendez-vous commence dans moins de N minutes (0 = désactivé).",
+    field_fun_sprites: "Sprites Pixel-Art Contextuels",
+    field_desc_fun_sprites: "Affiche les sprites arcade animés contextuels (gâteau d'anniversaire, appel cyber, cœur médical, pizza, caméos).",
+    field_max_events: "Nombre Max d'Événements",
+    field_desc_max_events: "Nombre maximum de prochains rendez-vous conservés dans le cache binaire SD (1 à 12).",
+    field_lookahead_days: "Fenêtre de Prévision (Jours)",
+    field_desc_lookahead_days: "Horizon en jours pour filtrer les événements à venir et calculer les récurrences RRULE (1 à 30).",
+    field_events_per_rotation: "Événements par Rotation",
+    field_desc_events_per_rotation: "Nombre de prochains rendez-vous affichés avant de passer à l'écran suivant de la rotation.",
+    field_event_duration_sec: "Durée par Événement (s)",
+    field_desc_event_duration_sec: "Durée d'affichage de chaque rendez-vous en secondes (4 à 30).",
+    field_empty_mode: "Si Aucun Événement Prévu",
+    field_desc_empty_mode: "Comportement lorsqu'aucun rendez-vous n'est prévu (Afficher l'écran Free Play ou Passer le tour).",
+    field_imminent_alert_min: "Seuil d'Alerte Imminente (min)",
+    field_desc_imminent_alert_min: "Minutes avant le début d'un rendez-vous pour déclencher le compte à rebours et l'animation arcade (5 à 60).",
+    fsync_companion_title: "🏆 Compagnon RetroAchievements & High Scores",
+    fsync_show_hiscores: "Afficher le Hall of Fame (High Scores Arcade)",
+    fsync_show_ra: "Afficher la Carte RetroAchievements",
+    fsync_celebrate_events: "Feux d'Artifice & Célébration Temps Réel (Trophée / Record Top 3)",
+    fsync_card_duration: "Durée d'Affichage des Cartes (sec)",
+    fsync_ra_api_key: "Clé Web API RetroAchievements (Optionnel)",
+    ota_auto_check_label: "Vérifier automatiquement les mises à jour (1x/12h)",
+    ota_changelog_btn: "📰 Changelog Visuel",
+    ota_stats_btn: "📊 Stats Publiques du Parc",
     field_client_id: "Client ID Spotify",
     field_client_secret: "Client Secret Spotify",
     field_clock_glow: "Contour Lumineux (Halo)",
@@ -5425,6 +5562,51 @@ const translations = {
     engine_desc_mqttdata: "Muestra sensores domóticos, alertas y métricas de Home Assistant, Jeedom o topics MQTT personalizados en tiempo real.",
     engine_desc_fighter: "Personajes animados de lucha arcade combatiendo superpuestos sobre las pantallas en rotación.",
     engine_desc_frontend_sync: "Sincronización en tiempo real con frontends de consolas y recreativas para Recalbox, Batocera y RetroPie.",
+    engine_agenda: "Agenda Conectada",
+    engine_desc_agenda: "Agenda iCal (.ics) persistente en tarjeta SD para Google, iCloud, Outlook y Proton con cameos pixel-art, recurrencias RRULE y cero RAM en reposo.",
+    field_ics_url_1: "URL Calendario Principal (.ics)",
+    field_desc_ics_url_1: "Enlace privado iCal (.ics o webcal://) de tu calendario principal (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
+    field_ics_label_1: "Insignia Calendario Principal",
+    field_desc_ics_label_1: "Etiqueta corta mostrada para el primer calendario.",
+    field_ics_color_1: "Color Calendario Principal",
+    field_desc_ics_color_1: "Color de acento para el primer calendario.",
+    field_ics_url_2: "URL Calendario Secundario (.ics)",
+    field_desc_ics_url_2: "Segundo flujo iCal (.ics) opcional fusionado y ordenado cronológicamente con el calendario principal.",
+    field_ics_label_2: "Insignia Calendario Secundario",
+    field_desc_ics_label_2: "Etiqueta corta mostrada para el segundo calendario.",
+    field_ics_color_2: "Color Calendario Secundario",
+    field_desc_ics_color_2: "Color de acento para el segundo calendario.",
+    field_horizon_days: "Horizonte de Previsión (días)",
+    field_desc_horizon_days: "Número de próximos días a escanear en busca de eventos.",
+    field_events_shown: "Máx. Eventos por Ciclo",
+    field_desc_events_shown: "Número máximo de próximos eventos mostrados por ciclo de rotación.",
+    field_empty_behavior: "Comportamiento sin Eventos",
+    field_desc_empty_behavior: "Acción cuando no hay eventos previstos: 'chill' muestra la escena Free Play retro, 'skip' avanza la rotación inmediatamente.",
+    field_imminent_min: "Umbral de Alerta Inminente (min)",
+    field_desc_imminent_min: "Indicador de cuenta atrás arcade cuando un evento comienza en N minutos (0 = desactivado).",
+    field_fun_sprites: "Sprites Pixel-Art Contextuales",
+    field_desc_fun_sprites: "Muestra sprites arcade animados contextuales (pastel de cumpleaños, llamada cyber, corazón médico, pizza, cameos).",
+    field_max_events: "Máximo de Eventos en Caché",
+    field_desc_max_events: "Número máximo de próximos eventos conservados en la caché binaria SD (1 a 12).",
+    field_lookahead_days: "Ventana de Previsión (Días)",
+    field_desc_lookahead_days: "Horizonte en días para filtrar próximos eventos y expandir recurrencias RRULE (1 a 30).",
+    field_events_per_rotation: "Eventos por Rotación",
+    field_desc_events_per_rotation: "Número de próximas citas mostradas antes de avanzar a la siguiente pantalla en rotación.",
+    field_event_duration_sec: "Duración por Evento (s)",
+    field_desc_event_duration_sec: "Duración de visualización de cada cita en segundos (4 a 30).",
+    field_empty_mode: "Si No Hay Eventos Próximos",
+    field_desc_empty_mode: "Comportamiento cuando no hay eventos previstos (Mostrar escena Free Play o Saltar turno).",
+    field_imminent_alert_min: "Umbral de Alerta Inminente (min)",
+    field_desc_imminent_alert_min: "Minutos antes del inicio de una cita para activar la cuenta atrás y el cameo arcade (5 a 60).",
+    fsync_companion_title: "🏆 Compañero RetroAchievements y High Scores",
+    fsync_show_hiscores: "Mostrar Salón de la Fama (High Scores Arcade)",
+    fsync_show_ra: "Mostrar Tarjeta de Progreso RetroAchievements",
+    fsync_celebrate_events: "Fuegos Artificiales y Celebración en Vivo (Trofeo / Récord Top 3)",
+    fsync_card_duration: "Duración de Tarjetas Compañero (seg)",
+    fsync_ra_api_key: "Clave Web API RetroAchievements (Opcional)",
+    ota_auto_check_label: "Comprobar actualizaciones automáticamente (1x/12h)",
+    ota_changelog_btn: "📰 Changelog Visual",
+    ota_stats_btn: "📊 Estadísticas de la Flota",
     field_client_id: "Client ID de Spotify",
     field_client_secret: "Client Secret de Spotify",
     field_clock_glow: "Contorno Luminoso (Halo)",
@@ -6025,7 +6207,7 @@ function getEngineMeta(descOrMeta) {
     else if (id.includes('stock') || cat.includes('stock') || cat.includes('finance')) icon = '📈';
     else if (id.includes('gif') || cat.includes('animation') || cat.includes('media_anim')) icon = '🎞️';
     else if (id.includes('sys') || cat.includes('system') || cat.includes('info')) icon = '🖥️';
-    else if (id.includes('date') || cat.includes('calendar')) icon = '📅';
+    else if (id.includes('date') || id === 'agenda' || cat.includes('calendar')) icon = '📅';
     else if (id.includes('spotify')) icon = '🟢';
     else if (id.includes('cast') || id.includes('music') || cat.includes('audio')) icon = '🎵';
     else if (id.includes('marquee')) icon = '📜';
@@ -9396,6 +9578,60 @@ function initOta() {
     return curr.prerelease.num < lat.prerelease.num;
   }
 
+  const OTA_WORKER_URL = 'https://arcadematrix-ota-stats.red77290.workers.dev/v1/ota/releases';
+  const GITHUB_RELEASES_URL = 'https://api.github.com/repos/red77290/ArcadeMatrix/releases';
+
+  async function fetchOtaReleases(sysInfo) {
+    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32', board_env: '' }));
+    const params = new URLSearchParams({
+      p: 'esp32',
+      id: info.install_id || '',
+      v: info.version || '',
+      hw: info.board_env || info.arch || 'esp32dev',
+      res: info.res || '128x32',
+    });
+    try {
+      const r = await fetch(`${OTA_WORKER_URL}?${params.toString()}`, { signal: AbortSignal.timeout(4500) });
+      if (r.ok) return await r.json();
+    } catch (_) {}
+    const r = await fetch(GITHUB_RELEASES_URL);
+    if (!r.ok) throw new Error(`GitHub API error ${r.status}`);
+    return await r.json();
+  }
+  window.fetchOtaReleases = fetchOtaReleases;
+
+  const otaAutoChk = document.getElementById('ota-auto-check');
+  if (otaAutoChk && !otaAutoChk._boundChange) {
+    otaAutoChk._boundChange = true;
+    otaAutoChk.addEventListener('change', async () => {
+      try {
+        await API.post('/api/system', { system: { ota_auto_check: !!otaAutoChk.checked } });
+      } catch (_) {}
+    });
+  }
+
+  // Silent background OTA check (at most 1x per 12h when enabled)
+  setTimeout(async () => {
+    try {
+      const sysInfo = await API.get('/api/version').catch(() => null);
+      if (!sysInfo) return;
+      if (otaAutoChk && sysInfo.ota_auto_check !== undefined) {
+        otaAutoChk.checked = !!sysInfo.ota_auto_check;
+      }
+      if (sysInfo.ota_auto_check === false) return;
+      const lastCheck = parseInt(localStorage.getItem('am_last_ota_check_ts') || '0', 10) || 0;
+      if (Date.now() - lastCheck < 12 * 3600 * 1000) return;
+      localStorage.setItem('am_last_ota_check_ts', String(Date.now()));
+      const releases = await fetchOtaReleases(sysInfo);
+      if (Array.isArray(releases) && releases.length > 0) {
+        const latestVer = String(releases[0].tag_name || '').replace(/^[vV]/, '');
+        if (isSemVerLower(sysInfo.version || '3.0.0', latestVer)) {
+          window.showToast(`🎉 Firmware update v${latestVer} is available in the OTA tab!`, 'info');
+        }
+      }
+    } catch (_) {}
+  }, 4500);
+
   if (btnCheck) {
     btnCheck.addEventListener('click', async () => {
       btnCheck.disabled = true;
@@ -9408,9 +9644,8 @@ function initOta() {
         const isS3 = (sysInfo.arch || '').toLowerCase().includes('s3');
         const boardEnv = (sysInfo.board_env || '').toLowerCase();
 
-        const res = await fetch('https://api.github.com/repos/red77290/ArcadeMatrix/releases');
-        if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
-        const releases = await res.json();
+        const releases = await fetchOtaReleases(sysInfo);
+        localStorage.setItem('am_last_ota_check_ts', String(Date.now()));
         if (!releases || !releases.length) throw new Error('No releases found on GitHub');
 
         const latestRel = releases[0];
@@ -9551,6 +9786,7 @@ function initOta() {
           window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
         } else {
           window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
+          fetchOtaReleases(versionData).catch(() => {});
         }
         loadVersion();
         if (onlineCard) onlineCard.style.display = 'none';
@@ -10270,6 +10506,11 @@ function initNetworkSettings() {
         video_fps: clampInt(document.getElementById('hw-mqtt-video-fps')?.value, 20, 8, 60),
         video_mode: document.getElementById('hw-mqtt-video-mode')?.value || 'auto_action',
         color_boost: document.getElementById('hw-mqtt-color-boost')?.value || 'auto',
+        sync_show_hiscores: document.getElementById('hw-mqtt-sync-hiscores')?.value !== '0',
+        sync_show_ra: document.getElementById('hw-mqtt-sync-ra')?.value !== '0',
+        sync_celebrate_events: document.getElementById('hw-mqtt-sync-celebrate')?.value !== '0',
+        sync_card_duration_sec: clampInt(document.getElementById('hw-mqtt-sync-card-duration')?.value, 8, 4, 20),
+        ra_web_api_key: document.getElementById('hw-mqtt-ra-api-key')?.value || '',
       };
       try {
         const res = await API.post('/api/system', { mqtt });
@@ -10817,6 +11058,13 @@ async function initSettings() {
     setVal('hw-mqtt-video-fps', mqtt.video_fps ?? 20);
     setVal('hw-mqtt-video-mode', mqtt.video_mode || 'auto_action');
     setVal('hw-mqtt-color-boost', mqtt.color_boost || 'auto');
+    setVal('hw-mqtt-sync-hiscores', mqtt.sync_show_hiscores !== false ? '1' : '0');
+    setVal('hw-mqtt-sync-ra', mqtt.sync_show_ra !== false ? '1' : '0');
+    setVal('hw-mqtt-sync-celebrate', mqtt.sync_celebrate_events !== false ? '1' : '0');
+    setVal('hw-mqtt-sync-card-duration', mqtt.sync_card_duration_sec ?? 8);
+    setVal('hw-mqtt-ra-api-key', mqtt.ra_web_api_key || '');
+    const otaChkEl = document.getElementById('ota-auto-check');
+    if (otaChkEl && sys.ota_auto_check !== undefined) otaChkEl.checked = !!sys.ota_auto_check;
 
     const updateFrontendSyncShowcaseUI = () => {
       const ingameEn = document.getElementById('hw-mqtt-ingame-showcase')?.value !== '0';
