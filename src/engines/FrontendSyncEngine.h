@@ -489,6 +489,7 @@ private:
     std::atomic<uint32_t> m_artJobSeq{0};
     ArtDownloadJobSlot m_artJobSlot;
     std::atomic<uint32_t> m_activeArtReqId{0};
+    std::atomic<bool> m_artNetBusy{false};
     std::atomic<uint32_t> m_artResultSeq{0};
     ArtDownloadResultSlot m_artResultSlot;
     std::atomic<bool> m_artResultPending{false};
@@ -538,6 +539,22 @@ private:
     bool hasPendingEvent = false;
     unsigned long pendingEventTime = 0;
     String pendingPayload = "";
+
+    bool m_hasPendingNetArt = false;
+    uint32_t m_pendingNetArtDueMs = 0;
+    ArtDownloadJobSlot m_pendingNetArtJob{};
+
+    void scheduleOrDispatchArtJob(
+        const char* primaryFolder,
+        const char* secondaryFolder,
+        const char* query,
+        const char* title,
+        const char* localStem,
+        uint32_t reqId,
+        uint32_t negHash,
+        bool isSystem,
+        bool immediate
+    );
 
     bool tryPlayMarqueePath(const char* path);
     void showCyanTitleBanner(const char* primaryTitle, const String& fallbackName);

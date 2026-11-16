@@ -181,20 +181,37 @@ sed -e "s/{{DMD_HOST}}/$DMD_IP/g" -e "s/{{BROKER}}/$DMD_IP/g" -e "s|{{TOPIC}}|$T
 if [ "$SYSTEM" = "recalbox" ]; then
     TARGET_DIR="/recalbox/share/userscripts"
     echo "Cleaning up any previous install..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_companion_sync.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh || true; mkdir -p $TARGET_DIR" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_mqtt.sh' 2>/dev/null || true; rm -f '$TARGET_DIR/arcadematrix_mqtt.sh' || true; mkdir -p '$TARGET_DIR' /recalbox/share/system" || true
 
     echo "Uploading daemon & companion sync (topic: $TOPIC)..."
     scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/recalbox/share/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
     scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_companion_sync.py" "/recalbox/share/arcadematrix_companion_sync.py" || { echo "SCP failed!"; exit 1; }
     scp_run "$ACTIVE_USER" "$PASSWORD" "$SCRIPT_DIR/arcadematrix_launcher(permanent).sh" "$TARGET_DIR/arcadematrix_launcher(permanent).sh" || { echo "SCP failed!"; exit 1; }
 
-    echo "Rebooting $TARGET_IP to apply changes..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod +x /recalbox/share/arcadematrix_companion_sync.py '$TARGET_DIR/arcadematrix_launcher(permanent).sh' && sync && sleep 1 && reboot" || true
+    echo "Configuring Recalbox boot persistence & starting daemon live..."
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "
+        chmod +x /recalbox/share/arcadematrix_companion_sync.py '$TARGET_DIR/arcadematrix_launcher(permanent).sh' 2>/dev/null || true
+        if [ ! -f /recalbox/share/system/custom.sh ]; then
+            printf '#!/bin/sh\ncase \"\$1\" in\n  \"\"|start) sh \"/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh\" -action start >/dev/null 2>&1 & ;;\nesac\n' > /recalbox/share/system/custom.sh
+        elif ! grep -q 'arcadematrix_launcher' /recalbox/share/system/custom.sh; then
+            printf '\n# ArcadeMatrix Daemon\ncase \"\$1\" in \"\"|start) sh \"/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh\" -action start >/dev/null 2>&1 & ;; esac\n' >> /recalbox/share/system/custom.sh
+        fi
+        chmod +x /recalbox/share/system/custom.sh 2>/dev/null || true
+        : > '$TARGET_DIR/daemon.log'
+        if command -v setsid >/dev/null 2>&1; then
+            setsid python3 /recalbox/share/arcadematrix_daemon.py </dev/null >>'$TARGET_DIR/daemon.log' 2>&1 &
+        else
+            nohup python3 /recalbox/share/arcadematrix_daemon.py </dev/null >>'$TARGET_DIR/daemon.log' 2>&1 &
+        fi
+        sync
+        sleep 1
+        (ps w 2>/dev/null || ps) | grep '[a]rcadematrix_daemon.py' || true
+    " || true
 
 elif [ "$SYSTEM" = "batocera" ]; then
     TARGET_DIR="/userdata/system/scripts"
     echo "Cleaning up legacy daemons..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f arcadematrix_daemon.py 2>/dev/null; pkill -f arcadematrix_companion_sync.py 2>/dev/null; pkill -f arcadematrix_mqtt.sh 2>/dev/null; true" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_mqtt.sh' 2>/dev/null || true" || true
     echo "Removing legacy script files..."
     ssh_run "$ACTIVE_USER" "$PASSWORD" "rm -f /userdata/system/arcadematrix_daemon.py $TARGET_DIR/arcadematrix_hook.sh $TARGET_DIR/arcadematrix_mqtt.sh $TARGET_DIR/arcadematrix_companion_sync.py" || true
     echo "Removing legacy ES event directories..."
@@ -237,7 +254,7 @@ elif [ "$SYSTEM" = "batocera" ]; then
 
 elif [ "$SYSTEM" = "retropie" ]; then
     echo "Installing for RetroPie..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_companion_sync.py || true; mkdir -p /opt/retropie/configs/all" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f '[a]rcadematrix_daemon.py' 2>/dev/null || true; pkill -f '[a]rcadematrix_companion_sync.py' 2>/dev/null || true; mkdir -p /opt/retropie/configs/all" || true
 
     echo "Uploading daemon & companion sync (topic: $TOPIC)..."
     scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/opt/retropie/configs/all/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
@@ -273,12 +290,12 @@ EOF
     chmod +x /opt/retropie/configs/all/runcommand-onend.sh
 
     if [ -f /opt/retropie/configs/all/autostart.sh ] && ! grep -q 'arcadematrix_daemon.py' /opt/retropie/configs/all/autostart.sh; then
-        sed -i '/emulationstation/i python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &' /opt/retropie/configs/all/autostart.sh
+        sed -i '/emulationstation/i setsid python3 /opt/retropie/configs/all/arcadematrix_daemon.py </dev/null >> /opt/retropie/configs/all/daemon.log 2>&1 &' /opt/retropie/configs/all/autostart.sh
     fi
     " || true
 
     echo "Starting RetroPie daemon..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "nohup python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "setsid python3 /opt/retropie/configs/all/arcadematrix_daemon.py </dev/null > /opt/retropie/configs/all/daemon.log 2>&1 & sleep 1" || true
 fi
 
 echo

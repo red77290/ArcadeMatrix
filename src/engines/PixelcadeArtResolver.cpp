@@ -336,42 +336,35 @@ std::vector<PixelcadeSystemVariant> PixelcadeArtResolver::getSystemNameVariantsM
     sysNospace = removeCharFromString(sysNospace, '-');
     String sysUnderscore = sysLower;
     replaceAllInString(sysUnderscore, ' ', '_');
+    replaceAllInString(sysUnderscore, '-', '_');
+    String cleanKebab = sysLower;
+    replaceAllInString(cleanKebab, ' ', '-');
+    replaceAllInString(cleanKebab, '_', '-');
 
-    const String* lookupKeys[] = { &rawLower, &sysLower, &sysNospace, &sysUnderscore };
+    // 1. Exact full-system lookups in SD mappings + built-in Flash table FIRST
+    const String* lookupKeys[] = { &rawLower, &sysLower, &sysNospace, &sysUnderscore, &cleanKebab };
     for (const String* key : lookupKeys) {
         appendTargetsFromMappingsOrBuiltin(mappings, *key, nameVariants);
     }
 
-    static const char* const embeddedKeywords[] = { "cps1", "cps2", "cps3", "atomiswave", "naomi", "neogeo" };
-    for (const char* kw : embeddedKeywords) {
-        if (sysNospace.indexOf(kw) != -1) {
-            String kwStr(kw);
-            appendTargetsFromMappingsOrBuiltin(mappings, kwStr, nameVariants);
-            appendPrefixedVariant(nameVariants, "default-z", kwStr);
-            appendPrefixedVariant(nameVariants, "default-", kwStr);
-        }
-    }
+    // 2. Direct full-system stems & standard Pixelcade prefixes BEFORE any partial token fallback
+    const String* directForms[] = { &sysLower, &clean, &sysUnderscore, &sysNospace, &cleanKebab };
+    for (const String* f : directForms) pushUniqueString(nameVariants, *f);
+    for (const String* f : directForms) appendPrefixedVariant(nameVariants, "default-", *f);
+    const String* underForms[] = { &clean, &sysLower, &sysUnderscore };
+    for (const String* f : underForms) appendPrefixedVariant(nameVariants, "default-_", *f);
 
-    size_t lastSpace = 0;
-    std::vector<String> words;
-    for (size_t i = 0; i <= sysLower.length(); i++) {
-        if (i == sysLower.length() || sysLower[i] == ' ') {
-            if (i > lastSpace) {
-                String w = sysLower.substring(lastSpace, i);
-                w.trim();
-                if (w.length() > 0 && w != "arcade" && w != "manufacturer" && w != "system" && w != "genre") {
-                    words.push_back(w);
-                }
-            }
-            lastSpace = i + 1;
-        }
-    }
-    for (int i = static_cast<int>(words.size()) - 1; i >= 0; i--) {
-        const String& w = words[static_cast<size_t>(i)];
-        appendTargetsFromMappingsOrBuiltin(mappings, w, nameVariants);
-        appendPrefixedVariant(nameVariants, "default-z", w);
-        appendPrefixedVariant(nameVariants, "default-", w);
-    }
+    appendPrefixedVariant(nameVariants, "default-z", sysLower);
+    appendPrefixedVariant(nameVariants, "default-z", sysNospace);
+    appendPrefixedVariant(nameVariants, "z", sysLower);
+    appendPrefixedVariant(nameVariants, "z", sysNospace);
+
+    appendPrefixedVariant(nameVariants, "default-arcade_", sysUnderscore, "_classics");
+    appendPrefixedVariant(nameVariants, "default-arcade", sysNospace, "classics");
+    appendPrefixedVariant(nameVariants, "arcade", sysNospace, "classics");
+    appendPrefixedVariant(nameVariants, "arcade", sysNospace);
+    appendPrefixedVariant(nameVariants, "default-manufacture_", sysUnderscore);
+    appendPrefixedVariant(nameVariants, "default-manufacture_", sysLower);
 
     std::vector<String> uniqueBase;
     String sysUpper = clean;
@@ -448,31 +441,6 @@ std::vector<PixelcadeSystemVariant> PixelcadeArtResolver::getSystemNameVariantsM
         }
     }
 
-    String cleanLower = clean;
-    cleanLower.toLowerCase();
-    String cleanNospace = removeCharFromString(cleanLower, ' ');
-    String cleanUnderscore = cleanLower;
-    replaceAllInString(cleanUnderscore, ' ', '_');
-    String cleanKebab = cleanLower;
-    replaceAllInString(cleanKebab, ' ', '-');
-
-    const String* directForms[] = { &cleanLower, &clean, &cleanUnderscore, &cleanNospace, &cleanKebab };
-    for (const String* f : directForms) pushUniqueString(nameVariants, *f);
-
-    for (const String* f : directForms) appendPrefixedVariant(nameVariants, "default-", *f);
-    const String* underForms[] = { &clean, &cleanLower, &cleanUnderscore };
-    for (const String* f : underForms) appendPrefixedVariant(nameVariants, "default-_", *f);
-
-    appendPrefixedVariant(nameVariants, "default-z", cleanLower);
-    appendPrefixedVariant(nameVariants, "default-z", cleanNospace);
-    appendPrefixedVariant(nameVariants, "z", cleanLower);
-    appendPrefixedVariant(nameVariants, "z", cleanNospace);
-
-    appendPrefixedVariant(nameVariants, "default-arcade_", cleanUnderscore, "_classics");
-    appendPrefixedVariant(nameVariants, "default-arcade", cleanNospace, "classics");
-    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanUnderscore);
-    appendPrefixedVariant(nameVariants, "default-manufacture_", cleanLower);
-
     for (const auto& b : uniqueBase) {
         String bLower = b;
         bLower.toLowerCase();
@@ -492,6 +460,62 @@ std::vector<PixelcadeSystemVariant> PixelcadeArtResolver::getSystemNameVariantsM
         appendPrefixedVariant(nameVariants, "default-arcade", bNospace, "classics");
         appendPrefixedVariant(nameVariants, "default-manufacture_", bUnderscore);
         appendPrefixedVariant(nameVariants, "default-manufacture_", bLower);
+    }
+
+    // 3. Embedded arcade hardware keywords ("Capcom CPS1" -> cps1, etc.)
+    static const char* const embeddedKeywords[] = {
+        "cps1", "cps2", "cps3", "atomiswave", "naomi2", "naomi", "neogeo", "model2", "model3", "hikaru", "triforce"
+    };
+    for (const char* kw : embeddedKeywords) {
+        if (sysNospace.indexOf(kw) != -1) {
+            String kwStr(kw);
+            appendTargetsFromMappingsOrBuiltin(mappings, kwStr, nameVariants);
+            appendPrefixedVariant(nameVariants, "default-z", kwStr);
+            appendPrefixedVariant(nameVariants, "default-", kwStr);
+        }
+    }
+
+    // 4. Hyphen / underscore / space sub-system manufacturer fallback
+    // (e.g. Recalbox "taito-gnet" -> "taito", "namco-system11" -> "namco", "sega-system16" -> "sega", "konami-gx" -> "konami")
+    auto isGenericSysToken = [](const char* tok) -> bool {
+        static const char* const kGeneric[] = {
+            "arcade", "manufacturer", "system", "genre", "collection", "auto", "custom",
+            "super", "mega", "neo", "game", "boy", "color", "pocket", "advance",
+            "entertainment", "computer", "video", "mini", "pro", "plus", "cd",
+            "gnet", "gx", "m72", "m92", "zn", "stv"
+        };
+        if (!tok || strlen(tok) < 3U) return true;
+        if (strncmp(tok, "system", 6) == 0) return true;
+        for (const char* g : kGeneric) {
+            if (strEqIgnoreCase(tok, g)) return true;
+        }
+        return false;
+    };
+
+    size_t tokStart = 0U;
+    std::vector<String> tokens;
+    for (size_t i = 0U; i <= sysLower.length(); ++i) {
+        const bool isSep = (i == sysLower.length() || sysLower[i] == ' ' || sysLower[i] == '-' || sysLower[i] == '_');
+        if (isSep) {
+            if (i > tokStart) {
+                String w = sysLower.substring(tokStart, i);
+                w.trim();
+                if (w.length() > 0 && w != sysLower && !isGenericSysToken(w.c_str())) {
+                    tokens.push_back(w);
+                }
+            }
+            tokStart = i + 1U;
+        }
+    }
+    // Prefer more specific board token if listed at end ("capcom cps1"), then manufacturer prefix ("taito-gnet" -> "taito")
+    for (size_t i = 0U; i < tokens.size(); ++i) {
+        const String& w = tokens[i];
+        appendTargetsFromMappingsOrBuiltin(mappings, w, nameVariants);
+        pushUniqueString(nameVariants, w);
+        appendPrefixedVariant(nameVariants, "default-", w);
+        appendPrefixedVariant(nameVariants, "default-z", w);
+        appendPrefixedVariant(nameVariants, "default-arcade_", w, "_classics");
+        appendPrefixedVariant(nameVariants, "arcade", w, "classics");
     }
 
     std::vector<PixelcadeSystemVariant> list;
@@ -514,15 +538,25 @@ String PixelcadeArtResolver::mapSystemToPixelcadeFolder(const String& systemId) 
         {"mame", "mame"}, {"mame2003", "mame"}, {"mame2003plus", "mame"}, {"mame2010", "mame"},
         {"fbneo", "mame"}, {"fba", "mame"}, {"fbalibretro", "mame"}, {"arcade", "mame"},
         {"hbmame", "mame"}, {"cps", "mame"}, {"cps1", "mame"}, {"cps2", "mame"}, {"cps3", "mame"},
-        {"capcom", "mame"}, {"konami", "mame"}, {"taito", "mame"}, {"dataeast", "mame"},
-        {"midway", "mame"}, {"irem", "mame"}, {"namco", "mame"}, {"namcosystem22", "mame"},
-        {"toaplan", "mame"}, {"technos", "mame"}, {"psikyo", "mame"}, {"kaneko", "mame"},
+        {"capcom", "mame"}, {"konami", "mame"}, {"konamigx", "mame"},
+        {"taito", "mame"}, {"taitognet", "mame"}, {"dataeast", "mame"}, {"deco", "mame"},
+        {"midway", "mame"}, {"irem", "mame"}, {"iremm72", "mame"}, {"iremm92", "mame"},
+        {"namco", "mame"}, {"namcosystem10", "mame"}, {"namcosystem11", "mame"},
+        {"namcosystem12", "mame"}, {"namcosystem21", "mame"}, {"namcosystem22", "mame"},
+        {"namcosystem246", "mame"}, {"namcosystem256", "mame"},
+        {"toaplan", "mame"}, {"technos", "mame"}, {"tecmo", "mame"}, {"koeitecmo", "mame"},
+        {"psikyo", "mame"}, {"kaneko", "mame"}, {"atlus", "mame"}, {"seta", "mame"},
+        {"sunsoft", "mame"}, {"videosystem", "mame"}, {"nmk", "mame"},
         {"visco", "mame"}, {"raizing", "mame"}, {"eighting", "mame"}, {"banpresto", "mame"},
         {"jaleco", "mame"}, {"nichibutsu", "mame"}, {"seibu", "mame"}, {"snk", "mame"},
         {"sammy", "mame"}, {"gaelco", "mame"}, {"igs", "mame"}, {"pgm", "mame"},
         {"williams", "mame"}, {"bally", "mame"}, {"gottlieb", "mame"}, {"stern", "mame"},
         {"universal", "mame"}, {"exidy", "mame"}, {"cinematronics", "mame"}, {"atari", "mame"},
-        {"sega", "mame"}, {"nintendoarcade", "nintendo_arcade_systems"},
+        {"sega", "mame"}, {"segasystem1", "mame"}, {"segasystem2", "mame"},
+        {"segasystem16", "mame"}, {"segasystem18", "mame"}, {"segasystem24", "mame"},
+        {"segasystem32", "mame"}, {"segachihiro", "mame"}, {"segahikaru", "mame"},
+        {"nintendoarcade", "nintendo_arcade_systems"},
+        {"gw", "mame"}, {"gameandwatch", "mame"},
         {"cave", "cave"}, {"cave3rd", "cave"},
         {"neogeo", "neogeo"}, {"neogeomvs", "snk_neo_geo_mvs"}, {"neogeoaes", "snk_neo_geo_aes"},
         {"neogeocd", "snk_neo_geo_cd"}, {"neocdz", "snk_neo_geo_cd"},
@@ -535,7 +569,8 @@ String PixelcadeArtResolver::mapSystemToPixelcadeFolder(const String& systemId) 
         {"stv", "sega_st-v"}, {"segastv", "sega_st-v"},
         {"hikaru", "mame"}, {"chihiro", "mame"},
         {"triforce", "sega_triforce"}, {"segatriforce", "sega_triforce"},
-        {"lindbergh", "teknoparrot"}, {"ringedge", "sega_ring"}, {"ringwide", "sega_ring"},
+        {"lindbergh", "teknoparrot"}, {"segalindbergh", "teknoparrot"},
+        {"ringedge", "sega_ring"}, {"ringwide", "sega_ring"}, {"segaringedge", "sega_ring"}, {"segaringwide", "sega_ring"},
         {"taitotypex", "taito_type_x"}, {"typex", "taito_type_x"},
         {"teknoparrot", "teknoparrot"},
         {"zinc", "zinc"}, {"aae", "aae"},
@@ -875,49 +910,48 @@ void PixelcadeArtResolver::normalizeMarqueeKey(const char* raw, char* out, size_
     out[0] = '\0';
     if (!raw || raw[0] == '\0') return;
 
-    char stripped[160];
-    stripRomOrArtExtensionAndTags(raw, stripped, sizeof(stripped));
-    if (stripped[0] == '\0') return;
+    char bufA[128];
+    char bufB[128];
+    stripRomOrArtExtensionAndTags(raw, bufA, sizeof(bufA));
+    if (bufA[0] == '\0') return;
 
-    // 1. Fold UTF-8 Latin accents to lowercase ASCII while keeping spaces, commas, hyphens, and '&'
-    char folded[160];
+    // 1. Fold UTF-8 Latin accents to lowercase ASCII into bufB while keeping spaces, commas, hyphens, and '&'
     size_t fw = 0U;
-    size_t sLen = strlen(stripped);
-    for (size_t i = 0U; i < sLen && fw + 3U < sizeof(folded); ) {
+    const size_t sLen = strlen(bufA);
+    for (size_t i = 0U; i < sLen && fw + 3U < sizeof(bufB); ) {
         char asciiSeq[4] = {0, 0, 0, 0};
-        size_t consumed = foldNextUtf8ToAsciiLower(stripped, i, sLen, asciiSeq);
+        size_t consumed = foldNextUtf8ToAsciiLower(bufA, i, sLen, asciiSeq);
         i += (consumed > 0U) ? consumed : 1U;
-        for (size_t k = 0U; asciiSeq[k] != '\0' && fw + 1U < sizeof(folded); ++k) {
-            folded[fw++] = asciiSeq[k];
+        for (size_t k = 0U; asciiSeq[k] != '\0' && fw + 1U < sizeof(bufB); ++k) {
+            bufB[fw++] = asciiSeq[k];
         }
     }
-    folded[fw] = '\0';
+    bufB[fw] = '\0';
 
-    // 2. Strip inverted articles (`, the`, `, a`, `, an`, `, les`, `, die`, `, el`) before end-of-string or ` - `
-    char cleaned[160];
+    // 2. Strip inverted articles (`, the`, `, a`, `, an`, `, les`, `, die`, `, el`) into bufA
     size_t cw = 0U;
-    for (size_t i = 0U; i < fw && cw + 1U < sizeof(cleaned); ) {
-        if (folded[i] == ',') {
+    for (size_t i = 0U; i < fw && cw + 1U < sizeof(bufA); ) {
+        if (bufB[i] == ',') {
             size_t j = i + 1U;
-            while (j < fw && folded[j] == ' ') ++j;
+            while (j < fw && bufB[j] == ' ') ++j;
             size_t wordStart = j;
-            while (j < fw && folded[j] >= 'a' && folded[j] <= 'z') ++j;
+            while (j < fw && bufB[j] >= 'a' && bufB[j] <= 'z') ++j;
             size_t wordLen = j - wordStart;
-            if (wordLen > 0U && isInvertedArticle(folded + wordStart, wordLen)) {
+            if (wordLen > 0U && isInvertedArticle(bufB + wordStart, wordLen)) {
                 size_t after = j;
-                while (after < fw && folded[after] == ' ') ++after;
-                if (after == fw || (after + 2U <= fw && folded[after] == '-' && folded[after + 1U] == ' ')) {
+                while (after < fw && bufB[after] == ' ') ++after;
+                if (after == fw || (after + 2U <= fw && bufB[after] == '-' && bufB[after + 1U] == ' ')) {
                     i = j;
                     continue;
                 }
             }
         }
-        cleaned[cw++] = folded[i++];
+        bufA[cw++] = bufB[i++];
     }
-    cleaned[cw] = '\0';
+    bufA[cw] = '\0';
 
     // 3. Strip leading article (`the `, `les `, `le `, `la `, `die `, `el `) when followed by at least 1 word
-    const char* startPtr = cleaned;
+    const char* startPtr = bufA;
     while (*startPtr == ' ') ++startPtr;
     {
         size_t wLen = 0U;
@@ -931,33 +965,32 @@ void PixelcadeArtResolver::normalizeMarqueeKey(const char* raw, char* out, size_
         }
     }
 
-    // 4. Compact to alphanumeric key, expanding '&' ("&" -> "and")
-    char compacted[160];
+    // 4. Compact to alphanumeric key in bufB, expanding '&' ("&" -> "and")
     size_t w = 0U;
-    for (size_t i = 0U; startPtr[i] != '\0' && w + 1U < sizeof(compacted); ++i) {
+    for (size_t i = 0U; startPtr[i] != '\0' && w + 1U < sizeof(bufB); ++i) {
         char c = startPtr[i];
         if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-            compacted[w++] = c;
+            bufB[w++] = c;
         } else if (c == '&') {
-            if (w + 3U < sizeof(compacted)) {
-                compacted[w++] = 'a';
-                compacted[w++] = 'n';
-                compacted[w++] = 'd';
+            if (w + 3U < sizeof(bufB)) {
+                bufB[w++] = 'a';
+                bufB[w++] = 'n';
+                bufB[w++] = 'd';
             }
         }
     }
-    compacted[w] = '\0';
+    bufB[w] = '\0';
 
     // Normalize European TMNT censor rename ("heroturtles" -> "ninjaturtles")
-    const char* heroPos = strstr(compacted, "heroturtles");
+    const char* heroPos = strstr(bufB, "heroturtles");
     if (heroPos) {
-        size_t prefixLen = static_cast<size_t>(heroPos - compacted);
+        size_t prefixLen = static_cast<size_t>(heroPos - bufB);
         const char* repl = "ninjaturtles";
         const size_t replLen = 12U;
         const char* tail = heroPos + 11U;
         size_t tailLen = strlen(tail);
         size_t outIdx = 0U;
-        for (size_t i = 0U; i < prefixLen && outIdx + 1U < outCap; ++i) out[outIdx++] = compacted[i];
+        for (size_t i = 0U; i < prefixLen && outIdx + 1U < outCap; ++i) out[outIdx++] = bufB[i];
         for (size_t i = 0U; i < replLen && outIdx + 1U < outCap; ++i) out[outIdx++] = repl[i];
         for (size_t i = 0U; i < tailLen && outIdx + 1U < outCap; ++i) out[outIdx++] = tail[i];
         out[outIdx] = '\0';
@@ -965,7 +998,7 @@ void PixelcadeArtResolver::normalizeMarqueeKey(const char* raw, char* out, size_
     }
 
     size_t copyLen = (w < outCap - 1U) ? w : (outCap - 1U);
-    memcpy(out, compacted, copyLen);
+    memcpy(out, bufB, copyLen);
     out[copyLen] = '\0';
 }
 
@@ -1042,133 +1075,132 @@ int PixelcadeArtResolver::scoreCatalogEntry(
         return 0;
     }
 
-    char candStem[160];
+    char candStem[128];
     size_t stemLen = candLen - 4U;
     if (stemLen >= sizeof(candStem)) stemLen = sizeof(candStem) - 1U;
     memcpy(candStem, candidateFile, stemLen);
     candStem[stemLen] = '\0';
 
-    char gStem[128] = "";
-    if (rawGame && rawGame[0] != '\0') {
-        size_t gl = stripKnownRomOrImageExtLen(rawGame, strlen(rawGame));
-        if (gl >= sizeof(gStem)) gl = sizeof(gStem) - 1U;
-        memcpy(gStem, rawGame, gl);
-        gStem[gl] = '\0';
-    }
-    char tStem[128] = "";
-    if (rawTitle && rawTitle[0] != '\0') {
-        size_t tl = stripKnownRomOrImageExtLen(rawTitle, strlen(rawTitle));
-        if (tl >= sizeof(tStem)) tl = sizeof(tStem) - 1U;
-        memcpy(tStem, rawTitle, tl);
-        tStem[tl] = '\0';
-    }
-
-    char candStripped[160];
-    stripRomOrArtExtensionAndTags(candStem, candStripped, sizeof(candStripped));
-
-    char gStripped[128] = "";
-    if (gStem[0] != '\0') {
-        stripRomOrArtExtensionAndTags(gStem, gStripped, sizeof(gStripped));
-    }
-    char tStripped[128] = "";
-    if (tStem[0] != '\0') {
-        stripRomOrArtExtensionAndTags(tStem, tStripped, sizeof(tStripped));
-    }
-
-    char localNormGame[128] = "";
-    const char* ng = normGame;
-    if (!ng && gStripped[0] != '\0') {
-        normalizeMarqueeKey(gStripped, localNormGame, sizeof(localNormGame));
-        ng = localNormGame;
-    }
-    char localNormTitle[128] = "";
-    const char* nt = normTitle;
-    if (!nt && tStripped[0] != '\0') {
-        normalizeMarqueeKey(tStripped, localNormTitle, sizeof(localNormTitle));
-        nt = localNormTitle;
-    }
-
-    char candNorm[128];
-    normalizeMarqueeKey(candStripped, candNorm, sizeof(candNorm));
-
-    // Optional NDS / Xbox release-number prefix ("0168 - Mario Kart DS" -> "Mario Kart DS")
-    char candNormNoNumPrefix[128] = "";
-    const char* afterNumPfx = skipFourDigitReleasePrefix(candStripped);
-    if (afterNumPfx) {
-        normalizeMarqueeKey(afterNumPfx, candNormNoNumPrefix, sizeof(candNormNoNumPrefix));
-    }
-
-    const char* ngAlias = resolveRegionalAliasNorm(ng);
-    const char* ntAlias = resolveRegionalAliasNorm(nt);
+    const size_t gLen = (rawGame && rawGame[0] != '\0') ? stripKnownRomOrImageExtLen(rawGame, strlen(rawGame)) : 0U;
+    const size_t tLen = (rawTitle && rawTitle[0] != '\0') ? stripKnownRomOrImageExtLen(rawTitle, strlen(rawTitle)) : 0U;
 
     int baseScore = 0;
-    if (gStem[0] != '\0' && strEqIgnoreCase(candStem, gStem)) {
+    if (gLen > 0U && strEqIgnoreCaseLen(rawGame, gLen, candStem)) {
         baseScore = 1000;
-    } else if (tStem[0] != '\0' && strEqIgnoreCase(candStem, tStem)) {
+    } else if (tLen > 0U && strEqIgnoreCaseLen(rawTitle, tLen, candStem)) {
         baseScore = 980;
-    } else if (gStripped[0] != '\0' && strEqIgnoreCase(candStripped, gStripped)) {
-        baseScore = 880;
-    } else if (tStripped[0] != '\0' && strEqIgnoreCase(candStripped, tStripped)) {
-        baseScore = 860;
-    } else if (ng && ng[0] != '\0' &&
-               (strcmp(candNorm, ng) == 0 || (candNormNoNumPrefix[0] != '\0' && strcmp(candNormNoNumPrefix, ng) == 0))) {
-        baseScore = 760;
-    } else if (nt && nt[0] != '\0' &&
-               (strcmp(candNorm, nt) == 0 || (candNormNoNumPrefix[0] != '\0' && strcmp(candNormNoNumPrefix, nt) == 0))) {
-        baseScore = 750;
-    } else if (ngAlias &&
-               (strcmp(candNorm, ngAlias) == 0 || (candNormNoNumPrefix[0] != '\0' && strcmp(candNormNoNumPrefix, ngAlias) == 0))) {
-        baseScore = 720;
-    } else if (ntAlias &&
-               (strcmp(candNorm, ntAlias) == 0 || (candNormNoNumPrefix[0] != '\0' && strcmp(candNormNoNumPrefix, ntAlias) == 0))) {
-        baseScore = 710;
-    } else {
-        // Subtitle-aware matching (strictly bounded at explicit ` - ` / `: ` delimiter when one side
-        // omits the subtitle, e.g. `1943 (Europe)` <-> `1943 - The Battle of Midway (USA)`)
-        char candMainRaw[128];
-        extractMainTitleBeforeSubtitle(candStripped, candMainRaw, sizeof(candMainRaw));
-        char candMainNorm[128] = "";
-        if (candMainRaw[0] != '\0') {
-            normalizeMarqueeKey(candMainRaw, candMainNorm, sizeof(candMainNorm));
+    }
+
+    char candStripped[128];
+    stripRomOrArtExtensionAndTags(candStem, candStripped, sizeof(candStripped));
+
+    char scratchA[112] = "";
+    char scratchB[112] = "";
+
+    if (baseScore == 0 && gLen > 0U) {
+        size_t copyG = (gLen < sizeof(scratchA) - 1U) ? gLen : (sizeof(scratchA) - 1U);
+        memcpy(scratchA, rawGame, copyG);
+        scratchA[copyG] = '\0';
+        stripRomOrArtExtensionAndTags(scratchA, scratchB, sizeof(scratchB));
+        if (scratchB[0] != '\0' && strEqIgnoreCase(candStripped, scratchB)) {
+            baseScore = 880;
+        }
+    }
+    if (baseScore == 0 && tLen > 0U) {
+        size_t copyT = (tLen < sizeof(scratchA) - 1U) ? tLen : (sizeof(scratchA) - 1U);
+        memcpy(scratchA, rawTitle, copyT);
+        scratchA[copyT] = '\0';
+        stripRomOrArtExtensionAndTags(scratchA, scratchB, sizeof(scratchB));
+        if (scratchB[0] != '\0' && strEqIgnoreCase(candStripped, scratchB)) {
+            baseScore = 860;
+        }
+    }
+
+    if (baseScore == 0) {
+        char localNormGame[96] = "";
+        char localNormTitle[96] = "";
+        const char* ng = normGame;
+        if (!ng && rawGame && rawGame[0] != '\0') {
+            normalizeMarqueeKey(rawGame, localNormGame, sizeof(localNormGame));
+            ng = localNormGame;
+        }
+        const char* nt = normTitle;
+        if (!nt && rawTitle && rawTitle[0] != '\0') {
+            normalizeMarqueeKey(rawTitle, localNormTitle, sizeof(localNormTitle));
+            nt = localNormTitle;
         }
 
-        char candMainAfterNumNorm[128] = "";
+        char candNorm[96];
+        normalizeMarqueeKey(candStripped, candNorm, sizeof(candNorm));
+
+        const char* afterNumPfx = skipFourDigitReleasePrefix(candStripped);
+        char candNormNoNum[96] = "";
         if (afterNumPfx) {
-            char subRaw[128];
-            extractMainTitleBeforeSubtitle(afterNumPfx, subRaw, sizeof(subRaw));
-            if (subRaw[0] != '\0') {
-                normalizeMarqueeKey(subRaw, candMainAfterNumNorm, sizeof(candMainAfterNumNorm));
-            }
+            normalizeMarqueeKey(afterNumPfx, candNormNoNum, sizeof(candNormNoNum));
         }
 
-        char gMainRaw[128] = "";
-        char gMainNorm[128] = "";
-        if (gStripped[0] != '\0') {
-            extractMainTitleBeforeSubtitle(gStripped, gMainRaw, sizeof(gMainRaw));
-            if (gMainRaw[0] != '\0') {
-                normalizeMarqueeKey(gMainRaw, gMainNorm, sizeof(gMainNorm));
-            }
-        }
-        char tMainRaw[128] = "";
-        char tMainNorm[128] = "";
-        if (tStripped[0] != '\0') {
-            extractMainTitleBeforeSubtitle(tStripped, tMainRaw, sizeof(tMainRaw));
-            if (tMainRaw[0] != '\0') {
-                normalizeMarqueeKey(tMainRaw, tMainNorm, sizeof(tMainNorm));
-            }
-        }
+        const char* ngAlias = resolveRegionalAliasNorm(ng);
+        const char* ntAlias = resolveRegionalAliasNorm(nt);
 
-        auto matchesMain = [](const char* mNorm, const char* target) -> bool {
-            return mNorm && mNorm[0] != '\0' && strlen(mNorm) >= 4U && target && strcmp(mNorm, target) == 0;
+        auto matchesCandNorm = [&](const char* target) -> bool {
+            if (!target || target[0] == '\0') return false;
+            return (strcmp(candNorm, target) == 0) ||
+                   (candNormNoNum[0] != '\0' && strcmp(candNormNoNum, target) == 0);
         };
 
-        if (matchesMain(candMainNorm, ng) || matchesMain(candMainNorm, nt) ||
-            matchesMain(candMainAfterNumNorm, ng) || matchesMain(candMainAfterNumNorm, nt)) {
-            baseScore = 540;
-        } else if (candNorm[0] != '\0' && strlen(candNorm) >= 5U &&
-                   ((gMainNorm[0] != '\0' && strcmp(gMainNorm, candNorm) == 0) ||
-                    (tMainNorm[0] != '\0' && strcmp(tMainNorm, candNorm) == 0))) {
-            baseScore = 530;
+        if (matchesCandNorm(ng)) {
+            baseScore = 760;
+        } else if (matchesCandNorm(nt)) {
+            baseScore = 750;
+        } else if (matchesCandNorm(ngAlias)) {
+            baseScore = 720;
+        } else if (matchesCandNorm(ntAlias)) {
+            baseScore = 710;
+        } else {
+            auto matchesMain = [](const char* mNorm, const char* target) -> bool {
+                return mNorm && mNorm[0] != '\0' && strlen(mNorm) >= 4U && target && strcmp(mNorm, target) == 0;
+            };
+
+            // 1. Candidate has subtitle (`1943 - The Battle of Midway` vs `1943`)
+            extractMainTitleBeforeSubtitle(candStripped, scratchA, sizeof(scratchA));
+            if (scratchA[0] != '\0') {
+                normalizeMarqueeKey(scratchA, scratchB, sizeof(scratchB));
+                if (matchesMain(scratchB, ng) || matchesMain(scratchB, nt)) {
+                    baseScore = 540;
+                }
+            }
+            if (baseScore == 0 && afterNumPfx) {
+                extractMainTitleBeforeSubtitle(afterNumPfx, scratchA, sizeof(scratchA));
+                if (scratchA[0] != '\0') {
+                    normalizeMarqueeKey(scratchA, scratchB, sizeof(scratchB));
+                    if (matchesMain(scratchB, ng) || matchesMain(scratchB, nt)) {
+                        baseScore = 540;
+                    }
+                }
+            }
+            // 2. Query/title has subtitle while candidate omits it
+            if (baseScore == 0 && candNorm[0] != '\0' && strlen(candNorm) >= 5U) {
+                if (rawGame && rawGame[0] != '\0') {
+                    stripRomOrArtExtensionAndTags(rawGame, scratchA, sizeof(scratchA));
+                    extractMainTitleBeforeSubtitle(scratchA, scratchB, sizeof(scratchB));
+                    if (scratchB[0] != '\0') {
+                        normalizeMarqueeKey(scratchB, scratchA, sizeof(scratchA));
+                        if (strcmp(scratchA, candNorm) == 0) {
+                            baseScore = 530;
+                        }
+                    }
+                }
+                if (baseScore == 0 && rawTitle && rawTitle[0] != '\0') {
+                    stripRomOrArtExtensionAndTags(rawTitle, scratchA, sizeof(scratchA));
+                    extractMainTitleBeforeSubtitle(scratchA, scratchB, sizeof(scratchB));
+                    if (scratchB[0] != '\0') {
+                        normalizeMarqueeKey(scratchB, scratchA, sizeof(scratchA));
+                        if (strcmp(scratchA, candNorm) == 0) {
+                            baseScore = 530;
+                        }
+                    }
+                }
+            }
         }
     }
 

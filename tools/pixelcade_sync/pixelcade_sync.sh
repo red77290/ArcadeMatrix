@@ -57,13 +57,18 @@ if [ ! -d "$SRC_ROOT" ]; then
     exit 1
 fi
 
-# Non-artwork paths inside the repo we never want to copy onto the SD card.
-SKIP_DIRS=(".git" ".github" "scripts" "docs")
+# Non-artwork paths inside the repo we never want to copy as system image folders.
+SKIP_DIRS=(".git" ".github" "scripts" "docs" "_catalog")
 
 copied=0
 if [ -n "$SYSTEMS_FILTER" ]; then
-    echo "Filtering to systems: $SYSTEMS_FILTER"
+    echo "Filtering to systems: $SYSTEMS_FILTER (plus console logos)"
     IFS=',' read -ra SYSTEMS <<< "$SYSTEMS_FILTER"
+    has_console=0
+    for s in "${SYSTEMS[@]}"; do
+        [ "$(echo "$s" | xargs)" = "console" ] && has_console=1
+    done
+    [ "$has_console" -eq 0 ] && [ -d "$SRC_ROOT/console" ] && SYSTEMS+=("console")
 else
     SYSTEMS=()
     for d in "$SRC_ROOT"/*/; do
@@ -89,7 +94,24 @@ for system in "${SYSTEMS[@]}"; do
     done < <(find "$src_dir" -maxdepth 1 -type f \( -iname "*.png" -o -iname "*.gif" -o -iname "*.jpg" -o -iname "*.jpeg" \) -print0)
 done
 
+# Copy `_catalog/*.txt` manifests so offline ESP32 (no PSRAM / zero live TLS) resolves EU/USA/No-Intro filenames directly on SD
+catalog_copied=0
+if [ -d "$SRC_ROOT/_catalog" ]; then
+    mkdir -p "$DEST/_catalog"
+    if [ -f "$SRC_ROOT/_catalog/_folders.txt" ]; then
+        cp "$SRC_ROOT/_catalog/_folders.txt" "$DEST/_catalog/"
+    fi
+    for system in "${SYSTEMS[@]}"; do
+        system="$(echo "$system" | xargs)"
+        [ -z "$system" ] && continue
+        if [ -f "$SRC_ROOT/_catalog/$system.txt" ]; then
+            cp "$SRC_ROOT/_catalog/$system.txt" "$DEST/_catalog/"
+            catalog_copied=$((catalog_copied + 1))
+        fi
+    done
+fi
+
 echo ""
-echo "Done. Copied $copied artwork files into $(cd "$DEST" && pwd)"
+echo "Done. Copied $copied artwork files (+ $catalog_copied catalog manifests) into $(cd "$DEST" && pwd)"
 echo "Next step: copy the contents of '$DEST' onto your SD card's /pixelcade folder,"
 echo "so paths look like /pixelcade/mame/pacman.png on the card."
