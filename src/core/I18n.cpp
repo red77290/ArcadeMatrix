@@ -876,19 +876,19 @@ const char* I18n::getAgendaAllDayLabel(Lang l) {
 }
 
 const char* I18n::getSyncHighScoresTitle(Lang l) {
-    return (l == Lang::ES) ? "RECORDS" : "HIGH SCORES";
+    return (l == Lang::FR) ? "RECORDS ARCADE" : (l == Lang::ES) ? "RECORDS ARCADE" : "HIGH SCORES";
 }
 
 const char* I18n::getSyncNewRecordTitle(Lang l) {
-    return (l == Lang::ES) ? "NUEVO RECORD!" : "NEW RECORD!";
+    return (l == Lang::FR) ? "NOUVEAU RECORD !" : (l == Lang::ES) ? "NUEVO RECORD!" : "NEW RECORD!";
 }
 
 const char* I18n::getSyncAchievementTitle(Lang l) {
-    return (l == Lang::ES) ? "LOGRO!" : "ACHIEVEMENT!";
+    return (l == Lang::FR) ? "SUCCES RETRO !" : (l == Lang::ES) ? "LOGRO RETRO!" : "ACHIEVEMENT!";
 }
 
 const char* I18n::getSyncUnlockedTitle(Lang l) {
-    return (l == Lang::ES) ? "DESBLOQUEADO!" : "UNLOCKED!";
+    return (l == Lang::FR) ? "SUCCES DEBLOQUE !" : (l == Lang::ES) ? "LOGRO DESBLOQUEADO!" : "UNLOCKED!";
 }
 
 

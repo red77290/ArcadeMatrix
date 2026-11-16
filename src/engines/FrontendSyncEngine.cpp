@@ -268,7 +268,9 @@ void SyncCelebrationEngine::render(EngineContext* context) {
     // 1. Background Q8.8 fixed-point fireworks
     m_fireworks.render(s);
 
-    const Lang lang = I18n::parseLang(String(m_activePayload.lang[0] != '\0' ? m_activePayload.lang : "en"));
+    const Lang lang = (m_activePayload.lang[0] != '\0')
+        ? I18n::parseLang(m_activePayload.lang)
+        : I18n::getLang();
     const bool isHighScore = (m_activePayload.kind == SyncCelebrationKind::HighScore);
     const char* bannerTitle = isHighScore
         ? I18n::getSyncNewRecordTitle(lang)
@@ -391,7 +393,9 @@ void InGameShowcaseEngine::renderHallOfFameCard(IDrawingSurface* s) {
     const int16_t w = static_cast<int16_t>(s->width() > 0 ? s->width() : m_width);
     const int16_t h = static_cast<int16_t>(s->height() > 0 ? s->height() : m_height);
     const bool isTate = (h > w);
-    const Lang lang = I18n::parseLang(String(m_activeSyncMeta.lang[0] != '\0' ? m_activeSyncMeta.lang : "en"));
+    const Lang lang = (m_activeSyncMeta.lang[0] != '\0')
+        ? I18n::parseLang(m_activeSyncMeta.lang)
+        : I18n::getLang();
     const char* titleStr = I18n::getSyncHighScoresTitle(lang);
     const uint32_t elapsed = millis() - m_cardActivatedMs;
 
@@ -456,7 +460,9 @@ void InGameShowcaseEngine::renderRetroAchievementsCard(IDrawingSurface* s) {
     const int16_t w = static_cast<int16_t>(s->width() > 0 ? s->width() : m_width);
     const int16_t h = static_cast<int16_t>(s->height() > 0 ? s->height() : m_height);
     const bool isTate = (h > w);
-    const Lang lang = I18n::parseLang(String(m_activeSyncMeta.lang[0] != '\0' ? m_activeSyncMeta.lang : "en"));
+    const Lang lang = (m_activeSyncMeta.lang[0] != '\0')
+        ? I18n::parseLang(m_activeSyncMeta.lang)
+        : I18n::getLang();
     const char* titleStr = I18n::getSyncAchievementTitle(lang);
     const uint32_t elapsed = millis() - m_cardActivatedMs;
 
