@@ -248,7 +248,9 @@ private:
     /// Placement of the current file on the panel, computed once per file/fit-mode/geometry change
     /// instead of on every scanline.
     int m_srcW = 0, m_srcH = 0;
+    int m_fitDstW = 128, m_fitDstH = 32;
     int m_fitScaleX = 1, m_fitScaleY = 1, m_fitOffX = 0, m_fitOffY = 0;
+    bool m_fitIntegerScale = true;
     void updateFitGeometry(int srcW, int srcH);
 
     /**

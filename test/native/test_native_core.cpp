@@ -10,7 +10,9 @@
 #include "core/drawing/Hub75BulkEncoder.h"
 #include "core/drawing/Hub75DmaLayout.h"
 #include "core/drawing/DmdzStreamDecoder.h"
+#include "core/drawing/MarqueeFitGeometry.h"
 #include "core/net/DmdzStreamClient.h"
+#include "core/net/RawMqttSocket.h"
 #include "core/net/ShowcaseDiscovery.h"
 #include "engines/showcase/ShowcaseStreamPlayer.h"
 #include "engines/GNewsTickerUtils.h"
@@ -4545,6 +4547,181 @@ void test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings(void) {
     );
 }
 
+struct MqttTestCapture {
+    int publishCount = 0;
+    int pubAckCount = 0;
+    uint16_t lastAckPktId = 0;
+    char lastTopic[128] = {0};
+    char lastPayload[256] = {0};
+    size_t lastLen = 0;
+    bool lastTruncated = false;
+};
+
+static void onTestMqttPublish(
+    void* ctx,
+    const char* topic,
+    const char* payload,
+    size_t payloadLen,
+    bool truncated
+) {
+    auto* cap = static_cast<MqttTestCapture*>(ctx);
+    cap->publishCount++;
+    strncpy(cap->lastTopic, topic ? topic : "", sizeof(cap->lastTopic) - 1);
+    size_t copyLen = payloadLen < (sizeof(cap->lastPayload) - 1)
+        ? payloadLen
+        : (sizeof(cap->lastPayload) - 1);
+    if (payload && copyLen > 0) {
+        memcpy(cap->lastPayload, payload, copyLen);
+    }
+    cap->lastPayload[copyLen] = '\0';
+    cap->lastLen = payloadLen;
+    cap->lastTruncated = truncated;
+}
+
+static void onTestMqttPubAck(void* ctx, uint16_t pktId) {
+    auto* cap = static_cast<MqttTestCapture*>(ctx);
+    cap->pubAckCount++;
+    cap->lastAckPktId = pktId;
+}
+
+void test_mqtt_stream_parser_fragmented_oversized_qos1_and_keepalive(void) {
+    uint8_t connectPkt[128] = {0};
+    size_t connectLen = 0;
+    TEST_ASSERT_TRUE(net::buildMqttConnectPacket(
+        connectPkt, sizeof(connectPkt), connectLen, "am_sync_01", "arcade", "secret", 20U
+    ));
+    TEST_ASSERT_EQUAL_HEX8(0x10U, connectPkt[0]);
+    // Connect flags byte after 0x00 0x04 "MQTT" 0x04 -> 0xC2 (User + Pass + CleanSession)
+    TEST_ASSERT_EQUAL_HEX8(0xC2U, connectPkt[9]);
+    TEST_ASSERT_EQUAL_UINT8(0U, connectPkt[10]);
+    TEST_ASSERT_EQUAL_UINT8(20U, connectPkt[11]);
+
+    char payloadBuf[32] = {0};
+    net::MqttStreamParser parser;
+    parser.attachBuffer(payloadBuf, sizeof(payloadBuf));
+
+    MqttTestCapture cap;
+
+    // 1. Coalesced CONNACK + SUBACK + PINGRESP + QoS 1 PUBLISH fed byte-by-byte (worst-case TCP segmentation)
+    const char* topic1 = "system/playing/recalbox";
+    const char* msg1 = "{\"status\":\"browsing\"}";
+    const uint16_t tlen1 = static_cast<uint16_t>(strlen(topic1));
+    const size_t mlen1 = strlen(msg1);
+    const size_t rem1 = 2U + tlen1 + 2U + mlen1;
+
+    uint8_t stream1[256];
+    size_t pos = 0;
+    // CONNACK (rc = 0)
+    stream1[pos++] = 0x20U; stream1[pos++] = 0x02U; stream1[pos++] = 0x00U; stream1[pos++] = 0x00U;
+    // SUBACK (pktId = 0x0007, rc = 0x01)
+    stream1[pos++] = 0x90U; stream1[pos++] = 0x03U; stream1[pos++] = 0x00U; stream1[pos++] = 0x07U; stream1[pos++] = 0x01U;
+    // PINGRESP
+    stream1[pos++] = 0xD0U; stream1[pos++] = 0x00U;
+    // QoS 1 PUBLISH (pktId = 0x1234)
+    stream1[pos++] = 0x32U;
+    pos += net::encodeMqttRemainingLength(stream1 + pos, rem1);
+    stream1[pos++] = static_cast<uint8_t>((tlen1 >> 8) & 0xFFU);
+    stream1[pos++] = static_cast<uint8_t>(tlen1 & 0xFFU);
+    memcpy(stream1 + pos, topic1, tlen1); pos += tlen1;
+    stream1[pos++] = 0x12U; stream1[pos++] = 0x34U;
+    memcpy(stream1 + pos, msg1, mlen1); pos += mlen1;
+
+    for (size_t i = 0; i < pos; ++i) {
+        TEST_ASSERT_TRUE(parser.feed(&stream1[i], 1U, onTestMqttPublish, onTestMqttPubAck, &cap));
+    }
+
+    TEST_ASSERT_TRUE(parser.connAckReceived);
+    TEST_ASSERT_EQUAL_UINT8(0U, parser.lastConnAckRc);
+    TEST_ASSERT_EQUAL_UINT16(1U, parser.subAckCount);
+    TEST_ASSERT_EQUAL_UINT16(7U, parser.lastSubAckPktId);
+    TEST_ASSERT_EQUAL_UINT8(1U, parser.lastSubAckRc);
+    TEST_ASSERT_TRUE(parser.takePingResp());
+    TEST_ASSERT_FALSE(parser.takePingResp());
+    TEST_ASSERT_EQUAL_INT(1, cap.pubAckCount);
+    TEST_ASSERT_EQUAL_HEX16(0x1234U, cap.lastAckPktId);
+    TEST_ASSERT_EQUAL_INT(1, cap.publishCount);
+    TEST_ASSERT_FALSE(cap.lastTruncated);
+    TEST_ASSERT_EQUAL_STRING("system/playing/recalbox", cap.lastTopic);
+    TEST_ASSERT_EQUAL_STRING("{\"status\":\"browsing\"}", cap.lastPayload);
+
+    // 2. Oversized PUBLISH (80B payload > 32B buffer) immediately followed by a valid QoS 0 PUBLISH:
+    //    must drain cleanly without losing packet framing!
+    uint8_t stream2[256];
+    size_t pos2 = 0;
+    const char* topicBig = "other/retained/blob";
+    const uint16_t tlenBig = static_cast<uint16_t>(strlen(topicBig));
+    const size_t bigLen = 80U;
+    stream2[pos2++] = 0x30U;
+    pos2 += net::encodeMqttRemainingLength(stream2 + pos2, 2U + tlenBig + bigLen);
+    stream2[pos2++] = 0U; stream2[pos2++] = static_cast<uint8_t>(tlenBig);
+    memcpy(stream2 + pos2, topicBig, tlenBig); pos2 += tlenBig;
+    memset(stream2 + pos2, 'X', bigLen); pos2 += bigLen;
+
+    const char* msg2 = "{\"status\":\"stopped\"}";
+    const size_t mlen2 = strlen(msg2);
+    stream2[pos2++] = 0x30U;
+    pos2 += net::encodeMqttRemainingLength(stream2 + pos2, 2U + tlen1 + mlen2);
+    stream2[pos2++] = 0U; stream2[pos2++] = static_cast<uint8_t>(tlen1);
+    memcpy(stream2 + pos2, topic1, tlen1); pos2 += tlen1;
+    memcpy(stream2 + pos2, msg2, mlen2); pos2 += mlen2;
+
+    TEST_ASSERT_TRUE(parser.feed(stream2, pos2, onTestMqttPublish, onTestMqttPubAck, &cap));
+    TEST_ASSERT_EQUAL_INT(3, cap.publishCount);
+    TEST_ASSERT_FALSE(cap.lastTruncated);
+    TEST_ASSERT_EQUAL_STRING("system/playing/recalbox", cap.lastTopic);
+    TEST_ASSERT_EQUAL_STRING("{\"status\":\"stopped\"}", cap.lastPayload);
+}
+
+void test_marquee_fit_geometry_proportional_and_text_bounds(void) {
+    using namespace core::drawing;
+
+    // 1. Standard 128x32 Pixelcade art on 256x64 DMD -> exact 2x integer fast path at (0, 0)
+    MarqueeFitPlacement p2x = computeMarqueeFit(128, 32, 256, 64, MarqueeFitMode::Fit);
+    TEST_ASSERT_EQUAL_INT(256, p2x.dstW);
+    TEST_ASSERT_EQUAL_INT(64, p2x.dstH);
+    TEST_ASSERT_EQUAL_INT(0, p2x.offX);
+    TEST_ASSERT_EQUAL_INT(0, p2x.offY);
+    TEST_ASSERT_TRUE(p2x.isIntegerScale);
+    TEST_ASSERT_EQUAL_INT(2, p2x.intScaleX);
+    TEST_ASSERT_EQUAL_INT(2, p2x.intScaleY);
+
+    // 2. Non-standard 128x23 console GIF (`console/gb.gif`, `console/gba.gif`) on 256x64 -> 256x46 centered at y=+9
+    MarqueeFitPlacement pGb = computeMarqueeFit(128, 23, 256, 64, MarqueeFitMode::Fit);
+    TEST_ASSERT_EQUAL_INT(256, pGb.dstW);
+    TEST_ASSERT_EQUAL_INT(46, pGb.dstH);
+    TEST_ASSERT_EQUAL_INT(0, pGb.offX);
+    TEST_ASSERT_EQUAL_INT(9, pGb.offY);
+
+    // 3. Oversized 305x92 console logo (`console/final_burn_alpha.png`) on 256x64 -> downscaled to 212x64 centered at x=+22
+    MarqueeFitPlacement pFba = computeMarqueeFit(305, 92, 256, 64, MarqueeFitMode::Fit);
+    TEST_ASSERT_EQUAL_INT(212, pFba.dstW);
+    TEST_ASSERT_EQUAL_INT(64, pFba.dstH);
+    TEST_ASSERT_EQUAL_INT(22, pFba.offX);
+    TEST_ASSERT_EQUAL_INT(0, pFba.offY);
+    TEST_ASSERT_FALSE(pFba.isIntegerScale);
+
+    // Verify gap-free destination coverage across downscaled 305 -> 212 span
+    uint8_t covered[256] = {0};
+    for (int sx = 0; sx < 305; ++sx) {
+        int x0 = 0, x1 = 0;
+        if (mapSourceSpanToDest(sx, 305, pFba.dstW, pFba.offX, x0, x1)) {
+            for (int dx = x0; dx < x1; ++dx) {
+                TEST_ASSERT_TRUE(dx >= pFba.offX && dx < pFba.offX + pFba.dstW);
+                covered[dx] = 1U;
+            }
+        }
+    }
+    for (int dx = pFba.offX; dx < pFba.offX + pFba.dstW; ++dx) {
+        TEST_ASSERT_EQUAL_UINT8(1U, covered[dx]);
+    }
+
+    // 4. Visual text centering compensates negative GFXfont baseline (`boundsY1 = -5`, `textH = 5`)
+    int cx = 0, cy = 0;
+    computeTextVisualCenter(256, 64, 1, -5, 100, 5, 0, cx, cy);
+    TEST_ASSERT_EQUAL_INT(77, cx); // cx + boundsX1 = 78 == (256 - 100)/2
+    TEST_ASSERT_EQUAL_INT(34, cy); // cy + boundsY1 = 29 == (64 - 5)/2
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -4652,6 +4829,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_fireworks_lut_renderer_q8_8_integer_physics_and_clock_sprite_bank);
     RUN_TEST(test_sync_celebration_preemption_priority_55_pauses_ingame_showcase_and_resumes);
     RUN_TEST(test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings);
+    RUN_TEST(test_mqtt_stream_parser_fragmented_oversized_qos1_and_keepalive);
+    RUN_TEST(test_marquee_fit_geometry_proportional_and_text_bounds);
 
     return UNITY_END();
 }

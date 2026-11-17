@@ -41,6 +41,7 @@ public:
     /// instead of the default 5x7 font for subsequent displayMessage() calls. Pass nullptr to
     /// revert to the default font.
     void setCustomFont(GFXfont* font);
+    bool hasCustomFont() const { return customFont != nullptr; }
 
 private:
     enum class ScrollDir : uint8_t {
@@ -51,6 +52,7 @@ private:
         STATIC
     };
     static ScrollDir parseScrollDir(const String& dir);
+    void measureCurrentMessage(int surfaceW, int surfaceH);
 
     MessageConfig currentMsg;
     MessageConfig pendingMsg;
@@ -62,6 +64,7 @@ private:
     int m_lastSurfaceW = 0;
     int m_lastSurfaceH = 0;
     GFXfont* customFont;
+    GFXfont* m_renderFont = nullptr;
     BitmapFontLoader fontLoader;
     
     unsigned long startTime;
@@ -69,9 +72,10 @@ private:
     
     float cursorX;
     float cursorY;
-    int textWidth;
-    int textHeight;
-    int baselineOffset;
+    int textWidth = 0;
+    int textHeight = 0;
+    int m_boundsX1 = 0;
+    int m_boundsY1 = 0;
     IDrawingSurface* matrixDisplay = nullptr;
 };
 

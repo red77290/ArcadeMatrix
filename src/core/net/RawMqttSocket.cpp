@@ -37,6 +37,358 @@ RawMqttSocket::~RawMqttSocket() {
     closeAbort();
 }
 
+bool buildMqttConnectPacket(
+    uint8_t* outBuf,
+    size_t outCap,
+    size_t& outLen,
+    const char* clientId,
+    const char* user,
+    const char* pass,
+    uint16_t keepAliveSec
+) {
+    outLen = 0U;
+    if (!outBuf || !clientId) return false;
+    const size_t cidLen = strlen(clientId);
+    const bool hasUser = (user != nullptr && user[0] != '\0');
+    const bool hasPass = hasUser && (pass != nullptr && pass[0] != '\0');
+    const size_t userLen = hasUser ? strlen(user) : 0U;
+    const size_t passLen = hasPass ? strlen(pass) : 0U;
+    if (cidLen > 0xFFFFU || userLen > 0xFFFFU || passLen > 0xFFFFU) {
+        return false;
+    }
+
+    size_t remLen = 10U + 2U + cidLen;
+    if (hasUser) remLen += 2U + userLen;
+    if (hasPass) remLen += 2U + passLen;
+
+    uint8_t rlEnc[4] = {0};
+    const size_t rlBytes = encodeMqttRemainingLength(rlEnc, remLen);
+    const size_t totalLen = 1U + rlBytes + remLen;
+    if (totalLen > outCap) {
+        return false;
+    }
+
+    uint8_t flags = 0x02U; // CleanSession
+    if (hasUser) flags |= 0x80U;
+    if (hasPass) flags |= 0x40U;
+
+    size_t off = 0U;
+    outBuf[off++] = 0x10U;
+    memcpy(outBuf + off, rlEnc, rlBytes);
+    off += rlBytes;
+
+    outBuf[off++] = 0x00U;
+    outBuf[off++] = 0x04U;
+    outBuf[off++] = 'M';
+    outBuf[off++] = 'Q';
+    outBuf[off++] = 'T';
+    outBuf[off++] = 'T';
+    outBuf[off++] = 0x04U; // Protocol Level 4 (MQTT 3.1.1)
+    outBuf[off++] = flags;
+    outBuf[off++] = static_cast<uint8_t>((keepAliveSec >> 8) & 0xFFU);
+    outBuf[off++] = static_cast<uint8_t>(keepAliveSec & 0xFFU);
+
+    outBuf[off++] = static_cast<uint8_t>((cidLen >> 8) & 0xFFU);
+    outBuf[off++] = static_cast<uint8_t>(cidLen & 0xFFU);
+    if (cidLen > 0U) {
+        memcpy(outBuf + off, clientId, cidLen);
+        off += cidLen;
+    }
+    if (hasUser) {
+        outBuf[off++] = static_cast<uint8_t>((userLen >> 8) & 0xFFU);
+        outBuf[off++] = static_cast<uint8_t>(userLen & 0xFFU);
+        memcpy(outBuf + off, user, userLen);
+        off += userLen;
+    }
+    if (hasPass) {
+        outBuf[off++] = static_cast<uint8_t>((passLen >> 8) & 0xFFU);
+        outBuf[off++] = static_cast<uint8_t>(passLen & 0xFFU);
+        memcpy(outBuf + off, pass, passLen);
+        off += passLen;
+    }
+
+    outLen = off;
+    return true;
+}
+
+void MqttStreamParser::attachBuffer(char* buf, size_t cap) {
+    payloadBuf = buf;
+    payloadCap = cap;
+    if (payloadBuf && payloadCap > 0U) {
+        payloadBuf[0] = '\0';
+    }
+}
+
+void MqttStreamParser::reset() {
+    state = State::FixedHeaderType;
+    pktHeader = 0U;
+    remLen = 0U;
+    remMult = 1U;
+    remBytesCount = 0U;
+    remBytesLeft = 0U;
+    topicRem = 0U;
+    topicStored = 0U;
+    pktId = 0U;
+    payloadStored = 0U;
+    ctrlStored = 0U;
+    payloadTruncated = false;
+    protocolError = false;
+    connAckReceived = false;
+    lastConnAckRc = 0xFFU;
+    subAckCount = 0U;
+    lastSubAckPktId = 0U;
+    lastSubAckRc = 0x80U;
+    pingRespCount = 0U;
+    topicBuf[0] = '\0';
+    if (payloadBuf && payloadCap > 0U) {
+        payloadBuf[0] = '\0';
+    }
+}
+
+bool MqttStreamParser::takePingResp() {
+    if (pingRespCount == 0U) return false;
+    pingRespCount = 0U;
+    return true;
+}
+
+bool MqttStreamParser::feed(
+    const uint8_t* data,
+    size_t len,
+    MqttPublishFn onPublish,
+    MqttPubAckFn onPubAck,
+    void* ctx
+) {
+    if (protocolError) return false;
+    if (!data || len == 0U) return true;
+
+    auto initPayloadState = [&]() {
+        payloadStored = 0U;
+        payloadTruncated = false;
+        if (payloadBuf && payloadCap > 0U) {
+            payloadBuf[0] = '\0';
+        }
+        state = State::PublishPayload;
+    };
+
+    auto finishPublish = [&]() {
+        if (payloadBuf && payloadCap > 0U) {
+            payloadBuf[payloadStored] = '\0';
+        }
+        const uint8_t qos = static_cast<uint8_t>((pktHeader >> 1) & 0x03U);
+        if (qos == 1U && onPubAck) {
+            onPubAck(ctx, pktId);
+        }
+        if (onPublish) {
+            onPublish(
+                ctx,
+                topicBuf,
+                (payloadBuf && payloadCap > 0U) ? payloadBuf : "",
+                payloadStored,
+                payloadTruncated
+            );
+        }
+        state = State::FixedHeaderType;
+    };
+
+    size_t idx = 0U;
+    while (idx < len) {
+        switch (state) {
+            case State::FixedHeaderType: {
+                pktHeader = data[idx++];
+                const uint8_t pktType = static_cast<uint8_t>((pktHeader >> 4) & 0x0FU);
+                if (pktType == 0U || pktType == 15U) {
+                    protocolError = true;
+                    return false;
+                }
+                if (pktType == 3U && ((pktHeader >> 1) & 0x03U) == 3U) {
+                    protocolError = true;
+                    return false;
+                }
+                remLen = 0U;
+                remMult = 1U;
+                remBytesCount = 0U;
+                state = State::RemainingLength;
+                break;
+            }
+
+            case State::RemainingLength: {
+                const uint8_t b = data[idx++];
+                remLen += static_cast<uint32_t>(b & 0x7FU) * remMult;
+                ++remBytesCount;
+                if ((b & 0x80U) != 0U) {
+                    if (remBytesCount >= 4U) {
+                        protocolError = true;
+                        return false;
+                    }
+                    remMult *= 128U;
+                } else {
+                    remBytesLeft = remLen;
+                    const uint8_t pktType = static_cast<uint8_t>((pktHeader >> 4) & 0x0FU);
+                    if (pktType == 3U) {
+                        const uint8_t qos = static_cast<uint8_t>((pktHeader >> 1) & 0x03U);
+                        const uint32_t minRem = 2U + ((qos > 0U) ? 2U : 0U);
+                        if (remLen < minRem) {
+                            protocolError = true;
+                            return false;
+                        }
+                        state = State::PublishTopicLenHi;
+                    } else if (remLen == 0U) {
+                        if (pktType == 13U) {
+                            ++pingRespCount;
+                        } else if (pktType == 14U) {
+                            protocolError = true;
+                            return false;
+                        }
+                        state = State::FixedHeaderType;
+                    } else {
+                        ctrlStored = 0U;
+                        state = State::ControlBody;
+                    }
+                }
+                break;
+            }
+
+            case State::PublishTopicLenHi: {
+                topicRem = static_cast<uint16_t>(static_cast<uint16_t>(data[idx++]) << 8);
+                state = State::PublishTopicLenLo;
+                break;
+            }
+
+            case State::PublishTopicLenLo: {
+                topicRem = static_cast<uint16_t>(topicRem | data[idx++]);
+                remBytesLeft -= 2U;
+                const uint8_t qos = static_cast<uint8_t>((pktHeader >> 1) & 0x03U);
+                const uint32_t needAfterTopic = (qos > 0U) ? 2U : 0U;
+                if (remBytesLeft < static_cast<uint32_t>(topicRem) + needAfterTopic) {
+                    protocolError = true;
+                    return false;
+                }
+                topicStored = 0U;
+                topicBuf[0] = '\0';
+                if (topicRem > 0U) {
+                    state = State::PublishTopicBody;
+                } else if (qos > 0U) {
+                    state = State::PublishPktIdHi;
+                } else if (remBytesLeft > 0U) {
+                    initPayloadState();
+                } else {
+                    finishPublish();
+                }
+                break;
+            }
+
+            case State::PublishTopicBody: {
+                const size_t avail = len - idx;
+                const size_t take = (avail < static_cast<size_t>(topicRem))
+                    ? avail
+                    : static_cast<size_t>(topicRem);
+                const size_t room = (sizeof(topicBuf) - 1U > topicStored)
+                    ? (sizeof(topicBuf) - 1U - topicStored)
+                    : 0U;
+                const size_t copyN = (take < room) ? take : room;
+                if (copyN > 0U) {
+                    memcpy(topicBuf + topicStored, data + idx, copyN);
+                    topicStored = static_cast<uint16_t>(topicStored + copyN);
+                    topicBuf[topicStored] = '\0';
+                }
+                idx += take;
+                topicRem = static_cast<uint16_t>(topicRem - take);
+                remBytesLeft -= static_cast<uint32_t>(take);
+                if (topicRem == 0U) {
+                    const uint8_t qos = static_cast<uint8_t>((pktHeader >> 1) & 0x03U);
+                    if (qos > 0U) {
+                        state = State::PublishPktIdHi;
+                    } else if (remBytesLeft > 0U) {
+                        initPayloadState();
+                    } else {
+                        finishPublish();
+                    }
+                }
+                break;
+            }
+
+            case State::PublishPktIdHi: {
+                pktId = static_cast<uint16_t>(static_cast<uint16_t>(data[idx++]) << 8);
+                state = State::PublishPktIdLo;
+                break;
+            }
+
+            case State::PublishPktIdLo: {
+                pktId = static_cast<uint16_t>(pktId | data[idx++]);
+                remBytesLeft -= 2U;
+                if (remBytesLeft > 0U) {
+                    initPayloadState();
+                } else {
+                    finishPublish();
+                }
+                break;
+            }
+
+            case State::PublishPayload: {
+                const size_t avail = len - idx;
+                const size_t take = (avail < static_cast<size_t>(remBytesLeft))
+                    ? avail
+                    : static_cast<size_t>(remBytesLeft);
+                if (payloadBuf && payloadCap > 1U) {
+                    const size_t room = (payloadCap - 1U > payloadStored)
+                        ? (payloadCap - 1U - payloadStored)
+                        : 0U;
+                    const size_t copyN = (take < room) ? take : room;
+                    if (copyN > 0U) {
+                        memcpy(payloadBuf + payloadStored, data + idx, copyN);
+                        payloadStored += copyN;
+                        payloadBuf[payloadStored] = '\0';
+                    }
+                    if (copyN < take) {
+                        payloadTruncated = true;
+                    }
+                } else {
+                    payloadTruncated = true;
+                }
+                idx += take;
+                remBytesLeft -= static_cast<uint32_t>(take);
+                if (remBytesLeft == 0U) {
+                    finishPublish();
+                }
+                break;
+            }
+
+            case State::ControlBody: {
+                const size_t avail = len - idx;
+                const size_t take = (avail < static_cast<size_t>(remBytesLeft))
+                    ? avail
+                    : static_cast<size_t>(remBytesLeft);
+                const size_t room = (sizeof(ctrlBuf) > ctrlStored)
+                    ? (sizeof(ctrlBuf) - ctrlStored)
+                    : 0U;
+                const size_t copyN = (take < room) ? take : room;
+                if (copyN > 0U) {
+                    memcpy(ctrlBuf + ctrlStored, data + idx, copyN);
+                    ctrlStored = static_cast<uint8_t>(ctrlStored + copyN);
+                }
+                idx += take;
+                remBytesLeft -= static_cast<uint32_t>(take);
+                if (remBytesLeft == 0U) {
+                    const uint8_t pktType = static_cast<uint8_t>((pktHeader >> 4) & 0x0FU);
+                    if (pktType == 2U && ctrlStored >= 2U) {
+                        connAckReceived = true;
+                        lastConnAckRc = ctrlBuf[1];
+                    } else if (pktType == 9U && ctrlStored >= 3U) {
+                        lastSubAckPktId = static_cast<uint16_t>(
+                            (static_cast<uint16_t>(ctrlBuf[0]) << 8) | ctrlBuf[1]
+                        );
+                        lastSubAckRc = ctrlBuf[2];
+                        ++subAckCount;
+                    }
+                    state = State::FixedHeaderType;
+                }
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 #if defined(ESP32) && !defined(UNIT_TEST)
 
 namespace {
@@ -175,6 +527,57 @@ int RawMqttSocket::readByte() {
         }
     }
     return static_cast<int>(rxBuf[rxOff++]);
+}
+
+int RawMqttSocket::recvNonBlocking(uint8_t* dst, size_t maxLen) {
+    if (!dst || maxLen == 0U) return 0;
+    if (rxOff < rxEnd) {
+        const size_t avail = rxEnd - rxOff;
+        const size_t take = (avail < maxLen) ? avail : maxLen;
+        memcpy(dst, rxBuf + rxOff, take);
+        rxOff += take;
+        if (rxOff >= rxEnd) {
+            rxOff = 0U;
+            rxEnd = 0U;
+        }
+        return static_cast<int>(take);
+    }
+    if (fd < 0 || peerClosed) {
+        return -1;
+    }
+    const int r = lwip_recv(fd, dst, maxLen, MSG_DONTWAIT);
+    if (r > 0) {
+        return r;
+    }
+    if (r == 0) {
+        peerClosed = true;
+        return -1;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+        return 0;
+    }
+    peerClosed = true;
+    return -1;
+}
+
+bool RawMqttSocket::sendNonBlockingAll(const uint8_t* data, size_t len) {
+    if (!data || len == 0U) return true;
+    if (fd < 0 || peerClosed) return false;
+    size_t sent = 0U;
+    while (sent < len) {
+        const int n = lwip_send(fd, data + sent, len - sent, MSG_DONTWAIT);
+        if (n > 0) {
+            sent += static_cast<size_t>(n);
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            if (n <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                peerClosed = true;
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 bool RawMqttSocket::readExact(
@@ -385,23 +788,23 @@ bool sendMqttConnectPacket(
     const char* clientId,
     const std::atomic<bool>& wantActive
 ) {
-    if (!clientId) return false;
-    uint16_t cidLen = static_cast<uint16_t>(strlen(clientId));
-    size_t remLen = 10U + 2U + cidLen;
-    uint8_t pkt[128];
-    pkt[0] = 0x10U;
-    size_t rlBytes = encodeMqttRemainingLength(pkt + 1, remLen);
-    size_t totalLen = 1U + rlBytes + remLen;
-    if (totalLen > sizeof(pkt)) return false;
-    const uint8_t varHdr[10] = {0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C};
-    size_t off = 1U + rlBytes;
-    memcpy(pkt + off, varHdr, sizeof(varHdr));
-    off += sizeof(varHdr);
-    pkt[off++] = static_cast<uint8_t>((cidLen >> 8) & 0xFFU);
-    pkt[off++] = static_cast<uint8_t>(cidLen & 0xFFU);
-    memcpy(pkt + off, clientId, cidLen);
-    off += cidLen;
-    return cli.writeAll(pkt, off, wantActive);
+    return sendMqttConnectAuthPacket(cli, clientId, nullptr, nullptr, 60U, wantActive);
+}
+
+bool sendMqttConnectAuthPacket(
+    RawMqttSocket& cli,
+    const char* clientId,
+    const char* user,
+    const char* pass,
+    uint16_t keepAliveSec,
+    const std::atomic<bool>& wantActive
+) {
+    uint8_t pkt[256];
+    size_t len = 0U;
+    if (!buildMqttConnectPacket(pkt, sizeof(pkt), len, clientId, user, pass, keepAliveSec)) {
+        return false;
+    }
+    return cli.writeAll(pkt, len, wantActive);
 }
 
 void sendMqttDisconnectAndStop(
@@ -516,6 +919,8 @@ void RawMqttSocket::closeAbort() {
 bool RawMqttSocket::connectHost(const char*, uint16_t, const std::atomic<bool>&, uint32_t) { return false; }
 size_t RawMqttSocket::available() { return 0U; }
 int RawMqttSocket::readByte() { return -1; }
+int RawMqttSocket::recvNonBlocking(uint8_t*, size_t) { return -1; }
+bool RawMqttSocket::sendNonBlockingAll(const uint8_t*, size_t) { return false; }
 bool RawMqttSocket::readExact(uint8_t*, size_t, const std::atomic<bool>&, uint32_t) { return false; }
 bool RawMqttSocket::drain(size_t, const std::atomic<bool>&, uint32_t) { return false; }
 bool RawMqttSocket::writeAll(const uint8_t*, size_t, const std::atomic<bool>&, uint32_t) { return false; }
@@ -524,6 +929,7 @@ bool sendMqttPublishPacket(RawMqttSocket&, const char*, const char*, bool, const
 bool sendMqttSubscribePacket(RawMqttSocket&, uint16_t, const char*, const std::atomic<bool>&) { return false; }
 bool sendMqttUnsubscribePacket(RawMqttSocket&, uint16_t, const char*, const std::atomic<bool>&) { return false; }
 bool sendMqttConnectPacket(RawMqttSocket&, const char*, const std::atomic<bool>&) { return false; }
+bool sendMqttConnectAuthPacket(RawMqttSocket&, const char*, const char*, const char*, uint16_t, const std::atomic<bool>&) { return false; }
 void sendMqttDisconnectAndStop(RawMqttSocket& cli, const std::atomic<bool>&) { cli.closeAbort(); }
 bool connectMqttBrokerSession(RawMqttSocket&, const char*, uint16_t, const char*, uint32_t&, const std::atomic<bool>&, uint32_t, uint32_t) { return false; }
 void sendHttpDeleteOneShotAbort(const char*, uint16_t, const char*, uint32_t, uint32_t) {}
