@@ -1058,6 +1058,7 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
 
     m_transportConfigured = true;
     m_activeFromShowcase = fromShowcase;
+    m_wasExternalConnected = false;
     copySafeCStr(m_activeBrokerHost, sizeof(m_activeBrokerHost), host);
     m_activeBrokerPort = (port > 0) ? port : 1883;
     lastReconnectAttempt = 0;
@@ -1067,37 +1068,24 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
     const uint16_t rxBufBytes = hasPsram ? 1024U : 768U;
 
     if (fromShowcase && m_activeBrokerHost[0] != '\0') {
-        if (!hasPsram) {
-            if (internalBroker) {
-                delete internalBroker;
-                internalBroker = nullptr;
-                LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker to free SRAM (sharing Showcase broker %s:%u)", m_activeBrokerHost, m_activeBrokerPort);
-            } else {
-                LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u", m_activeBrokerHost, m_activeBrokerPort);
-            }
+        if (internalBroker) {
+            delete internalBroker;
+            internalBroker = nullptr;
+            LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker (using Showcase MQTT broker %s:%u)",
+                 m_activeBrokerHost, m_activeBrokerPort);
         } else {
-            // On PSRAM boards (ESP32-S3), keep embedded PicoMQTT listening on local port 1883 alongside
-            // the Showcase MQTT client so consoles with legacy scripts (hardcoded to <DMD_IP>:1883) or
-            // fallback publishes never get cut off when Showcase comes online!
-            if (localCfgBroker && !internalBroker) {
-                LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d (dual-listener with Showcase %s:%u)...",
-                     mqttConfig.port, m_activeBrokerHost, m_activeBrokerPort);
-                internalBroker = new EmbeddedMqttBroker(mqttConfig.port, 5, 1);
-                internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [this](const char* topic, const char* payload) {
-                    this->handleMessage(String(topic), String(payload));
-                });
-                internalBroker->begin();
-            } else {
-                LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u (local port %d listener kept active)",
-                     m_activeBrokerHost, m_activeBrokerPort, mqttConfig.port);
-            }
+            LOGI("RetroFrontend", "Using Showcase MQTT broker at %s:%u",
+                 m_activeBrokerHost, m_activeBrokerPort);
         }
-        espClient.setTimeout(1);
+        // Note: WiFiClient::setTimeout() in Arduino-ESP32 3.x is in MILLISECONDS (Stream::setTimeout),
+        // whereas PubSubClient::setSocketTimeout() / setKeepAlive() are in SECONDS.
+        espClient.setTimeout(1500);
         mqttClient.setClient(espClient);
         mqttClient.setBufferSize(rxBufBytes);
+        mqttClient.setKeepAlive(45);
+        mqttClient.setSocketTimeout(2);
         mqttClient.setServer(m_activeBrokerHost, m_activeBrokerPort);
         mqttClient.setCallback(FrontendSyncEngine::callback);
-        mqttClient.setSocketTimeout(1);
         return;
     }
 
@@ -1117,12 +1105,13 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
             internalBroker = nullptr;
         }
         LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%u", m_activeBrokerHost, m_activeBrokerPort);
-        espClient.setTimeout(1);
+        espClient.setTimeout(1500);
         mqttClient.setClient(espClient);
         mqttClient.setBufferSize(rxBufBytes);
+        mqttClient.setKeepAlive(45);
+        mqttClient.setSocketTimeout(2);
         mqttClient.setServer(m_activeBrokerHost, m_activeBrokerPort);
         mqttClient.setCallback(FrontendSyncEngine::callback);
-        mqttClient.setSocketTimeout(1);
     }
 }
 
@@ -1156,6 +1145,7 @@ void FrontendSyncEngine::begin() {
     waitingDisplayed = false;
     m_transportConfigured = false;
     m_activeFromShowcase = false;
+    m_wasExternalConnected = false;
     m_activeBrokerHost[0] = '\0';
     m_activeMarqueePath[0] = '\0';
     m_wasShowingInGame = false;
@@ -1191,7 +1181,7 @@ void FrontendSyncEngine::begin() {
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
     const bool wantShowcaseBroker = (showcaseConfig.enabled && mqttConfig.use_showcase_broker);
     bool adoptedCachedBroker = false;
-    if (!hasPsram && wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
+    if (wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
         char cachedUrl[112] = "";
         char cachedHost[64] = "";
         uint16_t cachedPort = 8890;
@@ -1218,9 +1208,10 @@ void FrontendSyncEngine::begin() {
         ensureShowcaseWorkerRunning();
     }
 
-    // Start local/external broker immediately when Showcase sharing is disabled OR on PSRAM with local broker
-    // (on non-PSRAM esp32dev, wait up to 1.5s for Core 0's initial Showcase health probe to avoid transient SRAM peak).
-    if (!wantShowcaseBroker || (hasPsram && isLoopbackOrEmptyHost(mqttConfig.broker.c_str()))) {
+    // Only start local PicoMQTT / static external broker immediately when Showcase broker sharing is disabled.
+    // When Showcase broker sharing is enabled, wait up to 1.5s for Core 0's initial Showcase health probe so
+    // PicoMQTT never starts when Showcase is online (loop() falls back automatically after 1.5s if offline).
+    if (!wantShowcaseBroker) {
         applyBrokerTransport(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port));
     }
 }
@@ -1249,6 +1240,7 @@ void FrontendSyncEngine::stop() {
     m_pendingNetArtJob = ArtDownloadJobSlot{};
     m_activeMarqueePath[0] = '\0';
     m_wasShowingInGame = false;
+    m_wasExternalConnected = false;
 
     m_activeArtReqId.store(0U, std::memory_order_release);
     m_artNetBusy.store(false, std::memory_order_release);
@@ -1401,55 +1393,75 @@ bool FrontendSyncEngine::loop() {
         }
         const bool useExternalClient = m_activeFromShowcase || !isLoopbackOrEmptyHost(mqttConfig.broker.c_str());
         if (useExternalClient) {
+            // Strictly serialize access to `mqttClient` and `espClient`: while Core 0 `MqttReconnect`
+            // is connecting and writing SUBSCRIBE packets, Core 1 must never touch `mqttClient` or `espClient`.
+            if (!isReconnecting.load(std::memory_order_acquire) &&
+                reconnectTaskExited.load(std::memory_order_acquire)) {
 #if defined(ESP32)
-            const bool hasPsram = hardwareHAL.capabilities().hasPsram;
-            // Yield the idle FrontendSync MQTT socket ONLY during `WebUiSync` (browser SPA load).
-            // Never tear down an already-connected MQTT socket during `MediaShowcaseBase` turns: keeping
-            // the established socket avoids `FIN_WAIT` `pbuf` retention and prevents a 4 KB `MqttReconnect`
-            // task + TCP handshake from colliding with Showcase video streams 10s later!
-            if (!hasPsram && !isGamePlaying &&
-                (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
-                if (mqttClient.connected()) {
-                    mqttClient.disconnect();
-                    espClient.stop();
-                    lastReconnectAttempt = millis() == 0 ? 1UL : millis();
-                }
-                return true;
-            }
-#endif
-            if (!mqttClient.connected()) {
-                unsigned long now = millis();
-                unsigned long retryInterval = (lastReconnectAttempt == 0) ? 0UL : 10000UL;
-                bool canSpawnReconnect = true;
-                uint32_t reconnectStack = 4096U;
-#if defined(ESP32)
-                if (!hasPsram) {
-                    const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                    const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                    canSpawnReconnect =
-                        !WebUiSyncEngine::isRequested() &&
-                        !WebUiSyncEngine::isReadyForServing() &&
-                        (NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::Idle) &&
-                        (free8 >= 14336U) &&
-                        (largest8 >= 6144U);
+                const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+                // Yield the idle FrontendSync MQTT socket ONLY during `WebUiSync` (browser SPA load).
+                // Never tear down an already-connected MQTT socket during `MediaShowcaseBase` turns: keeping
+                // the established socket avoids `FIN_WAIT` `pbuf` retention and prevents a 4 KB `MqttReconnect`
+                // task + TCP handshake from colliding with Showcase video streams 10s later!
+                if (!hasPsram && !isGamePlaying &&
+                    (WebUiSyncEngine::isRequested() || WebUiSyncEngine::isReadyForServing())) {
+                    if (mqttClient.connected()) {
+                        mqttClient.disconnect();
+                        espClient.stop();
+                        m_wasExternalConnected = false;
+                        lastReconnectAttempt = millis() == 0 ? 1UL : millis();
+                    }
+                    return true;
                 }
 #endif
-                if (canSpawnReconnect &&
-                    (lastReconnectAttempt == 0 || (now - lastReconnectAttempt > retryInterval)) &&
-                    !isReconnecting.load(std::memory_order_acquire) &&
-                    reconnectTaskExited.load(std::memory_order_acquire)) {
-                    lastReconnectAttempt = now == 0 ? 1 : now;
-                    stopReconnectRequested.store(false, std::memory_order_release);
-                    isReconnecting.store(true, std::memory_order_release);
-                    reconnectTaskExited.store(false, std::memory_order_release);
-                    if (xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", reconnectStack, this, 1, &reconnectTaskHandle, 0) != pdPASS) {
-                        reconnectTaskHandle = nullptr;
-                        isReconnecting.store(false, std::memory_order_release);
-                        reconnectTaskExited.store(true, std::memory_order_release);
+                if (!mqttClient.connected()) {
+                    if (m_wasExternalConnected) {
+                        m_wasExternalConnected = false;
+                        LOGW("RetroFrontend", "%s MQTT broker disconnected (state=%d); scheduling reconnect...",
+                             m_activeFromShowcase ? "Showcase" : "External", mqttClient.state());
+                    }
+                    unsigned long now = millis();
+                    const unsigned long retryInterval = (lastReconnectAttempt == 0)
+                        ? 0UL
+                        : (m_activeFromShowcase ? 2500UL : 5000UL);
+                    bool canSpawnReconnect = true;
+                    uint32_t reconnectStack = 4096U;
+#if defined(ESP32)
+                    if (!hasPsram) {
+                        const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                        const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                        canSpawnReconnect =
+                            !WebUiSyncEngine::isRequested() &&
+                            !WebUiSyncEngine::isReadyForServing() &&
+                            (NetworkBudget::getDmdNetActivity() == NetworkBudget::DmdNetActivity::Idle) &&
+                            (free8 >= 14336U) &&
+                            (largest8 >= 6144U);
+                    }
+#endif
+                    if (canSpawnReconnect &&
+                        (lastReconnectAttempt == 0 || (now - lastReconnectAttempt > retryInterval))) {
+                        lastReconnectAttempt = now == 0 ? 1UL : now;
+                        stopReconnectRequested.store(false, std::memory_order_release);
+                        isReconnecting.store(true, std::memory_order_release);
+                        reconnectTaskExited.store(false, std::memory_order_release);
+                        if (xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", reconnectStack, this, 1, &reconnectTaskHandle, 0) != pdPASS) {
+                            reconnectTaskHandle = nullptr;
+                            isReconnecting.store(false, std::memory_order_release);
+                            reconnectTaskExited.store(true, std::memory_order_release);
+                        }
+                    }
+                } else {
+                    m_wasExternalConnected = true;
+                    // Drain up to 8 queued MQTT packets per tick so rapid wheel scrolling never lags behind
+                    for (int pkt = 0; pkt < 8; ++pkt) {
+                        if (!mqttClient.loop()) {
+                            break;
+                        }
+                        if (!espClient.available()) {
+                            break;
+                        }
                     }
                 }
-            } else {
-                mqttClient.loop();
             }
         }
     }
@@ -1501,6 +1513,8 @@ bool FrontendSyncEngine::loop() {
 void FrontendSyncEngine::reconnect() {
     if (stopReconnectRequested.load(std::memory_order_acquire)) return;
     if (WiFi.status() == WL_CONNECTED) {
+        espClient.stop();
+        espClient.setTimeout(1500);
         String cid = mqttConfig.deviceName;
         char hwId[8] = "";
         net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
@@ -1513,12 +1527,32 @@ void FrontendSyncEngine::reconnect() {
             connected = mqttClient.connect(cid.c_str());
         }
         if (connected) {
+            espClient.setNoDelay(true);
             if (!stopReconnectRequested.load(std::memory_order_acquire)) {
-                mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
+                const bool subMain = mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
+                bool subCmd = true;
                 if (m_activeFromShowcase) {
-                    mqttClient.subscribe(MQTT_TOPIC_SHOWCASE_CMD);
+                    subCmd = mqttClient.subscribe(MQTT_TOPIC_SHOWCASE_CMD);
+                }
+                LOGI("RetroFrontend", "Connected to %s MQTT broker %s:%u (id='%s', sub=%d/%d)",
+                     m_activeFromShowcase ? "Showcase" : "external",
+                     m_activeBrokerHost,
+                     m_activeBrokerPort,
+                     cid.c_str(),
+                     subMain ? 1 : 0,
+                     subCmd ? 1 : 0);
+                if (!subMain) {
+                    mqttClient.disconnect();
+                    espClient.stop();
                 }
             }
+        } else {
+            espClient.stop();
+            LOGW("RetroFrontend", "Failed to connect to %s MQTT broker %s:%u (state=%d)",
+                 m_activeFromShowcase ? "Showcase" : "external",
+                 m_activeBrokerHost,
+                 m_activeBrokerPort,
+                 mqttClient.state());
         }
     }
 }
