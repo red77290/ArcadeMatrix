@@ -1753,7 +1753,11 @@ void FrontendSyncEngine::reconnect() {
         hwId
     );
 
-    auto pumpUntil = [&](uint32_t timeoutMs, auto pred) -> bool {
+    auto pumpUntil = [&](uint32_t timeoutMs, bool waitConnAck, uint16_t targetSubAcks) -> bool {
+        auto isReady = [&]() -> bool {
+            return waitConnAck ? m_mqttParser.connAckReceived
+                               : (m_mqttParser.subAckCount >= targetSubAcks);
+        };
         const uint32_t t0 = millis();
         uint8_t buf[128];
         while ((millis() - t0) < timeoutMs &&
@@ -1770,15 +1774,15 @@ void FrontendSyncEngine::reconnect() {
                         this)) {
                     return false;
                 }
-                if (pred()) return true;
+                if (isReady()) return true;
             } else if (n < 0) {
                 return false;
             } else {
-                if (pred()) return true;
+                if (isReady()) return true;
                 vTaskDelay(pdMS_TO_TICKS(5));
             }
         }
-        return pred();
+        return isReady();
     };
 
     if (!m_mqttSock.connectHost(m_reconnectHost, m_reconnectPort, m_reconnectWantActive, 1500U)) {
@@ -1794,7 +1798,7 @@ void FrontendSyncEngine::reconnect() {
     const char* user = (!m_reconnectFromShowcase && wcfg.mqttUser[0] != '\0') ? wcfg.mqttUser : nullptr;
     const char* pass = (user != nullptr && wcfg.mqttPass[0] != '\0') ? wcfg.mqttPass : nullptr;
     if (!net::sendMqttConnectAuthPacket(m_mqttSock, cid, user, pass, 45U, m_reconnectWantActive) ||
-        !pumpUntil(1200U, [&]() { return m_mqttParser.connAckReceived; }) ||
+        !pumpUntil(1200U, true, 0U) ||
         m_mqttParser.lastConnAckRc != 0U) {
         const uint8_t rc = m_mqttParser.lastConnAckRc;
         m_mqttSock.closeAbort();
@@ -1816,7 +1820,7 @@ void FrontendSyncEngine::reconnect() {
     }
 
     const bool subsAcked = subMain && subCmd &&
-        pumpUntil(900U, [&]() { return m_mqttParser.subAckCount >= expectedSubs; }) &&
+        pumpUntil(900U, false, expectedSubs) &&
         (m_mqttParser.lastSubAckRc != 0x80U);
 
     if (!subsAcked || stopReconnectRequested.load(std::memory_order_acquire)) {
