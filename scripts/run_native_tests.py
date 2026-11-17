@@ -96,6 +96,7 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "PipelineSelectionPolicy.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "drawing", "DmdzStreamDecoder.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "DmdzStreamClient.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "net", "RawMqttSocket.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "net", "ShowcaseDiscovery.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "showcase", "ShowcaseStreamPlayer.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "clocks", "ClockSpriteBank.cpp"),

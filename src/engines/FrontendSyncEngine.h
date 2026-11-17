@@ -1,12 +1,12 @@
 #pragma once
 #include <Arduino.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
 #include <PicoMQTT.h>
 #include <atomic>
 #include <map>
 #include <memory>
 #include <vector>
+#include "../core/net/RawMqttSocket.h"
 #include "../../include/core/EngineContract.h"
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
@@ -323,6 +323,13 @@ public:
         uint16_t& outPort
     );
 
+    static bool parseShowcaseHealthBrokerStream(
+        Stream& healthStream,
+        const char* fallbackHost,
+        String& outHost,
+        uint16_t& outPort
+    );
+
     static String buildShowcaseQueueRequestJson(
         const MqttConfig& mqttCfg,
         const String& systemId,
@@ -365,8 +372,15 @@ private:
     MessageEngine* message;
     InGameShowcaseEngine* m_inGameEngine = nullptr;
     SyncCelebrationEngine* m_celebrationEngine = nullptr;
-    WiFiClient espClient;
-    PubSubClient mqttClient;
+    net::RawMqttSocket m_mqttSock;
+    net::MqttStreamParser m_mqttParser;
+    char* m_mqttPayloadBuf = nullptr;
+    size_t m_mqttPayloadCap = 0U;
+    uint32_t m_lastMqttRxMs = 0U;
+    uint32_t m_lastMqttTxMs = 0U;
+    uint32_t m_mqttPingSentMs = 0U;
+    bool m_mqttPingOutstanding = false;
+    std::atomic<bool> m_externalMqttConnected{false};
     PicoMQTT::Server* internalBroker = nullptr;
     std::map<String, std::vector<String>> systemMappings;
 
@@ -401,14 +415,31 @@ private:
 
     std::atomic<bool> isReconnecting{false};
     std::atomic<bool> stopReconnectRequested{false};
+    std::atomic<bool> m_reconnectWantActive{false};
     std::atomic<bool> reconnectTaskExited{true};
     TaskHandle_t reconnectTaskHandle = nullptr;
+    char m_reconnectHost[96] = "";
+    uint16_t m_reconnectPort = 1883;
+    bool m_reconnectFromShowcase = false;
+    bool m_hasEarlyRx = false;
+    String m_earlyRxTopic;
+    String m_earlyRxPayload;
     static void reconnectTaskFunc(void* param);
+    bool ensureMqttBufferAllocated();
+    void freeMqttBuffer();
+    void pollExternalMqtt();
+    static void onCore1MqttPublish(void* ctx, const char* topic, const char* payload, size_t payloadLen, bool truncated);
+    static void onCore1MqttPubAck(void* ctx, uint16_t pktId);
+    static void onConnectMqttPublish(void* ctx, const char* topic, const char* payload, size_t payloadLen, bool truncated);
+    static void onConnectMqttPubAck(void* ctx, uint16_t pktId);
 
     // Lock-free Core 1 <-> Core 0 Showcase & Artwork worker synchronization (zero std::mutex on Core 1)
     struct WorkerConfigSlot {
         char showcaseUrl[96] = "http://dmdmediashowcase.local:8890";
         char localBroker[96] = "";
+        char deviceName[40] = "ArcadeMatrix";
+        char mqttUser[48] = "";
+        char mqttPass[64] = "";
         char lang[8] = "en";
         char cycleMode[16] = "once";
         char cardStyleSource[20] = "showcase_profile";
@@ -536,7 +567,6 @@ private:
     );
 
     void reconnect();
-    static void callback(char* topic, byte* payload, unsigned int length);
     static FrontendSyncEngine* instance;
 
     void handleMessage(String topic, String payload);

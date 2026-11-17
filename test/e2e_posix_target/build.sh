@@ -17,6 +17,7 @@ CXX_BIN="${CXX:-c++}"
   "${REPO_ROOT}/src/core/drawing/Hub75BulkEncoder.cpp" \
   "${REPO_ROOT}/src/core/drawing/DmdzStreamDecoder.cpp" \
   "${REPO_ROOT}/src/core/net/DmdzStreamClient.cpp" \
+  "${REPO_ROOT}/src/core/net/RawMqttSocket.cpp" \
   "${REPO_ROOT}/src/core/net/ShowcaseDiscovery.cpp" \
   "${REPO_ROOT}/src/engines/PixelcadeArtResolver.cpp" \
   "${REPO_ROOT}/src/engines/showcase/ShowcaseStreamPlayer.cpp" \

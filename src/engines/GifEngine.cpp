@@ -1,5 +1,6 @@
 #include "GifEngine.h"
 #include "../core/drawing/IDrawingSurface.h"
+#include "../core/drawing/MarqueeFitGeometry.h"
 #include "../hal/BoardProfile.h"
 #include "../core/SpiRamJsonDocument.h"
 #include "../core/RenderStats.h"
@@ -494,23 +495,22 @@ void GifEngine::freeShadows() {
 
 void GifEngine::updateFitGeometry(int srcW, int srcH) {
     if (!matrix) return;
-    if (srcW <= 0) srcW = 128;
-    if (srcH <= 0) srcH = 32;
-    m_srcW = srcW; m_srcH = srcH;
-    int mw = matrix->width(), mh = matrix->height();
-    String mode = m_fitMode;
-    mode.toLowerCase();
-    if (mode == "stretch") {
-        m_fitScaleX = max(1, mw / srcW);
-        m_fitScaleY = max(1, mh / srcH);
-    } else if (mode == "center") {
-        m_fitScaleX = m_fitScaleY = 1;
-    } else { // "fit" (default): integer scale that keeps the aspect ratio
-        int sc = max(1, min(mw / srcW, mh / srcH));
-        m_fitScaleX = m_fitScaleY = sc;
-    }
-    m_fitOffX = (mw - srcW * m_fitScaleX) / 2;
-    m_fitOffY = (mh - srcH * m_fitScaleY) / 2;
+    const auto fit = core::drawing::computeMarqueeFit(
+        srcW,
+        srcH,
+        matrix->width(),
+        matrix->height(),
+        core::drawing::parseMarqueeFitMode(m_fitMode.c_str())
+    );
+    m_srcW = fit.srcW;
+    m_srcH = fit.srcH;
+    m_fitDstW = fit.dstW;
+    m_fitDstH = fit.dstH;
+    m_fitOffX = fit.offX;
+    m_fitOffY = fit.offY;
+    m_fitScaleX = fit.intScaleX;
+    m_fitScaleY = fit.intScaleY;
+    m_fitIntegerScale = fit.isIntegerScale;
 }
 
 /**
@@ -940,7 +940,17 @@ bool GifEngine::decodePng(const char* filepath) {
             if (!m_hasPsram) { delete png; png = nullptr; }
             return false;
         }
-        updateFitGeometry(png->getWidth(), png->getHeight());
+        const int pngW = png->getWidth();
+        const int pngH = png->getHeight();
+        static constexpr int kMaxPngDecodeDim = 512;
+        if (pngW <= 0 || pngH <= 0 || pngW > kMaxPngDecodeDim || pngH > kMaxPngDecodeDim) {
+            LOGW("GifEngine", "Rejecting PNG %s with unsupported dimensions %dx%d (max %dx%d)",
+                 filepath, pngW, pngH, kMaxPngDecodeDim, kMaxPngDecodeDim);
+            png->close();
+            if (!m_hasPsram) { delete png; png = nullptr; }
+            return false;
+        }
+        updateFitGeometry(pngW, pngH);
 
         if (matrix && matrix->hasCanvas() && matrix->getRotation() == 0) {
             ScopedCanvasGuard canvasGuard(matrix);
@@ -1800,37 +1810,67 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     const int scaleY = self->m_fitScaleY;
     const int offsetX = self->m_fitOffX;
     const int offsetY = self->m_fitOffY;
+    const int mw = self->matrix->width();
+    const int mh = self->matrix->height();
 
-    uint8_t *s;
-    uint16_t *usPalette;
-    int x, y, iWidth;
+    uint8_t *s = pDraw->pPixels;
+    uint16_t *usPalette = pDraw->pPalette;
+    const int iWidth = pDraw->iWidth;
+    const int y = pDraw->iY + pDraw->y;
 
-    iWidth = pDraw->iWidth;
-    usPalette = pDraw->pPalette;
-    y = pDraw->iY + pDraw->y;
-    
-    int baseY = offsetY + y * scaleY;
+    if (!self->m_fitIntegerScale) {
+        int dy0 = 0, dy1 = 0;
+        if (!core::drawing::mapSourceSpanToDest(y, self->m_srcH, self->m_fitDstH, offsetY, dy0, dy1)) {
+            return;
+        }
+        if (dy0 < 0) dy0 = 0;
+        if (dy1 > mh) dy1 = mh;
+        if (dy0 >= dy1) return;
 
-    s = pDraw->pPixels;
-    
+        const bool hasTrans = (pDraw->ucHasTransparency != 0);
+        const uint8_t ucTransparent = pDraw->ucTransparent;
+        for (int x = 0; x < iWidth; ++x) {
+            const uint8_t c = *s++;
+            if (hasTrans && c == ucTransparent) continue;
+            int dx0 = 0, dx1 = 0;
+            if (!core::drawing::mapSourceSpanToDest(pDraw->iX + x, self->m_srcW, self->m_fitDstW, offsetX, dx0, dx1)) {
+                continue;
+            }
+            if (dx0 < 0) dx0 = 0;
+            if (dx1 > mw) dx1 = mw;
+            if (dx0 >= dx1) continue;
+            const uint16_t color = usPalette[c];
+            if (self->canvasBuffer) {
+                for (int py = dy0; py < dy1; ++py) {
+                    uint16_t* row = self->canvasBuffer + py * mw;
+                    for (int px = dx0; px < dx1; ++px) {
+                        row[px] = color;
+                    }
+                }
+            } else {
+                self->matrix->fillRect(dx0, dy0, dx1 - dx0, dy1 - dy0, color);
+            }
+        }
+        return;
+    }
+
+    const int baseY = offsetY + y * scaleY;
     if (pDraw->ucHasTransparency) {
         uint8_t c, ucTransparent = pDraw->ucTransparent;
-        for (x = 0; x < iWidth; x++) {
+        for (int x = 0; x < iWidth; x++) {
             c = *s++;
             if (c != ucTransparent) {
                 int px = offsetX + (pDraw->iX + x) * scaleX;
                 if (scaleX == 1 && scaleY == 1) {
-                    if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+                    if (px >= 0 && px < mw && baseY >= 0 && baseY < mh) {
                         if (self->canvasBuffer) {
-                            self->canvasBuffer[baseY * self->matrix->width() + px] = usPalette[c];
+                            self->canvasBuffer[baseY * mw + px] = usPalette[c];
                         } else {
                             self->matrix->drawPixel(px, baseY, usPalette[c]);
                         }
                     }
                 } else {
                     if (self->canvasBuffer) {
-                        int mw = self->matrix->width();
-                        int mh = self->matrix->height();
                         for (int sy = 0; sy < scaleY; sy++) {
                             for (int sx = 0; sx < scaleX; sx++) {
                                 if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
@@ -1844,21 +1884,19 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             }
         }
     } else {
-        for (x = 0; x < iWidth; x++) {
+        for (int x = 0; x < iWidth; x++) {
             uint16_t color = usPalette[*s++];
             int px = offsetX + (pDraw->iX + x) * scaleX;
             if (scaleX == 1 && scaleY == 1) {
-                if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+                if (px >= 0 && px < mw && baseY >= 0 && baseY < mh) {
                     if (self->canvasBuffer) {
-                        self->canvasBuffer[baseY * self->matrix->width() + px] = color;
+                        self->canvasBuffer[baseY * mw + px] = color;
                     } else {
                         self->matrix->drawPixel(px, baseY, color);
                     }
                 }
             } else {
                 if (self->canvasBuffer) {
-                    int mw = self->matrix->width();
-                    int mh = self->matrix->height();
                     for (int sy = 0; sy < scaleY; sy++) {
                         for (int sx = 0; sx < scaleX; sx++) {
                             if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
@@ -1916,27 +1954,64 @@ int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
 }
 
 int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
-    GifEngine* self = static_cast<GifEngine*>(pDraw->pUser);
+    GifEngine* self = static_cast<GifEngine*>(pDraw ? pDraw->pUser : nullptr);
     if (!self) self = instance;
-    if (!self || !self->matrix || !self->png) return 0;
+    if (!self || !self->matrix || !self->png || !pDraw) return 0;
 
-    // Placement was computed in decodePng (updateFitGeometry) before decoding started.
+    // Hard bounds check BEFORE getLineAsRGB565: PNGdec writes `pDraw->iWidth` uint16_t pixels
+    // unconditionally into `lineBuffer`, which would overflow `.bss` on >512px PNGs.
+    static constexpr int kMaxLinePixels = 512;
+    if (pDraw->iWidth <= 0 || pDraw->iWidth > kMaxLinePixels) {
+        return 0;
+    }
+
+    static uint16_t lineBuffer[kMaxLinePixels];
+    const int iWidth = pDraw->iWidth;
+
+    // Composite alpha / tRNS pixels onto pure black (0x00000000) rather than white/file bKGD (0xffffffff).
+    self->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000U);
+
     const int scaleX = self->m_fitScaleX;
     const int scaleY = self->m_fitScaleY;
     const int offsetX = self->m_fitOffX;
     const int offsetY = self->m_fitOffY;
+    const int y = pDraw->y;
+    const int mW = self->matrix->width();
+    const int mH = self->matrix->height();
 
-    static uint16_t lineBuffer[512]; // Increased to 512 for safety
-    int iWidth = pDraw->iWidth;
-    if (iWidth > 512) iWidth = 512;
+    if (!self->m_fitIntegerScale) {
+        int dy0 = 0, dy1 = 0;
+        if (!core::drawing::mapSourceSpanToDest(y, self->m_srcH, self->m_fitDstH, offsetY, dy0, dy1)) {
+            return 1;
+        }
+        if (dy0 < 0) dy0 = 0;
+        if (dy1 > mH) dy1 = mH;
+        if (dy0 >= dy1) return 1;
 
-    self->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+        for (int x = 0; x < iWidth; ++x) {
+            int dx0 = 0, dx1 = 0;
+            if (!core::drawing::mapSourceSpanToDest(x, self->m_srcW, self->m_fitDstW, offsetX, dx0, dx1)) {
+                continue;
+            }
+            if (dx0 < 0) dx0 = 0;
+            if (dx1 > mW) dx1 = mW;
+            if (dx0 >= dx1) continue;
+            const uint16_t color = lineBuffer[x];
+            if (self->canvasBuffer) {
+                for (int py = dy0; py < dy1; ++py) {
+                    uint16_t* row = self->canvasBuffer + py * mW;
+                    for (int ppx = dx0; ppx < dx1; ++ppx) {
+                        row[ppx] = color;
+                    }
+                }
+            } else {
+                self->matrix->fillRect(dx0, dy0, dx1 - dx0, dy1 - dy0, color);
+            }
+        }
+        return 1;
+    }
 
-    int y = pDraw->y;
-    int baseY = offsetY + y * scaleY;
-    int mW = self->matrix->width();
-    int mH = self->matrix->height();
-
+    const int baseY = offsetY + y * scaleY;
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
         int px = offsetX + x * scaleX;
