@@ -2250,12 +2250,15 @@ void FrontendSyncEngine::showcaseWorkerLoop() {
                     currentShowcaseOnline &&
                     wcfg.mqttEnabled && wcfg.showcaseEnabled && wcfg.useShowcaseBroker &&
                     m_externalMqttConnected.load(std::memory_order_acquire)) {
-                    SharedBrokerState sb;
-                    readSharedBrokerState(sb);
-                    if (sb.showcaseBrokerActive && sb.resolvedHost[0] != '\0') {
+                    bool sbFromShowcase = false;
+                    char sbHost[96] = "";
+                    uint16_t sbPort = 1883;
+                    bool sbProbedOnce = false;
+                    readSharedBrokerState(sbFromShowcase, sbHost, sizeof(sbHost), sbPort, sbProbedOnce);
+                    if (sbFromShowcase && sbHost[0] != '\0') {
                         consecutiveHealthFailures = 0;
                         lastHealthProbeMs = nowMs == 0 ? 1 : nowMs;
-                        net::ShowcaseDiscovery::touchVerifiedHost(sb.resolvedHost, 8890);
+                        net::ShowcaseDiscovery::touchVerifiedHost(sbHost, 8890);
                         return;
                     }
                 }
