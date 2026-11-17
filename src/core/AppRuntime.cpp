@@ -413,7 +413,8 @@ void AppRuntime::initialize() {
             LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
             WiFi.setSleep(false);
-            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s (MAC: %s)",
+                 WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
             const ip_addr_t* dhcpDns = dns_getserver(0);
             ip_addr_t routerDns;
             if (dhcpDns && !ip_addr_isany(dhcpDns)) {
@@ -457,7 +458,8 @@ void AppRuntime::initialize() {
         }
         if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
             wifiConnected = true;
-            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s (MAC: %s)",
+                 WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
             startMdns();
             configTzTime(getPosixTimezone(snapshot.system.timezone).c_str(), "pool.ntp.org");
             delay(150); // Allow lwIP, DHCP and mDNS FreeRTOS tasks to settle allocations in Persistent Zone
