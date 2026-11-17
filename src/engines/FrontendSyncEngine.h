@@ -384,6 +384,7 @@ private:
     bool m_wasShowingInGame = false;
     bool m_remoteSyncDispatched = false;
     bool m_mappingsLoaded = false;
+    bool m_wasExternalConnected = false;
     unsigned long m_lastBrokerCacheCheckMs = 0;
 
     static constexpr size_t MISSING_ART_CACHE_SIZE = 64;

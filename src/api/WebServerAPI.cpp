@@ -3133,18 +3133,13 @@ void WebServerAPI::setupRoutes() {
             brokerHost = localIp.toString();
         }
 
-        char hwId[8] = "";
-        net::ShowcaseDiscovery::hardwareShortId(hwId, sizeof(hwId));
-
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const auto& mq = guard.get().mqtt;
 
-        StaticJsonDocument<448> doc;
+        StaticJsonDocument<384> doc;
         doc["host"] = brokerHost;
         doc["port"] = brokerPort;
         doc["source"] = source;
-        doc["hw_id"] = hwId;
-        doc["mac"] = WiFi.macAddress();
         doc["mqtt_enabled"] = mq.enabled;
         doc["showcase_broker_active"] = showcaseActive;
         doc["sync_show_hiscores"] = mq.sync_show_hiscores;
