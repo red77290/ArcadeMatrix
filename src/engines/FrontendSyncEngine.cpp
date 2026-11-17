@@ -815,22 +815,108 @@ void FrontendSyncEngine::updateRuntimeConfig(
     uint16_t panelW,
     uint16_t panelH
 ) {
+    const char* effLangCStr = (systemLang.length() > 0) ? systemLang.c_str() : "en";
+    const uint16_t effW = (panelW > 0U) ? panelW : 128U;
+    const uint16_t effH = (panelH > 0U) ? panelH : 32U;
+
     const bool brokerCfgChanged =
         (mqttCfg.enabled != mqttConfig.enabled) ||
         (mqttCfg.use_showcase_broker != mqttConfig.use_showcase_broker) ||
         (showcaseCfg.enabled != showcaseConfig.enabled) ||
         (showcaseCfg.server_url != showcaseConfig.server_url);
 
+    const bool anyChanged =
+        brokerCfgChanged ||
+        (mqttCfg.broker != mqttConfig.broker) ||
+        (mqttCfg.port != mqttConfig.port) ||
+        (mqttCfg.user != mqttConfig.user) ||
+        (mqttCfg.pass != mqttConfig.pass) ||
+        (mqttCfg.deviceName != mqttConfig.deviceName) ||
+        (mqttCfg.allow_overlay != mqttConfig.allow_overlay) ||
+        (mqttCfg.ingame_showcase_enabled != mqttConfig.ingame_showcase_enabled) ||
+        (mqttCfg.ingame_cycle_mode != mqttConfig.ingame_cycle_mode) ||
+        (mqttCfg.ingame_marquee_interval_sec != mqttConfig.ingame_marquee_interval_sec) ||
+        (mqttCfg.card_style_source != mqttConfig.card_style_source) ||
+        (mqttCfg.include_card_intro != mqttConfig.include_card_intro) ||
+        (mqttCfg.card_layout != mqttConfig.card_layout) ||
+        (mqttCfg.card_theme != mqttConfig.card_theme) ||
+        (mqttCfg.show_poster != mqttConfig.show_poster) ||
+        (mqttCfg.show_synopsis != mqttConfig.show_synopsis) ||
+        (mqttCfg.text_scroll_speed != mqttConfig.text_scroll_speed) ||
+        (mqttCfg.jacket_panorama != mqttConfig.jacket_panorama) ||
+        (mqttCfg.marquee_panorama != mqttConfig.marquee_panorama) ||
+        (mqttCfg.snapshot_panorama_count != mqttConfig.snapshot_panorama_count) ||
+        (mqttCfg.show_video != mqttConfig.show_video) ||
+        (mqttCfg.video_max_duration_s != mqttConfig.video_max_duration_s) ||
+        (mqttCfg.video_fps != mqttConfig.video_fps) ||
+        (mqttCfg.video_mode != mqttConfig.video_mode) ||
+        (mqttCfg.color_boost != mqttConfig.color_boost) ||
+        (mqttCfg.sync_show_hiscores != mqttConfig.sync_show_hiscores) ||
+        (mqttCfg.sync_show_ra != mqttConfig.sync_show_ra) ||
+        (mqttCfg.sync_celebrate_events != mqttConfig.sync_celebrate_events) ||
+        (mqttCfg.sync_card_duration_sec != mqttConfig.sync_card_duration_sec) ||
+        (mqttCfg.ra_web_api_key != mqttConfig.ra_web_api_key) ||
+        (showcaseCfg.transport_mode != showcaseConfig.transport_mode) ||
+        (showcaseCfg.use_showcase_broker != showcaseConfig.use_showcase_broker) ||
+        (showcaseCfg.mqtt_broker_source != showcaseConfig.mqtt_broker_source) ||
+        (showcaseCfg.mqtt_custom_url != showcaseConfig.mqtt_custom_url) ||
+        (m_systemLang != effLangCStr) ||
+        (m_panelW != effW) ||
+        (m_panelH != effH);
+
+    if (!anyChanged) {
+        return;
+    }
+
     mqttConfig = mqttCfg;
     showcaseConfig = showcaseCfg;
-    m_systemLang = systemLang.length() > 0 ? systemLang : "en";
-    m_panelW = panelW > 0 ? panelW : 128;
-    m_panelH = panelH > 0 ? panelH : 32;
+    m_systemLang = effLangCStr;
+    m_panelW = effW;
+    m_panelH = effH;
     syncWorkerConfigSlot();
 
-    if (brokerCfgChanged && mqttConfig.enabled && showcaseConfig.enabled && mqttConfig.use_showcase_broker) {
-        m_workerWakeLatch.store(true, std::memory_order_release);
-        ensureShowcaseWorkerRunning();
+    if (brokerCfgChanged && mqttConfig.enabled) {
+        if (showcaseConfig.enabled && mqttConfig.use_showcase_broker) {
+            if (internalBroker) {
+                internalBroker->stop();
+                delete internalBroker;
+                internalBroker = nullptr;
+                LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker (probing Showcase MQTT broker...)");
+            }
+            m_transportConfigured = false;
+            m_beginMs = millis();
+            writeSharedBrokerState(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port), false);
+
+            bool adoptedCached = false;
+            if (showcaseConfig.server_url.length() >= 8) {
+                char cachedUrl[112] = "";
+                char cachedHost[64] = "";
+                uint16_t cachedPort = 8890;
+                bool cachedOnline = false;
+                if (net::ShowcaseDiscovery::peekCachedUrlStatus(
+                        showcaseConfig.server_url.c_str(),
+                        cachedUrl,
+                        sizeof(cachedUrl),
+                        cachedHost,
+                        sizeof(cachedHost),
+                        cachedPort,
+                        cachedOnline,
+                        nullptr,
+                        0) &&
+                    cachedOnline && !net::ShowcaseDiscovery::isAutoDiscoverableHost(cachedHost)) {
+                    writeSharedBrokerState(true, cachedHost, 1883, true);
+                    applyBrokerTransport(true, cachedHost, 1883);
+                    adoptedCached = true;
+                }
+            }
+            if (!adoptedCached) {
+                net::ShowcaseDiscovery::invalidateCache();
+            }
+            m_workerWakeLatch.store(true, std::memory_order_release);
+            ensureShowcaseWorkerRunning();
+        } else if (mqttConfig.use_showcase_broker && !showcaseConfig.enabled) {
+            LOGW("RetroFrontend", "Share Showcase MQTT Broker is enabled, but DMD Media Showcase server is disabled in settings — keeping local/configured MQTT broker.");
+        }
     }
 
     if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled) {
@@ -1144,6 +1230,7 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
 
     if (fromShowcase && m_activeBrokerHost[0] != '\0') {
         if (internalBroker) {
+            internalBroker->stop();
             delete internalBroker;
             internalBroker = nullptr;
             LOGI("RetroFrontend", "Stopped embedded PicoMQTT broker (using Showcase MQTT broker %s:%u)",
@@ -1169,6 +1256,7 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
         }
     } else {
         if (internalBroker) {
+            internalBroker->stop();
             delete internalBroker;
             internalBroker = nullptr;
         }
@@ -1242,6 +1330,9 @@ void FrontendSyncEngine::begin() {
 
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
     const bool wantShowcaseBroker = (showcaseConfig.enabled && mqttConfig.use_showcase_broker);
+    if (mqttConfig.use_showcase_broker && !showcaseConfig.enabled) {
+        LOGW("RetroFrontend", "Share Showcase MQTT Broker is enabled, but DMD Media Showcase server is disabled in settings — using local/configured MQTT broker.");
+    }
     bool adoptedCachedBroker = false;
     if (wantShowcaseBroker && showcaseConfig.server_url.length() >= 8) {
         char cachedUrl[112] = "";
@@ -1271,8 +1362,8 @@ void FrontendSyncEngine::begin() {
     }
 
     // Only start local PicoMQTT / static external broker immediately when Showcase broker sharing is disabled.
-    // When Showcase broker sharing is enabled, wait up to 1.5s for Core 0's initial Showcase health probe so
-    // PicoMQTT never starts when Showcase is online (loop() falls back automatically after 1.5s if offline).
+    // When Showcase broker sharing is enabled, wait up to 3.5s for Core 0's initial mDNS + Showcase health probe
+    // so PicoMQTT never starts spuriously when Showcase is online (loop() falls back automatically after 3.5s if offline).
     if (!wantShowcaseBroker) {
         applyBrokerTransport(false, mqttConfig.broker.c_str(), static_cast<uint16_t>(mqttConfig.port));
     }
@@ -1330,6 +1421,7 @@ void FrontendSyncEngine::stop() {
     stopReconnectTask();
 
     if (internalBroker) {
+        internalBroker->stop();
         delete internalBroker;
         internalBroker = nullptr;
     }
@@ -1427,7 +1519,7 @@ bool FrontendSyncEngine::loop() {
         }
     }
 
-    if (probedOnce || (millis() - m_beginMs > 1500)) {
+    if (probedOnce || (millis() - m_beginMs > 3500)) {
         const char* desiredHost = resolvedFromShowcase ? resolvedHost : mqttConfig.broker.c_str();
         uint16_t desiredPort = resolvedFromShowcase
             ? resolvedPort
