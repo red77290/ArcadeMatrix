@@ -1005,7 +1005,9 @@ void FrontendSyncEngine::stopReconnectTask() {
 namespace {
 // Hardened PicoMQTT::Server subclass (0 bytes extra RAM):
 // 1. Enforces MQTT v3.1.1 §3.1.4 session takeover: when a console daemon reconnects with the same
-//    ClientId after a half-open Wi-Fi drop or reboot, immediately disconnects & evicts its stale socket.
+//    ClientId after a half-open Wi-Fi drop or reboot, immediately evicts its stale socket via
+//    `clients.erase()` (~NetworkClientSocketHandle -> ::close(fd) in O(1), avoiding `it->disconnect()`
+//    which would attempt a blocking NetworkClient::write() of a server-side DISCONNECT packet).
 // 2. Caps concurrent embedded clients to 4 (PicoMQTT v0.3.8's Client copy-ctor resets keep_alive_millis
 //    to 0, which could otherwise retain half-open sockets indefinitely and exhaust ESP32 LwIP sockets).
 class EmbeddedMqttBroker final : public PicoMQTT::Server {
@@ -1015,28 +1017,34 @@ public:
 
 protected:
     void on_connected(const char* clientId) override {
-        if (clients.size() <= 1) {
-            return;
-        }
-        auto newest = std::prev(clients.end());
-        if (clientId && clientId[0] != '\0' && strcmp(clientId, "<unknown>") != 0) {
-            for (auto it = clients.begin(); it != newest;) {
-                if (strcmp(it->get_client_id(), clientId) == 0) {
-                    it->disconnect();
-                    it = clients.erase(it);
-                } else {
-                    ++it;
+        if (clients.size() > 1) {
+            auto newest = std::prev(clients.end());
+            if (clientId && clientId[0] != '\0' && strcmp(clientId, "<unknown>") != 0) {
+                for (auto it = clients.begin(); it != newest;) {
+                    if (strcmp(it->get_client_id(), clientId) == 0) {
+                        LOGW("RetroFrontend", "Evicting stale MQTT session for ClientId '%s'", clientId);
+                        it = clients.erase(it);
+                    } else {
+                        ++it;
+                    }
                 }
             }
-        }
-        while (clients.size() > MAX_EMBEDDED_CLIENTS) {
-            auto oldest = clients.begin();
-            if (oldest == newest) {
-                break;
+            while (clients.size() > MAX_EMBEDDED_CLIENTS) {
+                auto oldest = clients.begin();
+                if (oldest == newest) {
+                    break;
+                }
+                LOGW("RetroFrontend", "Evicting oldest MQTT client '%s' (cap=%u)",
+                     oldest->get_client_id(), (unsigned)MAX_EMBEDDED_CLIENTS);
+                clients.erase(oldest);
             }
-            oldest->disconnect();
-            clients.erase(oldest);
         }
+        LOGI("RetroFrontend", "Embedded MQTT client connected: id='%s' (active=%u)",
+             clientId ? clientId : "", (unsigned)clients.size());
+    }
+
+    void on_disconnected(const char* clientId) override {
+        LOGI("RetroFrontend", "Embedded MQTT client disconnected: id='%s'", clientId ? clientId : "");
     }
 };
 } // namespace
@@ -1074,9 +1082,9 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
             if (localCfgBroker && !internalBroker) {
                 LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d (dual-listener with Showcase %s:%u)...",
                      mqttConfig.port, m_activeBrokerHost, m_activeBrokerPort);
-                internalBroker = new EmbeddedMqttBroker(mqttConfig.port, 5, 2);
-                internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
-                    if (instance) instance->handleMessage(String(topic), String(payload));
+                internalBroker = new EmbeddedMqttBroker(mqttConfig.port, 5, 1);
+                internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [this](const char* topic, const char* payload) {
+                    this->handleMessage(String(topic), String(payload));
                 });
                 internalBroker->begin();
             } else {
@@ -1096,9 +1104,9 @@ void FrontendSyncEngine::applyBrokerTransport(bool fromShowcase, const char* hos
     if (localCfgBroker) {
         if (!internalBroker) {
             LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
-            internalBroker = new EmbeddedMqttBroker(mqttConfig.port, 5, 2);
-            internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
-                if (instance) instance->handleMessage(String(topic), String(payload));
+            internalBroker = new EmbeddedMqttBroker(mqttConfig.port, 5, 1);
+            internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [this](const char* topic, const char* payload) {
+                this->handleMessage(String(topic), String(payload));
             });
             internalBroker->begin();
             LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
