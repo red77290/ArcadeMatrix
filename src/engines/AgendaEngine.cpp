@@ -1,3 +1,4 @@
+#include <iterator>
 #include "AgendaEngine.h"
 #include "clocks/ClockSpriteBank.h"
 #include "../core/drawing/IDrawingSurface.h"

@@ -927,7 +927,7 @@ void FrontendSyncEngine::updateRuntimeConfig(
     } else if (m_hasSessionSyncMeta && m_inGameEngine) {
         m_sessionSyncMeta.showHiscores = mqttConfig.sync_show_hiscores ? 1U : 0U;
         m_sessionSyncMeta.showRa = mqttConfig.sync_show_ra ? 1U : 0U;
-        m_sessionSyncMeta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20));
+        m_sessionSyncMeta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 5, 20));
         copySafeCStr(m_sessionSyncMeta.lang, sizeof(m_sessionSyncMeta.lang), m_systemLang.c_str());
         m_inGameEngine->publishSyncMeta(m_sessionSyncMeta);
     }
@@ -2819,7 +2819,7 @@ void FrontendSyncEngine::updateSyncCardCycle() {
     }
 
     const uint32_t now = millis();
-    const uint32_t cardDurMs = static_cast<uint32_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20)) * 1000UL;
+    const uint32_t cardDurMs = static_cast<uint32_t>(constrain(mqttConfig.sync_card_duration_sec, 5, 20)) * 1000UL;
 
     if (m_currentSyncCardPhase == SyncCardMode::None) {
         // Keep the initial Pixelcade marquee visible for at least 3.5s after game launch
@@ -2877,7 +2877,7 @@ bool FrontendSyncEngine::handleCompanionEvent(const String& jsonPayload) {
         copySafeCStr(meta.lang, sizeof(meta.lang), m_systemLang.c_str());
         meta.showHiscores = mqttConfig.sync_show_hiscores ? 1U : 0U;
         meta.showRa = mqttConfig.sync_show_ra ? 1U : 0U;
-        meta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 4, 20));
+        meta.cardDurationSec = static_cast<uint8_t>(constrain(mqttConfig.sync_card_duration_sec, 5, 20));
 
         if (doc["hiscores"].is<JsonArrayConst>()) {
             JsonArrayConst hsArr = doc["hiscores"].as<JsonArrayConst>();

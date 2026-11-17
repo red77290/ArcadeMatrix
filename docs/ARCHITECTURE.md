@@ -383,15 +383,19 @@ ArcadeMatrix completely decouples display decision resolution from engine lifecy
 ```text
 [ WebUI Cold SPA Load on Low-SRAM Non-PSRAM ESP32 ] (Priority 110, TIMED 2.4s, WEBUI_SYNC)
              ↓
-[ Emergency Alerts / OTA ] (Priority 100, ONE_SHOT / UNTIL_CANCELLED)
+[ Emergency Alerts / OTA ] (Priority 100, ONE_SHOT / UNTIL_CANCELLED, ALERT)
              ↓
-[ Real-time Interruption: MQTT Marquee / Live Alert ] (Priority 75)
+[ Live Achievement / High-Score Fireworks Celebration ] (Priority 55, TIMED, SYNC_CELEBRATION)
              ↓
-[ Audio Visualizer / Active Engine Request ] (Priority 60)
+[ Audio Visualizer / Active Engine Request ] (Priority 50, VISUALIZER)
              ↓
-[ Active Carousel Rotation: Clock / Weather / MusicEngine ] (Priority 50)
+[ In-Game Showcase Stream / Companion Cards ] (Priority 45, UNTIL_CANCELLED, INGAME_SHOWCASE)
              ↓
-[ Fallback Screen: Default Digital Clock ] (Priority 10)
+[ Real-time Interruption: MQTT Message / Alert ] (Priority 40, MQTT)
+             ↓
+[ Arcade Frontend Marquee / Forced GIF ] (Priority 30 MARQUEE / Priority 20 GIF)
+             ↓
+[ Active Carousel Rotation: Clock / Weather / Agenda / Music ] (Priority 10, PERSISTENT, ROTATION)
 ```
 
 ### Deterministic Zero-Allocation & SPSC Lock-Free Architecture

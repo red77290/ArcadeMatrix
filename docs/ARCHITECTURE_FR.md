@@ -303,15 +303,19 @@ ArcadeMatrix sépare strictement la décision d'arbitrage de l'exécution du cyc
 ```text
 [ Chargement WebUI Cold-SPA sur ESP32 sans PSRAM (SRAM Basse) ] (Priorité 110, TIMED 2.4s, WEBUI_SYNC)
              ↓
-[ Alertes d'Urgence / OTA ] (Priorité 100, ONE_SHOT / UNTIL_CANCELLED)
+[ Alertes d'Urgence / OTA ] (Priorité 100, ONE_SHOT / UNTIL_CANCELLED, ALERT)
              ↓
-[ Interruptions Temps Réel : Marquee MQTT / Alertes Live ] (Priorité 75)
+[ Célébration Live Trophée RA / Record Top 3 ] (Priorité 55, TIMED, SYNC_CELEBRATION)
              ↓
-[ Visualiseur Audio / Requête Moteur Actif ] (Priorité 60)
+[ Visualiseur Audio / Requête Moteur Actif ] (Priorité 50, VISUALIZER)
              ↓
-[ Carrousel de Rotation Actif : Horloge, Météo, Musique ] (Priorité 50)
+[ Flux Showcase In-Game / Cartes Compagnon ] (Priorité 45, UNTIL_CANCELLED, INGAME_SHOWCASE)
              ↓
-[ Écran de Repli : Horloge Digitale par Défaut ] (Priorité 10)
+[ Interruption Temps Réel : Message / Alerte MQTT ] (Priorité 40, MQTT)
+             ↓
+[ Marquee Frontend Arcade / GIF Forcé ] (Priorité 30 MARQUEE / Priorité 20 GIF)
+             ↓
+[ Carrousel de Rotation Actif : Horloge, Météo, Agenda, Musique ] (Priorité 10, PERSISTENT, ROTATION)
 ```
 
 ### Architecture SPSC Lock-Free & Déterministe Zéro-Allocation

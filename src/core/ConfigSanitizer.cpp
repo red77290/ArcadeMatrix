@@ -404,8 +404,8 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
         result.values_fallback++;
         result.modified = true;
     }
-    if (mqtt.sync_card_duration_sec < 4 || mqtt.sync_card_duration_sec > 20) {
-        mqtt.sync_card_duration_sec = constrain(mqtt.sync_card_duration_sec, 4, 20);
+    if (mqtt.sync_card_duration_sec < 5 || mqtt.sync_card_duration_sec > 20) {
+        mqtt.sync_card_duration_sec = constrain(mqtt.sync_card_duration_sec, 5, 20);
         result.values_clamped++;
         result.modified = true;
     }

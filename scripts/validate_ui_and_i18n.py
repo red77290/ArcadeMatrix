@@ -19,7 +19,8 @@ import re
 import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-RPI_ROOT = os.path.abspath(os.path.join(REPO_ROOT, "..", "ArcadeMatrix_RPi"))
+_rpi_upper = os.path.abspath(os.path.join(REPO_ROOT, "..", "ArcadeMatrix_RPI"))
+RPI_ROOT = _rpi_upper if os.path.isdir(_rpi_upper) else os.path.abspath(os.path.join(REPO_ROOT, "..", "ArcadeMatrix_RPi"))
 sys.path.insert(0, os.path.dirname(__file__))
 from extract_engine_catalog import extract_engine_catalog  # noqa: E402
 

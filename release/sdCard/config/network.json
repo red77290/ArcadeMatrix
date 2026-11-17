@@ -30,7 +30,12 @@
     "video_max_duration_s": 12,
     "video_fps": 15,
     "video_mode": "auto_action",
-    "color_boost": "auto"
+    "color_boost": "auto",
+    "sync_show_hiscores": true,
+    "sync_show_ra": true,
+    "sync_celebrate_events": true,
+    "sync_card_duration_sec": 8,
+    "ra_web_api_key": ""
   },
   "data_mqtt": {
     "broker": "",
@@ -41,7 +46,7 @@
   "showcase": {
     "enabled": false,
     "server_url": "http://dmdmediashowcase.local:8890",
-    "transport_mode": "mqtt_udp",
+    "transport_mode": "mqtt_tcp",
     "use_showcase_broker": true,
     "mqtt_broker_source": "global",
     "mqtt_custom_url": ""
