@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <cstring>
 
-namespace core::drawing {
+namespace core {
+namespace drawing {
 
 enum class MarqueeFitMode : uint8_t {
     Fit = 0,
@@ -254,4 +255,5 @@ inline void computeTextVisualCenter(
     outCursorY = ((surfaceH - textH) / 2) - boundsY1 + offsetY;
 }
 
-} // namespace core::drawing
+} // namespace drawing
+} // namespace core
