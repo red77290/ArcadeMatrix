@@ -2013,7 +2013,7 @@ select.input option {
                   </div>
                   <div class="form-group">
                     <label data-i18n="fsync_card_duration">Companion Card Duration (sec)</label>
-                    <input type="number" id="hw-mqtt-sync-card-duration" class="input" min="4" max="20" value="8">
+                    <input type="number" id="hw-mqtt-sync-card-duration" class="input" min="5" max="20" value="8">
                   </div>
                 </div>
                 <div class="form-group" style="margin-top: 0.75rem;">
@@ -3328,6 +3328,8 @@ const translations = {
     engine_desc_frontend_sync: "Real-time console and arcade frontend synchronization for Recalbox, Batocera, and RetroPie.",
     engine_agenda: "Connected Agenda",
     engine_desc_agenda: "Persistent SD-cached iCal (.ics) agenda for Google, iCloud, Outlook, and Proton calendars with pixel-art sprite cameos, RRULE recurrences, and zero idle RAM.",
+    engine_sync_celebration: "High Scores & RetroAchievements",
+    engine_desc_sync_celebration: "Preemptive 60 FPS fireworks and system-matched hero celebration triggered live when unlocking RetroAchievements or beating a Top 3 arcade record.",
     field_ics_url_1: "Primary Calendar URL (.ics)",
     field_desc_ics_url_1: "Private iCal (.ics or webcal://) URL for your primary calendar (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
     field_ics_label_1: "Primary Calendar Badge",
@@ -4466,6 +4468,8 @@ const translations = {
     engine_desc_frontend_sync: "Synchronisation temps réel des frontends consoles et bornes d'arcade pour Recalbox, Batocera et RetroPie.",
     engine_agenda: "Agenda Connecté",
     engine_desc_agenda: "Agenda iCal (.ics) persistant sur carte SD pour Google, iCloud, Outlook et Proton avec caméos pixel-art, récurrences RRULE et zéro RAM au repos.",
+    engine_sync_celebration: "High Scores & RetroAchievements",
+    engine_desc_sync_celebration: "Feux d'artifice préemptifs à 60 FPS et caméo de héros en direct lors d'un trophée RetroAchievements débloqué ou d'un record Top 3 arcade.",
     field_ics_url_1: "URL Calendrier Principal (.ics)",
     field_desc_ics_url_1: "Lien privé iCal (.ics ou webcal://) de votre agenda principal (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
     field_ics_label_1: "Badge Calendrier Principal",
@@ -5604,6 +5608,8 @@ const translations = {
     engine_desc_frontend_sync: "Sincronización en tiempo real con frontends de consolas y recreativas para Recalbox, Batocera y RetroPie.",
     engine_agenda: "Agenda Conectada",
     engine_desc_agenda: "Agenda iCal (.ics) persistente en tarjeta SD para Google, iCloud, Outlook y Proton con cameos pixel-art, recurrencias RRULE y cero RAM en reposo.",
+    engine_sync_celebration: "Récords y RetroAchievements",
+    engine_desc_sync_celebration: "Fuegos artificiales preventivos a 60 FPS y cameo de héroe en vivo al desbloquear logros RetroAchievements o batir un récord arcade Top 3.",
     field_ics_url_1: "URL Calendario Principal (.ics)",
     field_desc_ics_url_1: "Enlace privado iCal (.ics o webcal://) de tu calendario principal (Google, Apple iCloud, Outlook, Proton, Nextcloud).",
     field_ics_label_1: "Insignia Calendario Principal",
@@ -10579,7 +10585,7 @@ function initNetworkSettings() {
         sync_show_hiscores: document.getElementById('hw-mqtt-sync-hiscores')?.value !== '0',
         sync_show_ra: document.getElementById('hw-mqtt-sync-ra')?.value !== '0',
         sync_celebrate_events: document.getElementById('hw-mqtt-sync-celebrate')?.value !== '0',
-        sync_card_duration_sec: clampInt(document.getElementById('hw-mqtt-sync-card-duration')?.value, 8, 4, 20),
+        sync_card_duration_sec: clampInt(document.getElementById('hw-mqtt-sync-card-duration')?.value, 8, 5, 20),
         ra_web_api_key: document.getElementById('hw-mqtt-ra-api-key')?.value || '',
       };
       try {

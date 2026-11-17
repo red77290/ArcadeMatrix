@@ -12,5 +12,6 @@
   "idle_fighter_interval": 30,
   "idle_fighter_speed": 100,
   "api_auth_enabled": false,
-  "api_token": ""
+  "api_token": "",
+  "ota_auto_check": true
 }

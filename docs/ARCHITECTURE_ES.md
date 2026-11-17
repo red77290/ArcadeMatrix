@@ -299,11 +299,13 @@ Soporte nativo de inglés, francés y español:
 
 ArcadeMatrix separa estrictamente la decisión de arbitraje de la ejecución del ciclo de vida de los motores:
 1. **Carga WebUI Cold-SPA en ESP32 sin PSRAM con SRAM Baja (`WEBUI_SYNC`)** (Prioridad 110, `TIMED` 2.4s).
-2. **Alertas de Emergencia / OTA** (Prioridad 100).
-3. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
-4. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
-5. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
-6. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
+2. **Alertas de Emergencia / OTA (`ALERT`)** (Prioridad 100).
+3. **Celebración en Vivo de Logros RA / Récords Top 3 (`SYNC_CELEBRATION`)** (Prioridad 55, `TIMED`).
+4. **Visualizador de Audio / Petición de Motor Activo (`VISUALIZER`)** (Prioridad 50).
+5. **Flujo Showcase In-Game / Tarjetas Compañero (`INGAME_SHOWCASE`)** (Prioridad 45, `UNTIL_CANCELLED`).
+6. **Interrupciones en Tiempo Real: Mensajes / Alertas MQTT (`MQTT`)** (Prioridad 40).
+7. **Marquesina Frontend Arcade / GIF Forzado (`MARQUEE` / `GIF`)** (Prioridad 30 / 20).
+8. **Carrusel de Rotación Activo: Reloj, Clima, Agenda, Música (`ROTATION`)** (Prioridad 10, `PERSISTENT`).
 
 - **Cola de Comandos SPSC Lock-Free:** El Núcleo 0 envía peticiones asíncronas mediante `submitRequest()` y `cancelRequest()` hacia un búfer circular sin bloqueos (`LockFreeSPSCQueue<ArbiterCommand, 16>`), serializadas entre productores mediante `producerMutex` en el Núcleo 0.
 - **Consumidor Único en Núcleo 1:** `DisplayArbiter::evaluate()` drena los comandos y resuelve prioridades en $O(1)$ con **CERO mutex** y **CERO asignaciones dinámicas**.
