@@ -25,6 +25,7 @@ export const REJECTED_UUIDS = new Set([
   "00000000-0000-0000-0000-000000000000",
   "00000000-0000-4000-8000-000000000000",
   "a4074101-8139-44a4-920e-0ecddf62503c",
+  "11111111-2222-4333-8444-555555555555",
 ]);
 
 export const VERSION_REGEX = /^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z._-]+)?$/;
@@ -632,6 +633,18 @@ export class TelemetryStore {
     for (const stmt of TELEMETRY_SCHEMA_STATEMENTS) {
       this.sql.exec(stmt);
     }
+    for (const badId of REJECTED_UUIDS) {
+      this.sql.exec(`DELETE FROM devices WHERE id = ?`, badId);
+    }
+    this.sql.exec(`DELETE FROM daily_history WHERE day = date('now')`);
+    this.sql.exec(
+      `INSERT INTO daily_history (day, project, version, count)
+       SELECT date('now'), project, version, COUNT(*)
+       FROM devices
+       WHERE last_seen >= unixepoch() - ?
+       GROUP BY project, version`,
+      ACTIVE_WINDOW_SECONDS
+    );
   }
 
   async fetch(request) {

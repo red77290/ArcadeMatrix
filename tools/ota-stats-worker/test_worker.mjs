@@ -309,6 +309,7 @@ async function runTests() {
   assert.equal(isValidUuidV4("00000000-0000-4000-8000-000000000000"), false, "Zero-filled v4 fallback UUID must be rejected");
   assert.equal(isValidUuidV4("00000000-0000-0000-0000-000000000000"), false, "Nil UUID must be rejected");
   assert.equal(isValidUuidV4("a4074101-8139-44a4-920e-0ecddf62503c"), false, "Leaked default config.json UUID must be rejected");
+  assert.equal(isValidUuidV4("11111111-2222-4333-8444-555555555555"), false, "Synthetic smoke-test UUID must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-41d4-a716-44665544000"), false, "35-char string must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-41d4-a716-4466554400000"), false, "37-char string must be rejected");
   assert.equal(isValidUuidV4(""), false, "Empty string must be rejected");
