@@ -1,23 +1,23 @@
 {
   "project": "esp32",
-  "latest_version": "v3.0.1",
+  "latest_version": "v4.2.0",
   "posts": [
     {
-      "version": "v3.0.1",
-      "date": "2026-11-16",
+      "version": "v4.2.0",
+      "date": "2026-11-17",
       "channel": "stable",
       "tags": ["NEW", "PERF", "FIX"],
       "media": "changelog/media/agenda-sync-preview.svg",
-      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v3.0.1",
+      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v4.2.0",
       "title": {
-        "en": "iCal Agenda Engine, RetroAchievements Celebrations & Edge OTA Proxy",
-        "fr": "Moteur Agenda iCal, Célébrations RetroAchievements & Proxy OTA Edge",
-        "es": "Motor Agenda iCal, Celebraciones RetroAchievements y Proxy OTA Edge"
+        "en": "iCal Agenda Engine, RetroAchievements Celebrations, Live Showcase Sync & Edge OTA Proxy",
+        "fr": "Moteur Agenda iCal, Célébrations RetroAchievements, Sync Showcase Live & Proxy OTA Edge",
+        "es": "Motor Agenda iCal, Celebraciones RetroAchievements, Sync Showcase en Vivo y Proxy OTA Edge"
       },
       "summary": {
-        "en": "Turn your HUB75 LED matrix into a live schedule companion and arcade trophy celebration marquee, backed by a zero-rate-limit Cloudflare Edge OTA proxy.",
-        "fr": "Transformez votre matrice LED HUB75 en compagnon d'agenda iCal en direct et afficheur de trophées d'arcade, propulsé par un proxy OTA Cloudflare Edge sans limite de débit.",
-        "es": "Convierte tu matriz LED HUB75 en un compañero de agenda iCal en vivo y marquesina de trofeos arcade, respaldado por un proxy OTA en Cloudflare Edge."
+        "en": "Turn your HUB75 LED matrix into a live schedule companion, instant Pixelcade/Showcase arcade marquee, and trophy celebration display, backed by a zero-rate-limit Cloudflare Edge OTA proxy.",
+        "fr": "Transformez votre matrice LED HUB75 en compagnon d'agenda iCal en direct, marquee Pixelcade/Showcase instantané et afficheur de trophées d'arcade, propulsé par un proxy OTA Cloudflare Edge sans limite de débit.",
+        "es": "Convierte tu matriz LED HUB75 en un compañero de agenda iCal en vivo, marquesina Pixelcade/Showcase instantánea y pantalla de trofeos arcade, respaldado por un proxy OTA en Cloudflare Edge."
       },
       "before_after": {
         "before": {
@@ -26,39 +26,42 @@
           "es": "Las consultas directas a la API de GitHub podían alcanzar el límite de 60 req/h/IP con varias matrices, y los eventos de calendario/logros requerían scripts externos."
         },
         "after": {
-          "en": "Native iCal Agenda engine, preemptive RetroAchievements & High Score fireworks, and 10-min Edge-cached OTA releases with anonymous UUID v4 version tracking.",
-          "fr": "Moteur Agenda iCal natif, célébrations préemptives RetroAchievements & High Scores, et cache Edge OTA de 10 min avec suivi anonyme de migration UUID v4.",
-          "es": "Motor Agenda iCal nativo, celebraciones preemptivas de RetroAchievements y High Scores, y caché OTA Edge de 10 min con conteo anónimo UUID v4."
+          "en": "Native iCal Agenda engine, preemptive RetroAchievements & High Score fireworks, dynamic MQTT broker handoff with Showcase, and 10-min Edge-cached OTA releases with anonymous UUID v4 version tracking.",
+          "fr": "Moteur Agenda iCal natif, célébrations préemptives RetroAchievements & High Scores, bascule dynamique de broker MQTT avec Showcase, et cache Edge OTA de 10 min avec suivi anonyme de migration UUID v4.",
+          "es": "Motor Agenda iCal nativo, celebraciones preemptivas de RetroAchievements y High Scores, cambio dinámico de broker MQTT con Showcase, y caché OTA Edge de 10 min con conteo anónimo UUID v4."
         }
       },
       "highlights": {
         "en": [
           "NEW — iCal Agenda Engine ('agenda'): Synchronizes ICS feeds in the background on Core 0 and renders upcoming events, countdown badges, and urgency alerts at 60 FPS on Core 1.",
           "NEW — RetroAchievements & High Scores Celebrations: Preemptive trophy unlock & personal record overlays triggered from Recalbox, Batocera, RetroArch, or MiSTer.",
-          "PERF — Cloudflare Edge OTA Proxy: Eliminates GitHub API 403 rate limits and tracks anonymous UUID v4 version migrations (v3.0.0 → v3.0.1) with zero IP storage.",
+          "NEW — Dynamic Frontend Sync & Showcase Broker Handoff: Hot-switches between the internal PicoMQTT broker and DMD Media Showcase broker without console script re-installation.",
+          "PERF — Cloudflare Edge OTA Proxy: Eliminates GitHub API 403 rate limits and tracks anonymous UUID v4 version migrations (v4.1.x → v4.2.0) with zero IP storage.",
           "FIX — Tate (90°/270°) rotation layout alignment on 64x128 and 64x256 vertical cabinets."
         ],
         "fr": [
           "NEW — Moteur Agenda iCal ('agenda') : Synchronise les flux ICS en tâche de fond sur le Core 0 et affiche les événements à venir, comptes à rebours et alertes à 60 FPS sur le Core 1.",
           "NEW — Célébrations RetroAchievements & High Scores : Superpositions préemptives de trophées débloqués et records personnels depuis Recalbox, Batocera, RetroArch ou MiSTer.",
-          "PERF — Proxy OTA Cloudflare Edge : Élimine les erreurs 403 de limite GitHub API et suit les migrations de versions via UUID v4 anonyme (v3.0.0 → v3.0.1) sans stocker d'IP.",
+          "NEW — Synchronisation Frontend & Bascule Dynamique Broker Showcase : Bascule à chaud entre le broker interne PicoMQTT et DMD Media Showcase sans réinstaller les scripts console.",
+          "PERF — Proxy OTA Cloudflare Edge : Élimine les erreurs 403 de limite GitHub API et suit les migrations de versions via UUID v4 anonyme (v4.1.x → v4.2.0) sans stocker d'IP.",
           "FIX — Alignement du rendu en rotation Tate (90°/270°) sur les bornes verticales 64x128 et 64x256."
         ],
         "es": [
           "NEW — Motor Agenda iCal ('agenda'): Sincroniza calendarios ICS en segundo plano en Core 0 y muestra próximos eventos y alertas a 60 FPS en Core 1.",
           "NEW — Celebraciones RetroAchievements y High Scores: Superposiciones preemptivas de trofeos y récords desde Recalbox, Batocera, RetroArch o MiSTer.",
-          "PERF — Proxy OTA Cloudflare Edge: Elimina los límites 403 de la API de GitHub y registra migraciones de versión mediante UUID v4 anónimo (v3.0.0 → v3.0.1) sin guardar IP.",
+          "NEW — Sincronización Frontend y Cambio Dinámico de Broker Showcase: Alterna en caliente entre el broker interno PicoMQTT y DMD Media Showcase sin reinstalar scripts en la consola.",
+          "PERF — Proxy OTA Cloudflare Edge: Elimina los límites 403 de la API de GitHub y registra migraciones de versión mediante UUID v4 anónimo (v4.1.x → v4.2.0) sin guardar IP.",
           "FIX — Alineación del diseño en rotación Tate (90°/270°) para paneles verticales de 64x128 y 64x256."
         ]
       }
     },
     {
-      "version": "v3.0.0",
-      "date": "2026-10-25",
+      "version": "v4.1.0",
+      "date": "2026-11-01",
       "channel": "stable",
       "tags": ["NEW", "PERF"],
       "media": "changelog/media/showcase-dmdz-preview.svg",
-      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v3.0.0",
+      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v4.1.0",
       "title": {
         "en": "DMDZ Lossless Showcase Streaming & SRSW Triple-Buffered Core 1",
         "fr": "Streaming Lossless DMDZ Showcase & Triple-Buffering SRSW Core 1",
