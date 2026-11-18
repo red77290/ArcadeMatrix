@@ -1,7 +1,54 @@
 {
   "project": "esp32",
-  "latest_version": "v4.2.0",
+  "latest_version": "v4.2.1",
   "posts": [
+    {
+      "version": "v4.2.1",
+      "date": "2026-11-18",
+      "channel": "stable",
+      "tags": ["FIX", "PERF"],
+      "media": "changelog/media/agenda-sync-preview.svg",
+      "release_url": "https://github.com/red77290/ArcadeMatrix/releases/tag/v4.2.1",
+      "title": {
+        "en": "Live GitHub Release Telemetry, Strict Client-Side UUID v4 & Zero-Config Worker Deploy",
+        "fr": "Télémétrie Live GitHub Releases, UUID v4 Client-Side Strict & Déploiement Worker Clé en Main",
+        "es": "Telemetría en Vivo de GitHub Releases, UUID v4 en Cliente y Despliegue Automático del Worker"
+      },
+      "summary": {
+        "en": "Removes synthetic preview metrics from the Fleet Portal, hardens 100% browser client-side OTA check-ins & UUID v4 persistence, and adds automated 1-click Cloudflare D1 Worker provisioning.",
+        "fr": "Supprime toutes les données fictives d'aperçu du portail, renforce la vérification OTA et la persistance UUID v4 100 % côté navigateur (WebUI), et automatise le déploiement Cloudflare D1.",
+        "es": "Elimina los datos de demostración del portal, refuerza las comprobaciones OTA y persistencia UUID v4 100 % en el navegador (WebUI) y automatiza el despliegue en Cloudflare D1."
+      },
+      "before_after": {
+        "before": {
+          "en": "The Fleet & Migrations tab fell back to a synthetic preview dataset before Cloudflare D1 deployment or when 0 devices were registered, and NVS errors returned a zero-filled v4 UUID.",
+          "fr": "L'onglet Parc & Migrations affichait un jeu de données d'aperçu fictif tant que la base Cloudflare D1 était vide ou non déployée, et un échec NVS renvoyait un UUID v4 nul.",
+          "es": "La pestaña Flota y Migraciones mostraba datos sintéticos de vista previa antes del despliegue de Cloudflare D1 o con 0 dispositivos, y un fallo NVS devolvía un UUID v4 nulo."
+        },
+        "after": {
+          "en": "100% authentic live figures (0 synthetic numbers), real per-version & per-board GitHub Release firmware downloads, strict client-side UUID v4 persistence, and automated CI Worker deployment.",
+          "fr": "Chiffres 100 % réels (zéro donnée fictive), téléchargements GitHub Releases réels par version et par carte, persistance UUID v4 stricte côté WebUI et déploiement CI automatisé du Worker.",
+          "es": "Cifras 100 % reales (cero datos ficticios), descargas reales de GitHub Releases por versión y placa, persistencia UUID v4 en el cliente WebUI y despliegue CI automático del Worker."
+        }
+      },
+      "highlights": {
+        "en": [
+          "FIX — Removed synthetic preview dataset from the portal and fixed zero-device D1 state handling (`total_known === 0`).",
+          "FIX — Hardened 100% browser WebClient OTA check-ins (`localStorage` + NVS UUID v4, nil-UUID rejection, and post-manual-OTA check-in) with zero network load on ESP32.",
+          "NEW — Added turnkey `deploy_worker.mjs` & GitHub Actions workflow for automatic Cloudflare D1 + Worker provisioning."
+        ],
+        "fr": [
+          "FIX — Suppression complète du dataset fictif d'aperçu sur le portail et prise en charge de l'état réel à 0 appareil sur Cloudflare D1.",
+          "FIX — Vérifications de MAJ et métriques 100 % côté navigateur WebUI (`localStorage` + UUID v4 NVS, rejet des UUID nuls et check-in après MAJ manuelle) sans charge réseau sur l'ESP32.",
+          "NEW — Ajout de `deploy_worker.mjs` et du workflow GitHub Actions pour provisionner automatiquement Cloudflare D1 + Worker."
+        ],
+        "es": [
+          "FIX — Eliminación total de los datos sintéticos del portal y soporte exacto para 0 dispositivos registrados en Cloudflare D1.",
+          "FIX — Comprobaciones OTA y métricas 100 % en el navegador WebUI (`localStorage` + UUID v4 NVS, rechazo de UUID nulos) sin carga de red en el ESP32.",
+          "NEW — Script `deploy_worker.mjs` y flujo de GitHub Actions para aprovisionar automáticamente Cloudflare D1 y el Worker."
+        ]
+      }
+    },
     {
       "version": "v4.2.0",
       "date": "2026-11-17",

@@ -65,7 +65,11 @@ static const char* getOrCreateInstallUuid() {
     nvs_handle_t h = 0;
     if (nvs_open("arcadematrix", NVS_READWRITE, &h) == ESP_OK) {
         size_t len = sizeof(s_installUuid);
-        if (nvs_get_str(h, "inst_id", s_installUuid, &len) != ESP_OK || strlen(s_installUuid) != 36U) {
+        const bool missingOrInvalid =
+            (nvs_get_str(h, "inst_id", s_installUuid, &len) != ESP_OK) ||
+            (strlen(s_installUuid) != 36U) ||
+            (strcmp(s_installUuid, "00000000-0000-4000-8000-000000000000") == 0);
+        if (missingOrInvalid) {
             uint8_t b[16];
             esp_fill_random(b, sizeof(b));
             b[6] = static_cast<uint8_t>((b[6] & 0x0FU) | 0x40U);
@@ -83,9 +87,6 @@ static const char* getOrCreateInstallUuid() {
         nvs_close(h);
     }
 #endif
-    if (s_installUuid[0] == '\0') {
-        strcpy(s_installUuid, "00000000-0000-4000-8000-000000000000");
-    }
     return s_installUuid;
 }
 

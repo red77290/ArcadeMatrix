@@ -18,6 +18,15 @@ export const WORKER_URL = "https://arcadematrix-ota-stats.red77290.workers.dev";
 export const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const ZERO_RANDOM_UUID_V4_REGEX =
+  /^0{8}-0{4}-40{3}-[89ab]0{3}-0{12}$/i;
+
+export const REJECTED_UUIDS = new Set([
+  "00000000-0000-0000-0000-000000000000",
+  "00000000-0000-4000-8000-000000000000",
+  "a4074101-8139-44a4-920e-0ecddf62503c",
+]);
+
 export const VERSION_REGEX = /^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z._-]+)?$/;
 export const RES_REGEX = /^\d{2,4}x\d{2,4}$/;
 export const OS_REGEX = /^[a-zA-Z0-9._+-]{1,32}$/;
@@ -52,12 +61,17 @@ const CORS_HEADERS = {
 };
 
 /**
- * Validates that a string is a strict 36-character RFC 4122 UUID v4.
+ * Validates that a string is a strict, non-zero, non-poisoned 36-character RFC 4122 UUID v4.
  * @param {string} id
  * @returns {boolean}
  */
 export function isValidUuidV4(id) {
-  return typeof id === "string" && id.length === 36 && UUID_V4_REGEX.test(id);
+  if (typeof id !== "string") return false;
+  const trimmed = id.trim().toLowerCase();
+  if (trimmed.length !== 36 || !UUID_V4_REGEX.test(trimmed)) return false;
+  if (ZERO_RANDOM_UUID_V4_REGEX.test(trimmed)) return false;
+  if (REJECTED_UUIDS.has(trimmed)) return false;
+  return true;
 }
 
 /**
@@ -371,16 +385,38 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     })
   );
 
-  // 7. GitHub releases download aggregation
+  // 7. GitHub releases firmware download aggregation (excludes sample SD card asset bundles)
   let githubDownloadsTotal = 0;
+  const ghHwCounts = new Map();
+  const classifyAssetHw = (assetName) => {
+    const lower = String(assetName || "").toLowerCase();
+    if (lower.includes("sdcard")) return null;
+    if (project === "esp32") {
+      if (lower.includes("waveshare")) return "esp32s3_waveshare";
+      if (lower.includes("n16r8")) return "esp32s3_n16r8";
+      if (lower.includes("esp32dev")) return "esp32dev";
+      return null;
+    }
+    if (lower.includes("aarch64") || lower.includes("arm64")) return "aarch64";
+    if (lower.includes("armhf") || lower.includes("armv7")) return "armhf";
+    return null;
+  };
+
   const github_releases = (
     Array.isArray(githubReleasesRaw) ? githubReleasesRaw : []
   ).map((rel) => {
     const assets = Array.isArray(rel.assets) ? rel.assets : [];
-    const downloads = assets.reduce(
-      (sum, asset) => sum + Number(asset.download_count || 0),
-      0
-    );
+    let downloads = 0;
+    for (const asset of assets) {
+      const nameLower = String(asset.name || "").toLowerCase();
+      if (nameLower.includes("sdcard")) continue;
+      const dl = Number(asset.download_count || 0);
+      downloads += dl;
+      const hwKey = classifyAssetHw(nameLower);
+      if (hwKey) {
+        ghHwCounts.set(hwKey, (ghHwCounts.get(hwKey) || 0) + dl);
+      }
+    }
     githubDownloadsTotal += downloads;
     return {
       tag: rel.tag_name || rel.name || "unknown",
@@ -389,10 +425,20 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     };
   });
 
+  const ghHwSum = Array.from(ghHwCounts.values()).reduce((a, b) => a + b, 0);
+  const github_hw_downloads = Array.from(ghHwCounts.entries())
+    .map(([hw, downloads]) => ({
+      hw,
+      downloads,
+      pct: ghHwSum > 0 ? Math.round((downloads / ghHwSum) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.downloads - a.downloads);
+
+  const defaultLatest = project === "esp32" ? "v4.2.1" : "v4.2.0";
   const latestVersion =
-    github_releases[0]?.tag || versions[0]?.version || "v3.0.1";
+    github_releases[0]?.tag || versions[0]?.version || defaultLatest;
   const latestEntry =
-    versions.find((v) => v.version === latestVersion) || versions[0] || null;
+    versions.find((v) => v.version === latestVersion) || null;
   const latestAdoptionPct = latestEntry ? latestEntry.pct : 0;
 
   return {
@@ -401,7 +447,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     kpis: {
       active_30d: active30dTotal,
       total_known: totalKnown,
-      latest_version: latestEntry ? latestEntry.version : latestVersion,
+      latest_version: latestVersion,
       latest_adoption_pct: latestAdoptionPct,
       github_downloads_total: githubDownloadsTotal,
     },
@@ -412,6 +458,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     hw_by_res,
     daily_history,
     github_releases,
+    github_hw_downloads,
   };
 }
 
@@ -426,6 +473,110 @@ function jsonResponse(payload, status = 200, maxAgeSeconds = 0) {
     headers["Cache-Control"] = "no-store";
   }
   return new Response(JSON.stringify(payload), { status, headers });
+}
+
+const TELEMETRY_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS devices (
+    id TEXT PRIMARY KEY CHECK (length(id) = 36),
+    project TEXT NOT NULL CHECK (project IN ('esp32', 'rpi')),
+    version TEXT NOT NULL,
+    hw TEXT NOT NULL,
+    os TEXT NOT NULL DEFAULT '',
+    res TEXT NOT NULL DEFAULT '',
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_devices_project_last_seen ON devices (project, last_seen)`,
+  `CREATE INDEX IF NOT EXISTS idx_devices_project_version ON devices (project, version)`,
+  `CREATE TABLE IF NOT EXISTS daily_history (
+    day TEXT NOT NULL,
+    project TEXT NOT NULL CHECK (project IN ('esp32', 'rpi')),
+    version TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, project, version)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_daily_history_project_day ON daily_history (project, day)`,
+];
+
+/**
+ * Wraps Cloudflare Durable Object `state.storage.sql` (`SqlStorage`) in a D1-compatible
+ * `.prepare(sql).bind(...args).run()/.all()` interface so the exact same SQL queries work
+ * seamlessly on both Cloudflare D1 (`env.DB`) and SQLite Durable Objects (`env.TELEMETRY_DO`).
+ *
+ * @param {{ exec: (query: string, ...bindings: any[]) => { toArray: () => any[] } }} sqlStorage
+ */
+export function createSqlStorageAdapter(sqlStorage) {
+  return {
+    prepare(query) {
+      return {
+        boundArgs: [],
+        bind(...args) {
+          this.boundArgs = args;
+          return this;
+        },
+        _exec() {
+          const bound = this.boundArgs;
+          const positional = [];
+          const rewritten = query.replace(/\?(\d+)/g, (_, n) => {
+            positional.push(bound[Number(n) - 1]);
+            return "?";
+          });
+          const finalArgs = positional.length > 0 ? positional : bound;
+          return sqlStorage.exec(rewritten, ...finalArgs);
+        },
+        async run() {
+          this._exec();
+          return { success: true };
+        },
+        async all() {
+          const cursor = this._exec();
+          return { results: cursor.toArray() };
+        },
+      };
+    },
+  };
+}
+
+/**
+ * SQLite-backed Durable Object storing anonymous fleet telemetry when `env.DB` (D1) is not bound.
+ * Provisioned automatically with standard `Workers Scripts: Edit` permission on Workers Free & Paid plans.
+ */
+export class TelemetryStore {
+  constructor(state, _env) {
+    this.state = state;
+    this.sql = state.storage.sql;
+    this.db = createSqlStorageAdapter(this.sql);
+    for (const stmt of TELEMETRY_SCHEMA_STATEMENTS) {
+      this.sql.exec(stmt);
+    }
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/upsert") {
+      const record = await request.json();
+      await upsertDeviceAndSnapshot(this.db, record);
+      return jsonResponse({ ok: true });
+    }
+    if (request.method === "POST" && url.pathname === "/stats") {
+      const { project, ghReleases } = await request.json();
+      const stats = await buildProjectStats(this.db, project, ghReleases || []);
+      return jsonResponse(stats);
+    }
+    if (request.method === "POST" && url.pathname === "/cron") {
+      for (const project of VALID_PROJECTS) {
+        await refreshDailyHistoryForProject(this.db, project);
+      }
+      return jsonResponse({ ok: true });
+    }
+    return jsonResponse({ error: "Not found" }, 404);
+  }
+}
+
+function getTelemetryStub(env) {
+  if (!env?.TELEMETRY_DO) return null;
+  const id = env.TELEMETRY_DO.idFromName("global");
+  return env.TELEMETRY_DO.get(id);
 }
 
 export default {
@@ -455,14 +606,32 @@ export default {
         );
       }
 
-      if (env?.DB && params.canRecordTelemetry) {
-        const promise = upsertDeviceAndSnapshot(env.DB, params).catch((err) => {
-          console.error("D1 telemetry upsert failed:", err);
-        });
-        if (ctx && typeof ctx.waitUntil === "function") {
-          ctx.waitUntil(promise);
+      if (params.canRecordTelemetry) {
+        let promise = null;
+        if (env?.DB) {
+          promise = upsertDeviceAndSnapshot(env.DB, params).catch((err) => {
+            console.error("D1 telemetry upsert failed:", err);
+          });
         } else {
-          await promise;
+          const stub = getTelemetryStub(env);
+          if (stub) {
+            promise = stub
+              .fetch("https://telemetry.internal/upsert", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(params),
+              })
+              .catch((err) => {
+                console.error("DO SQLite telemetry upsert failed:", err);
+              });
+          }
+        }
+        if (promise) {
+          if (ctx && typeof ctx.waitUntil === "function") {
+            ctx.waitUntil(promise);
+          } else {
+            await promise;
+          }
         }
       }
 
@@ -488,8 +657,12 @@ export default {
         );
       }
 
-      if (!env?.DB) {
-        return jsonResponse({ error: "D1 database binding 'DB' unavailable" }, 503);
+      const stub = !env?.DB ? getTelemetryStub(env) : null;
+      if (!env?.DB && !stub) {
+        return jsonResponse(
+          { error: "Telemetry storage binding ('DB' or 'TELEMETRY_DO') unavailable" },
+          503
+        );
       }
 
       let ghReleases = [];
@@ -497,10 +670,20 @@ export default {
         const fetchFn = env?.__mockFetch || fetch;
         ghReleases = await fetchGitHubReleases(project, fetchFn);
       } catch (_) {
-        // Non-fatal: still serve D1 fleet statistics even if GitHub API is temporarily unreachable
+        // Non-fatal: still serve fleet statistics even if GitHub API is temporarily unreachable
       }
 
-      const stats = await buildProjectStats(env.DB, project, ghReleases);
+      if (env?.DB) {
+        const stats = await buildProjectStats(env.DB, project, ghReleases);
+        return jsonResponse(stats, 200, 900);
+      }
+
+      const doResp = await stub.fetch("https://telemetry.internal/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, ghReleases }),
+      });
+      const stats = await doResp.json();
       return jsonResponse(stats, 200, 900);
     }
 
@@ -510,6 +693,7 @@ export default {
         {
           service: "arcadematrix-ota-stats",
           status: "ok",
+          storage: env?.DB ? "d1" : env?.TELEMETRY_DO ? "durable-object-sqlite" : "none",
           endpoints: [
             "/v1/ota/releases?p=esp32|rpi&id=<uuid-v4>&v=<ver>&hw=<hw>&os=<os>&res=<res>",
             "/v1/stats?p=esp32|rpi",
@@ -528,9 +712,15 @@ export default {
    * Nightly cron handler ("5 0 * * *") to record daily_history snapshots for both projects.
    */
   async scheduled(_event, env, _ctx) {
-    if (!env?.DB) return;
-    for (const project of VALID_PROJECTS) {
-      await refreshDailyHistoryForProject(env.DB, project);
+    if (env?.DB) {
+      for (const project of VALID_PROJECTS) {
+        await refreshDailyHistoryForProject(env.DB, project);
+      }
+      return;
+    }
+    const stub = getTelemetryStub(env);
+    if (stub) {
+      await stub.fetch("https://telemetry.internal/cron", { method: "POST" });
     }
   },
 };

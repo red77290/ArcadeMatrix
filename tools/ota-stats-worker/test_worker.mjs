@@ -15,6 +15,8 @@ import worker, {
   isValidUuidV4,
   sanitizeCheckinParams,
   compareSemverDesc,
+  createSqlStorageAdapter,
+  TelemetryStore,
 } from "./src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,6 +245,9 @@ async function runTests() {
   assert.equal(isValidUuidV4("550e8400-e29b-11d4-a716-446655440000"), false, "UUID v1 must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-51d4-a716-446655440000"), false, "UUID v5 must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-41d4-0716-446655440000"), false, "Invalid RFC 4122 variant must be rejected");
+  assert.equal(isValidUuidV4("00000000-0000-4000-8000-000000000000"), false, "Zero-filled v4 fallback UUID must be rejected");
+  assert.equal(isValidUuidV4("00000000-0000-0000-0000-000000000000"), false, "Nil UUID must be rejected");
+  assert.equal(isValidUuidV4("a4074101-8139-44a4-920e-0ecddf62503c"), false, "Leaked default config.json UUID must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-41d4-a716-44665544000"), false, "35-char string must be rejected");
   assert.equal(isValidUuidV4("550e8400-e29b-41d4-a716-4466554400000"), false, "37-char string must be rejected");
   assert.equal(isValidUuidV4(""), false, "Empty string must be rejected");
@@ -270,6 +275,7 @@ async function runTests() {
       assets: [
         { name: "firmware-esp32s3_waveshare.bin", download_count: 140 },
         { name: "firmware-esp32s3_n16r8.bin", download_count: 85 },
+        { name: "ArcadeMatrix-sdcard.zip", download_count: 999 },
       ],
     },
     {
@@ -295,6 +301,23 @@ async function runTests() {
     },
   };
 
+  // Step 4.0: Empty D1 database must return 0 devices cleanly (never synthetic numbers)
+  const emptyStatsRes = await worker.fetch(
+    new Request(`${WORKER_URL}/v1/stats?p=esp32`),
+    env,
+    ctx
+  );
+  const emptyStats = await emptyStatsRes.json();
+  assert.equal(emptyStats.kpis.active_30d, 0);
+  assert.equal(emptyStats.kpis.total_known, 0);
+  assert.equal(emptyStats.kpis.latest_version, "v3.0.1");
+  assert.equal(emptyStats.kpis.latest_adoption_pct, 0);
+  assert.equal(emptyStats.kpis.github_downloads_total, 535, "ArcadeMatrix-sdcard.zip must be excluded");
+  assert.equal(emptyStats.versions.length, 0);
+  assert.equal(emptyStats.resolutions.length, 0);
+  assert.equal(emptyStats.github_hw_downloads[0].hw, "esp32s3_waveshare");
+  assert.equal(emptyStats.github_hw_downloads[0].downloads, 450);
+
   const uuid1 = "550e8400-e29b-41d4-a716-446655440001";
   const uuid2 = "550e8400-e29b-41d4-a716-446655440002";
 
@@ -313,7 +336,7 @@ async function runTests() {
   await worker.fetch(req2, env, ctx);
   await Promise.all(pendingPromises.splice(0));
 
-  // Verify initial state: 2 devices on v3.0.0
+  // Verify initial state: 2 devices on v3.0.0 (while latest GitHub release is v3.0.1 -> 0% adoption!)
   const statsResBefore = await worker.fetch(
     new Request(`${WORKER_URL}/v1/stats?p=esp32`),
     env,
@@ -322,6 +345,8 @@ async function runTests() {
   const statsBefore = await statsResBefore.json();
   assert.equal(statsBefore.kpis.active_30d, 2);
   assert.equal(statsBefore.kpis.total_known, 2);
+  assert.equal(statsBefore.kpis.latest_version, "v3.0.1");
+  assert.equal(statsBefore.kpis.latest_adoption_pct, 0, "0 devices on v3.0.1 must report 0% adoption");
   assert.equal(statsBefore.versions.length, 1);
   assert.equal(statsBefore.versions[0].version, "v3.0.0");
   assert.equal(statsBefore.versions[0].active_30d, 2);
@@ -333,12 +358,18 @@ async function runTests() {
   await worker.fetch(reqUpgrade, env, ctx);
   await Promise.all(pendingPromises.splice(0));
 
-  // Step 4c: Invalid UUID check-in must still receive GitHub Releases (200 OK) but NOT pollute D1
-  const reqInvalidUuid = new Request(
-    `${WORKER_URL}/v1/ota/releases?p=esp32&id=not-a-valid-uuid&v=v3.0.1&hw=esp32dev&os=freertos&res=64x32`
-  );
-  const resInvalid = await worker.fetch(reqInvalidUuid, env, ctx);
-  assert.equal(resInvalid.status, 200, "OTA proxy must still return releases even if UUID is invalid");
+  // Step 4c: Invalid / poisoned UUID check-ins must still receive GitHub Releases (200 OK) but NOT pollute D1
+  for (const badId of [
+    "not-a-valid-uuid",
+    "00000000-0000-4000-8000-000000000000",
+    "a4074101-8139-44a4-920e-0ecddf62503c",
+  ]) {
+    const reqInvalidUuid = new Request(
+      `${WORKER_URL}/v1/ota/releases?p=esp32&id=${badId}&v=v3.0.1&hw=esp32dev&os=freertos&res=64x32`
+    );
+    const resInvalid = await worker.fetch(reqInvalidUuid, env, ctx);
+    assert.equal(resInvalid.status, 200, "OTA proxy must still return releases even if UUID is invalid");
+  }
   await Promise.all(pendingPromises.splice(0));
 
   // Verify post-migration state:
@@ -387,7 +418,51 @@ async function runTests() {
   const serializedStats = JSON.stringify(statsAfter);
   assert.ok(!serializedStats.includes("203.0.113.42"), "Client IP must never appear in stats");
 
-  console.log("  ✅ D1 UPSERT version migration (v3.0.0 -> v3.0.1) & /v1/stats aggregation passed.");
+  // Verify createSqlStorageAdapter numbered parameter expansion (?2 appearing before ?1)
+  const capturedCalls = [];
+  const adapter = createSqlStorageAdapter({
+    exec(sql, ...args) {
+      capturedCalls.push({ sql, args });
+      return { toArray: () => [{ version: "v4.2.1", active_30d: 1, total: 1 }] };
+    },
+  });
+  const adapterRes = await adapter
+    .prepare("SELECT SUM(CASE WHEN last_seen >= unixepoch() - ?2 THEN 1 ELSE 0 END) FROM devices WHERE project = ?1")
+    .bind("esp32", 2592000)
+    .all();
+  assert.equal(capturedCalls.length, 1);
+  assert.equal(
+    capturedCalls[0].sql,
+    "SELECT SUM(CASE WHEN last_seen >= unixepoch() - ? THEN 1 ELSE 0 END) FROM devices WHERE project = ?"
+  );
+  assert.deepEqual(capturedCalls[0].args, [2592000, "esp32"]);
+  assert.equal(adapterRes.results[0].version, "v4.2.1");
+
+  // Verify TELEMETRY_DO fallback routing when env.DB is absent
+  const mockD1ForDo = new MockD1Database();
+  const doInstance = Object.create(TelemetryStore.prototype);
+  doInstance.db = mockD1ForDo;
+  const doEnv = {
+    TELEMETRY_DO: {
+      idFromName: () => "global-id",
+      get: () => ({
+        fetch: (url, init) => doInstance.fetch(new Request(url, init)),
+      }),
+    },
+    __mockFetch: env.__mockFetch,
+  };
+  await worker.fetch(
+    new Request(`${WORKER_URL}/v1/ota/releases?p=esp32&id=550e8400-e29b-41d4-a716-446655440001&v=v4.2.1&hw=esp32dev&os=freertos&res=64x32`),
+    doEnv,
+    null
+  );
+  const doStatsRes = await worker.fetch(new Request(`${WORKER_URL}/v1/stats?p=esp32`), doEnv, null);
+  assert.equal(doStatsRes.status, 200);
+  const doStats = await doStatsRes.json();
+  assert.equal(doStats.kpis.total_known, 1);
+  assert.equal(doStats.kpis.active_30d, 1);
+
+  console.log("  ✅ D1 + SQLite Durable Object UPSERT version migration & /v1/stats aggregation passed.");
   console.log("🎉 All OTA Stats Worker unit tests PASSED!");
 }
 

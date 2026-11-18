@@ -9656,16 +9656,45 @@ function initOta() {
 
   const OTA_WORKER_URL = 'https://arcadematrix-ota-stats.red77290.workers.dev/v1/ota/releases';
   const GITHUB_RELEASES_URL = 'https://api.github.com/repos/red77290/ArcadeMatrix/releases';
+  const VALID_UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const ZERO_UUID_V4_RE = /^0{8}-0{4}-40{3}-[89ab]0{3}-0{12}$/i;
+
+  function isUsableUuidV4(id) {
+    const s = String(id || '').trim().toLowerCase();
+    return s.length === 36 && VALID_UUID_V4_RE.test(s) && !ZERO_UUID_V4_RE.test(s) && s !== 'a4074101-8139-44a4-920e-0ecddf62503c';
+  }
+
+  function resolveInstallUuid(devId) {
+    if (isUsableUuidV4(devId)) {
+      const clean = String(devId).trim().toLowerCase();
+      try { localStorage.setItem('am_install_id', clean); } catch (_) {}
+      return clean;
+    }
+    try {
+      const cached = localStorage.getItem('am_install_id') || '';
+      if (isUsableUuidV4(cached)) return cached.trim().toLowerCase();
+      const generated = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID().toLowerCase()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = (Math.random() * 16) | 0;
+            return (c === 'x' ? r : ((r & 0x3) | 0x8)).toString(16);
+          });
+      localStorage.setItem('am_install_id', generated);
+      return generated;
+    } catch (_) {
+      return '';
+    }
+  }
 
   async function fetchOtaReleases(sysInfo) {
-    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32', board_env: '' }));
-    const params = new URLSearchParams({
-      p: 'esp32',
-      id: info.install_id || '',
-      v: info.version || '',
-      hw: info.board_env || info.arch || 'esp32dev',
-      res: info.res || '128x32',
-    });
+    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '4.2.1', arch: 'esp32', board_env: '' }));
+    const params = new URLSearchParams({ p: 'esp32' });
+    if (info.ota_auto_check !== false) {
+      params.set('id', resolveInstallUuid(info.install_id));
+      params.set('v', info.version || '');
+      params.set('hw', info.board_env || info.arch || 'esp32dev');
+      params.set('res', info.res || '128x32');
+    }
     try {
       const r = await fetch(`${OTA_WORKER_URL}?${params.toString()}`, { signal: AbortSignal.timeout(4500) });
       if (r.ok) return await r.json();
@@ -9862,7 +9891,7 @@ function initOta() {
           window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
         } else {
           window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
-          fetchOtaReleases(versionData).catch(() => {});
+          if (versionData.ota_auto_check !== false) fetchOtaReleases(versionData).catch(() => {});
         }
         loadVersion();
         if (onlineCard) onlineCard.style.display = 'none';
@@ -9907,6 +9936,7 @@ function initOta() {
         window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Update may be identical or rolled back)`, 'warning');
       } else {
         window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
+        if (versionData.ota_auto_check !== false) fetchOtaReleases(versionData).catch(() => {});
       }
       loadVersion();
     } catch (err) {

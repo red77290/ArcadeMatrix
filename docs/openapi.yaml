@@ -1446,9 +1446,22 @@ paths:
                   arch:
                     type: string
                     example: "esp32s3"
+                  board_env:
+                    type: string
+                    example: "esp32s3_waveshare"
                   partition:
                     type: string
                     example: "app0"
+                  install_id:
+                    type: string
+                    description: Anonymous RFC 4122 UUID v4 persisted in NVS (or empty if unavailable; WebClient maintains fallback in localStorage).
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  res:
+                    type: string
+                    example: "128x32"
+                  ota_auto_check:
+                    type: boolean
+                    example: true
 
   /api/themes:
     get:

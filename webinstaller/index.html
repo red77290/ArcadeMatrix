@@ -808,17 +808,17 @@
         <div class="kpi-card">
           <div class="kpi-label" data-i18n="kpi_active">Active Matrices (30d)</div>
           <div class="kpi-value" id="kpi-active-val">—</div>
-          <div class="kpi-sub" id="kpi-total-sub">Total known: —</div>
+          <div class="kpi-sub" id="kpi-total-sub">Total UUIDs: —</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label" data-i18n="kpi_adoption">Latest Release Adoption</div>
           <div class="kpi-value" id="kpi-adoption-val">—</div>
-          <div class="kpi-sub" id="kpi-latest-ver">Latest: v4.2.0</div>
+          <div class="kpi-sub" id="kpi-latest-ver">Latest: v4.2.1</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label" data-i18n="kpi_downloads">Total GitHub Downloads</div>
           <div class="kpi-value" id="kpi-downloads-val">—</div>
-          <div class="kpi-sub" data-i18n="kpi_downloads_sub">All ESP32 releases combined</div>
+          <div class="kpi-sub" data-i18n="kpi_downloads_sub">Firmware binaries &amp; bundles</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label" data-i18n="kpi_top_res">Most Popular HUB75 Size</div>
@@ -832,7 +832,7 @@
         <div class="stats-panel-box">
           <h3 data-i18n="mig_title">Version Migration Tracker (Migrated vs Legacy)</h3>
           <div class="stats-panel-sub" data-i18n="mig_sub">
-            UUID v4 UPSERT ensures upgrading from v4.1.3 → v4.2.0 migrates the existing device count in place.
+            Client-side UUID v4 UPSERT (v4.2.0+) ensures upgrading to v4.2.1 migrates the existing device count in place without duplicates.
           </div>
           <div id="version-stacked-bar" class="stacked-bar"></div>
           <div id="version-bars-list"></div>
@@ -857,9 +857,9 @@
       </div>
 
       <div class="privacy-banner">
-        🔒 <strong data-i18n="privacy_title">Zero-IP Privacy Guarantee:</strong>
+        🔒 <strong data-i18n="privacy_title">Zero-IP &amp; 100% Client-Side Privacy Guarantee:</strong>
         <span data-i18n="privacy_body">
-          Statistics are updated exclusively when an ArcadeMatrix checks for OTA updates via the Cloudflare Worker proxy. Only an anonymous random RFC 4122 UUID v4, firmware version, board profile, and HUB75 resolution are sent. Client IP addresses are never read or stored.
+          OTA checks and anonymous check-ins run strictly inside your browser (WebUI) since v4.2.0—never on the ESP32 itself. Only a random RFC 4122 UUID v4, firmware version, board profile, and HUB75 resolution are sent. Client IP addresses are never read or stored.
         </span>
       </div>
     </section>
@@ -894,16 +894,16 @@
         kpi_active: "Active Matrices (30d)",
         kpi_adoption: "Latest Release Adoption",
         kpi_downloads: "Total GitHub Downloads",
-        kpi_downloads_sub: "All ESP32 releases combined",
+        kpi_downloads_sub: "Firmware binaries & bundles",
         kpi_top_res: "Most Popular HUB75 Size",
         mig_title: "Version Migration Tracker (Migrated vs Legacy)",
-        mig_sub: "UUID v4 UPSERT ensures upgrading from v4.1.3 → v4.2.0 migrates the existing device count in place.",
+        mig_sub: "Client-side UUID v4 UPSERT (v4.2.0+) ensures upgrading to v4.2.1 migrates the existing device count in place without duplicates.",
         curve_title: "30-Day Version Migration Curve",
         hw_title: "ESP32 Boards & HUB75 Resolutions",
         hw_sub: "Filter HUB75 panel dimensions by ESP32 board profile:",
         res_filter_label: "Filter Resolutions by Board:",
-        privacy_title: "Zero-IP Privacy Guarantee:",
-        privacy_body: "Statistics are updated exclusively when an ArcadeMatrix checks for OTA updates via the Cloudflare Worker proxy. Only an anonymous random RFC 4122 UUID v4, firmware version, board profile, and HUB75 resolution are sent. Client IP addresses are never read or stored.",
+        privacy_title: "Zero-IP & 100% Client-Side Privacy Guarantee:",
+        privacy_body: "OTA checks and anonymous check-ins run strictly inside your browser (WebUI) since v4.2.0—never on the ESP32 itself. Only a random RFC 4122 UUID v4, firmware version, board profile, and HUB75 resolution are sent. Client IP addresses are never read or stored.",
         footer_ci: "Binaries are rebuilt automatically from the latest",
         footer_branch: "branch by CI.",
         before_label: "Before",
@@ -911,7 +911,15 @@
         dl_release: "View GitHub Release",
         all_boards: "All Boards",
         badge_live: "🟢 Live Cloudflare D1 Telemetry",
-        badge_preview: "🟡 Preview Dataset (Awaiting Worker Deployment)"
+        badge_gh_only: "🟠 Live GitHub Releases (Cloudflare D1 Worker Not Deployed Yet)",
+        worker_pending_sub: "Awaiting Cloudflare Worker deployment",
+        no_checkins_sub: "0 WebUI check-ins recorded yet",
+        empty_versions_live: "0 active matrices checked in via WebUI yet (anonymous client-side telemetry introduced in v4.2.0).",
+        empty_versions_offline: "Cloudflare D1 telemetry Worker is not deployed yet. Showing real GitHub Release firmware downloads below:",
+        gh_rel_heading: "GitHub Releases Firmware Downloads (Live API)",
+        gh_hw_heading: "GitHub Firmware Downloads by ESP32 Board (Live API)",
+        empty_curve: "30-day migration curve will populate once WebUI check-ins are recorded in Cloudflare D1.",
+        empty_res: "HUB75 panel resolution breakdown populates exclusively from real WebUI OTA check-ins (no synthetic data)."
       },
       fr: {
         switch_rpi: "Portail Raspberry Pi",
@@ -932,16 +940,16 @@
         kpi_active: "Matrices Actives (30j)",
         kpi_adoption: "Adoption Dernière Version",
         kpi_downloads: "Téléchargements GitHub",
-        kpi_downloads_sub: "Toutes versions ESP32 cumulées",
+        kpi_downloads_sub: "Firmwares & archives cartes",
         kpi_top_res: "Résolution HUB75 Majeure",
         mig_title: "Suivi des Migrations de Versions (Migrées vs Anciennes)",
-        mig_sub: "L'UPSERT par UUID v4 garantit qu'une mise à jour v4.1.3 → v4.2.0 transfère la matrice sans doublon.",
+        mig_sub: "L'UPSERT UUID v4 côté navigateur (v4.2.0+) garantit qu'une MAJ vers v4.2.1 transfère la matrice sans doublon.",
         curve_title: "Courbe d'Adoption sur 30 Jours",
         hw_title: "Cartes ESP32 & Résolutions HUB75",
         hw_sub: "Filtrez les tailles de dalles HUB75 selon le profil de carte ESP32 :",
         res_filter_label: "Filtrer les résolutions par carte :",
-        privacy_title: "Garantie Zéro-IP :",
-        privacy_body: "Les statistiques ne sont mises à jour que lorsqu'une matrice vérifie les mises à jour OTA via le Worker Cloudflare. Seuls un UUID v4 aléatoire, la version, le type de carte et la résolution HUB75 sont transmis. Aucune adresse IP n'est lue ni stockée.",
+        privacy_title: "Garantie Zéro-IP & 100 % Côté Navigateur :",
+        privacy_body: "Les vérifications OTA et métriques s'exécutent uniquement côté client WebUI (navigateur) depuis la v4.2.0 — jamais sur l'ESP32. Seuls un UUID v4 aléatoire, la version, la carte et la résolution HUB75 sont transmis, sans aucune IP.",
         footer_ci: "Les binaires sont compilés automatiquement depuis la branche",
         footer_branch: "par la CI.",
         before_label: "Avant",
@@ -949,7 +957,15 @@
         dl_release: "Voir la Release GitHub",
         all_boards: "Toutes les cartes",
         badge_live: "🟢 Télémétrie Cloudflare D1 en direct",
-        badge_preview: "🟡 Données d'aperçu (En attente du déploiement Worker)"
+        badge_gh_only: "🟠 GitHub Releases en direct (Worker Cloudflare D1 non déployé)",
+        worker_pending_sub: "En attente du déploiement du Worker Cloudflare",
+        no_checkins_sub: "Aucun check-in WebUI enregistré",
+        empty_versions_live: "0 matrice active enregistrée via la WebUI pour l'instant (télémétrie client-side introduite en v4.2.0).",
+        empty_versions_offline: "Le Worker Cloudflare D1 n'est pas encore déployé. Affichage des vrais téléchargements GitHub Releases ci-dessous :",
+        gh_rel_heading: "Téléchargements Firmwares par Version (API GitHub Live)",
+        gh_hw_heading: "Téléchargements Firmwares par Carte ESP32 (API GitHub Live)",
+        empty_curve: "La courbe sur 30 jours s'affichera dès les premiers check-ins WebUI enregistrés sur Cloudflare D1.",
+        empty_res: "Les résolutions HUB75 proviennent exclusivement des vrais check-ins WebUI (zéro donnée fictive)."
       },
       es: {
         switch_rpi: "Portal Raspberry Pi",
@@ -970,16 +986,16 @@
         kpi_active: "Matrices Activas (30d)",
         kpi_adoption: "Adopción Última Versión",
         kpi_downloads: "Descargas en GitHub",
-        kpi_downloads_sub: "Todas las versiones ESP32 combinadas",
+        kpi_downloads_sub: "Firmwares y paquetes por placa",
         kpi_top_res: "Resolución HUB75 Popular",
         mig_title: "Seguimiento de Migración de Versiones",
-        mig_sub: "El UPSERT con UUID v4 asegura que actualizar de v4.1.3 → v4.2.0 migre el conteo sin duplicados.",
+        mig_sub: "El UPSERT con UUID v4 en el navegador (v4.2.0+) asegura que actualizar a v4.2.1 migre el conteo sin duplicados.",
         curve_title: "Curva de Adopción de 30 Días",
         hw_title: "Placas ESP32 y Resoluciones HUB75",
         hw_sub: "Filtra las dimensiones del panel HUB75 por perfil de placa ESP32:",
         res_filter_label: "Filtrar resoluciones por placa:",
-        privacy_title: "Garantía de Privacidad Cero-IP:",
-        privacy_body: "Las estadísticas se actualizan únicamente cuando una matriz busca actualizaciones OTA mediante el Worker de Cloudflare. Solo se envía un UUID v4 aleatorio, versión, placa y resolución HUB75. Nunca se leen ni almacenan direcciones IP.",
+        privacy_title: "Garantía Cero-IP y 100 % en el Navegador:",
+        privacy_body: "Las comprobaciones OTA y métricas se ejecutan exclusivamente en el navegador (WebUI) desde v4.2.0—nunca en el ESP32. Solo se envía un UUID v4 aleatorio, versión, placa y resolución HUB75, sin direcciones IP.",
         footer_ci: "Los binarios se reconstruyen automáticamente desde la rama",
         footer_branch: "mediante CI.",
         before_label: "Antes",
@@ -987,14 +1003,68 @@
         dl_release: "Ver Release en GitHub",
         all_boards: "Todas las placas",
         badge_live: "🟢 Telemetría Cloudflare D1 en vivo",
-        badge_preview: "🟡 Datos de vista previa (Esperando despliegue del Worker)"
+        badge_gh_only: "🟠 GitHub Releases en vivo (Worker Cloudflare D1 no desplegado)",
+        worker_pending_sub: "Esperando despliegue del Worker Cloudflare",
+        no_checkins_sub: "0 registros WebUI por ahora",
+        empty_versions_live: "0 matrices activas registradas desde la WebUI todavía (telemetría en cliente introducida en v4.2.0).",
+        empty_versions_offline: "El Worker Cloudflare D1 aún no está desplegado. Mostrando descargas reales de GitHub Releases:",
+        gh_rel_heading: "Descargas de Firmware por Versión (API GitHub en Vivo)",
+        gh_hw_heading: "Descargas de Firmware por Placa ESP32 (API GitHub en Vivo)",
+        empty_curve: "La curva de 30 días se mostrará en cuanto existan registros WebUI en Cloudflare D1.",
+        empty_res: "Las resoluciones HUB75 se alimentan únicamente de registros reales desde la WebUI (cero datos ficticios)."
       }
     };
 
     const FALLBACK_POSTS = {
       project: "esp32",
-      latest_version: "v4.2.0",
+      latest_version: "v4.2.1",
       posts: [
+        {
+          version: "v4.2.1",
+          date: "2026-11-18",
+          tags: ["FIX", "PERF"],
+          media: "changelog/media/agenda-sync-preview.svg",
+          release_url: "https://github.com/red77290/ArcadeMatrix/releases/tag/v4.2.1",
+          title: {
+            en: "Live GitHub Release Telemetry, Strict Client-Side UUID v4 & Zero-Config Worker Deploy",
+            fr: "Télémétrie Live GitHub Releases, UUID v4 Client-Side Strict & Déploiement Worker Clé en Main",
+            es: "Telemetría en Vivo de GitHub Releases, UUID v4 en Cliente y Despliegue Automático del Worker"
+          },
+          summary: {
+            en: "Removes synthetic preview metrics from the Fleet Portal, hardens 100% browser client-side OTA check-ins & UUID v4 persistence, and adds automated 1-click Cloudflare D1 Worker provisioning.",
+            fr: "Supprime toutes les données fictives d'aperçu du portail, renforce la vérification OTA et la persistance UUID v4 100 % côté navigateur (WebUI), et automatise le déploiement Cloudflare D1.",
+            es: "Elimina los datos de demostración del portal, refuerza las comprobaciones OTA y persistencia UUID v4 100 % en el navegador (WebUI) y automatiza el despliegue en Cloudflare D1."
+          },
+          before_after: {
+            before: {
+              en: "The Fleet & Migrations tab fell back to a synthetic preview dataset before Cloudflare D1 deployment or when 0 devices were registered.",
+              fr: "L'onglet Parc & Migrations affichait un jeu de données d'aperçu fictif tant que la base Cloudflare D1 était vide ou non déployée.",
+              es: "La pestaña Flota y Migraciones mostraba datos sintéticos antes del despliegue de Cloudflare D1 o con 0 dispositivos."
+            },
+            after: {
+              en: "100% authentic live figures (0 synthetic numbers), real per-version & per-board GitHub Release firmware downloads, and strict client-side UUID v4 persistence.",
+              fr: "Chiffres 100 % réels (zéro donnée fictive), téléchargements GitHub Releases réels par version et par carte, et persistance UUID v4 stricte côté WebUI.",
+              es: "Cifras 100 % reales (cero datos ficticios), descargas reales de GitHub Releases por versión y placa, y persistencia UUID v4 en WebUI."
+            }
+          },
+          highlights: {
+            en: [
+              "FIX — Removed synthetic preview dataset from the portal and fixed zero-device D1 state handling (`total_known === 0`).",
+              "FIX — Hardened 100% browser WebClient OTA check-ins (`localStorage` + NVS UUID v4, nil-UUID rejection) with zero network load on ESP32.",
+              "NEW — Added turnkey `deploy_worker.mjs` & GitHub Actions workflow for automatic Cloudflare D1 + Worker provisioning."
+            ],
+            fr: [
+              "FIX — Suppression complète du dataset fictif d'aperçu sur le portail et prise en charge de l'état réel à 0 appareil sur Cloudflare D1.",
+              "FIX — Vérifications de MAJ et métriques 100 % côté navigateur WebUI (`localStorage` + UUID v4 NVS) sans charge réseau sur l'ESP32.",
+              "NEW — Ajout de `deploy_worker.mjs` et du workflow GitHub Actions pour provisionner automatiquement Cloudflare D1 + Worker."
+            ],
+            es: [
+              "FIX — Eliminación total de los datos sintéticos del portal y soporte exacto para 0 dispositivos en Cloudflare D1.",
+              "FIX — Comprobaciones OTA y métricas 100 % en el navegador WebUI (`localStorage` + UUID v4 NVS) sin carga de red en el ESP32.",
+              "NEW — Script `deploy_worker.mjs` y flujo de GitHub Actions para aprovisionar automáticamente Cloudflare D1 y el Worker."
+            ]
+          }
+        },
         {
           version: "v4.2.0",
           date: "2026-11-17",
@@ -1087,46 +1157,26 @@
       ]
     };
 
-    const PREVIEW_STATS = {
-      project: "esp32",
-      isPreview: true,
-      kpis: {
-        active_30d: 184,
-        total_known: 219,
-        latest_version: "v4.2.0",
-        latest_adoption_pct: 68.5,
-        github_downloads_total: 1420
-      },
-      versions: [
-        { version: "v4.2.0", active_30d: 126, total: 126, pct: 68.5 },
-        { version: "v4.1.3", active_30d: 44, total: 68, pct: 23.9 },
-        { version: "v4.0.6", active_30d: 14, total: 25, pct: 7.6 }
-      ],
-      hardware: [
-        { hw: "esp32s3_waveshare", count: 88, pct: 47.8 },
-        { hw: "esp32s3_n16r8", count: 67, pct: 36.4 },
-        { hw: "esp32dev", count: 29, pct: 15.8 }
-      ],
-      resolutions: [
-        { res: "128x64", count: 79, pct: 42.9 },
-        { res: "128x32", count: 48, pct: 26.1 },
-        { res: "64x32", count: 31, pct: 16.8 },
-        { res: "256x64", count: 18, pct: 9.8 },
-        { res: "64x128", count: 8, pct: 4.4 }
-      ],
-      hw_by_res: {
-        esp32s3_waveshare: { "128x64": 46, "128x32": 18, "256x64": 12, "64x32": 7, "64x128": 5 },
-        esp32s3_n16r8: { "128x64": 33, "128x32": 19, "256x64": 6, "64x32": 6, "64x128": 3 },
-        esp32dev: { "64x32": 18, "128x32": 11 }
-      },
-      daily_history: [
-        { day: "D-20", versions: { "v4.1.3": 148, "v4.0.6": 26 } },
-        { day: "D-15", versions: { "v4.1.3": 156, "v4.0.6": 21 } },
-        { day: "D-10", versions: { "v4.2.0": 42, "v4.1.3": 120, "v4.0.6": 18 } },
-        { day: "D-5",  versions: { "v4.2.0": 94, "v4.1.3": 72, "v4.0.6": 15 } },
-        { day: "Now",  versions: { "v4.2.0": 126, "v4.1.3": 44, "v4.0.6": 14 } }
-      ]
-    };
+    function createEmptyStats() {
+      return {
+        project: "esp32",
+        isWorkerLive: false,
+        kpis: {
+          active_30d: 0,
+          total_known: 0,
+          latest_version: "v4.2.1",
+          latest_adoption_pct: 0,
+          github_downloads_total: 0
+        },
+        versions: [],
+        hardware: [],
+        resolutions: [],
+        hw_by_res: {},
+        daily_history: [],
+        github_releases: [],
+        github_hw_downloads: []
+      };
+    }
 
     const HW_LABELS = {
       esp32s3_waveshare: "Waveshare ESP32-S3 (N32R16V)",
@@ -1138,7 +1188,7 @@
     if (!I18N[currentLang]) currentLang = "en";
 
     let loadedPostsData = FALLBACK_POSTS;
-    let currentStatsData = PREVIEW_STATS;
+    let currentStatsData = createEmptyStats();
     let selectedHwFilter = "all";
 
     function applyLanguage(lang) {
@@ -1225,53 +1275,94 @@
       }).join("");
     }
 
+    function renderEmptyNote(msg) {
+      return `<div style="padding:0.85rem 1rem; border-radius:8px; background:rgba(255,255,255,0.03); border:1px dashed rgba(255,255,255,0.12); color:#9ba1a6; font-size:0.85rem;">${msg}</div>`;
+    }
+
     function renderStatsDashboard() {
       const dict = I18N[currentLang];
-      const data = currentStatsData || PREVIEW_STATS;
+      const data = currentStatsData || createEmptyStats();
+      const isLive = !!data.isWorkerLive;
       const badge = document.getElementById("stats-source-badge");
       if (badge) {
-        badge.className = `source-badge ${data.isPreview ? "source-preview" : "source-live"}`;
-        badge.textContent = data.isPreview ? dict.badge_preview : dict.badge_live;
+        badge.className = `source-badge ${isLive ? "source-live" : "source-preview"}`;
+        badge.textContent = isLive ? dict.badge_live : dict.badge_gh_only;
       }
 
-      document.getElementById("kpi-active-val").textContent = data.kpis.active_30d;
-      document.getElementById("kpi-total-sub").textContent = `Total UUIDs: ${data.kpis.total_known}`;
-      document.getElementById("kpi-adoption-val").textContent = `${data.kpis.latest_adoption_pct}%`;
-      document.getElementById("kpi-latest-ver").textContent = `Target: ${data.kpis.latest_version}`;
+      document.getElementById("kpi-active-val").textContent = isLive ? String(data.kpis.active_30d) : "—";
+      document.getElementById("kpi-total-sub").textContent = isLive
+        ? `Total UUIDs: ${data.kpis.total_known}`
+        : dict.worker_pending_sub;
+      document.getElementById("kpi-adoption-val").textContent = isLive ? `${data.kpis.latest_adoption_pct}%` : "—";
+      document.getElementById("kpi-latest-ver").textContent = `Latest: ${data.kpis.latest_version || "v4.2.1"}`;
       document.getElementById("kpi-downloads-val").textContent = Number(data.kpis.github_downloads_total || 0).toLocaleString();
 
-      const topRes = (data.resolutions && data.resolutions[0]) || { res: "128x64", pct: 0 };
-      document.getElementById("kpi-top-res-val").textContent = topRes.res;
-      document.getElementById("kpi-top-res-sub").textContent = `${topRes.pct}% of active HUB75 panels`;
+      const topRes = data.resolutions && data.resolutions[0];
+      if (topRes) {
+        document.getElementById("kpi-top-res-val").textContent = topRes.res;
+        document.getElementById("kpi-top-res-sub").textContent = `${topRes.pct}% of active HUB75 panels`;
+      } else {
+        document.getElementById("kpi-top-res-val").textContent = "—";
+        document.getElementById("kpi-top-res-sub").textContent = isLive ? dict.no_checkins_sub : dict.worker_pending_sub;
+      }
 
-      // Version stacked bar & breakdown
       const colors = ["#00f0ff", "#00e676", "#ff0055", "#ffcc00"];
       const stackedBar = document.getElementById("version-stacked-bar");
-      stackedBar.innerHTML = (data.versions || []).map((v, idx) => {
-        const c = colors[idx % colors.length];
-        return `<div class="stacked-segment" style="width:${Math.max(v.pct, 2)}%; background:${c}" title="${v.version}: ${v.active_30d} (${v.pct}%)"></div>`;
-      }).join("");
-
       const verList = document.getElementById("version-bars-list");
-      verList.innerHTML = (data.versions || []).map((v, idx) => {
-        const c = colors[idx % colors.length];
-        const statusTag = idx === 0 ? "★ LATEST" : "LEGACY";
-        return `
-          <div class="bar-row">
-            <div class="bar-row-header">
-              <span><strong style="color:${c}; font-family:'JetBrains Mono',monospace;">${v.version}</strong> <small style="color:#9ba1a6">(${statusTag})</small></span>
-              <span><strong>${v.active_30d}</strong> matrices (${v.pct}%)</span>
+      const activeVers = data.versions || [];
+
+      if (activeVers.length > 0) {
+        stackedBar.style.display = "flex";
+        stackedBar.innerHTML = activeVers.map((v, idx) => {
+          const c = colors[idx % colors.length];
+          return `<div class="stacked-segment" style="width:${Math.max(v.pct, 2)}%; background:${c}" title="${v.version}: ${v.active_30d} (${v.pct}%)"></div>`;
+        }).join("");
+
+        verList.innerHTML = activeVers.map((v, idx) => {
+          const c = colors[idx % colors.length];
+          const statusTag = v.version === data.kpis.latest_version ? "★ LATEST" : "LEGACY";
+          return `
+            <div class="bar-row">
+              <div class="bar-row-header">
+                <span><strong style="color:${c}; font-family:'JetBrains Mono',monospace;">${v.version}</strong> <small style="color:#9ba1a6">(${statusTag})</small></span>
+                <span><strong>${v.active_30d}</strong> matrices (${v.pct}%)</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${v.pct}%; background:${c}"></div>
+              </div>
             </div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width:${v.pct}%; background:${c}"></div>
-            </div>
-          </div>
-        `;
-      }).join("");
+          `;
+        }).join("");
+      } else {
+        stackedBar.style.display = "none";
+        stackedBar.innerHTML = "";
+        const ghRels = (data.github_releases || []).filter((r) => r.downloads > 0).slice(0, 6);
+        const maxRelDl = ghRels.reduce((m, r) => Math.max(m, r.downloads), 0) || 1;
+        const ghRelHtml = ghRels.length > 0
+          ? `<div class="kpi-label" style="margin-top:0.9rem; margin-bottom:0.45rem;">${dict.gh_rel_heading}</div>` +
+            ghRels.map((r, idx) => {
+              const c = colors[idx % colors.length];
+              const wPct = Math.round((r.downloads / maxRelDl) * 100);
+              return `
+                <div class="bar-row">
+                  <div class="bar-row-header">
+                    <span style="font-family:'JetBrains Mono',monospace; color:${c};"><strong>${r.tag}</strong></span>
+                    <span><strong>${r.downloads}</strong> downloads</span>
+                  </div>
+                  <div class="bar-track">
+                    <div class="bar-fill" style="width:${wPct}%; background:${c}"></div>
+                  </div>
+                </div>
+              `;
+            }).join("")
+          : "";
+        verList.innerHTML = renderEmptyNote(isLive ? dict.empty_versions_live : dict.empty_versions_offline) + ghRelHtml;
+      }
 
       // 30-day SVG curve
       const history = data.daily_history || [];
-      const latestVer = data.kpis.latest_version || "v4.2.0";
+      const latestVer = data.kpis.latest_version || "v4.2.1";
+      const curveEl = document.getElementById("migration-curve-svg");
       if (history.length > 0) {
         const w = 460, h = 110, pad = 22;
         const points = history.map((pt, i) => {
@@ -1283,39 +1374,68 @@
           return `${x.toFixed(1)},${y.toFixed(1)}`;
         }).join(" ");
 
-        document.getElementById("migration-curve-svg").innerHTML = `
+        curveEl.innerHTML = `
           <svg viewBox="0 0 ${w} ${h}" width="100%" height="110" style="background:rgba(0,0,0,0.25); border-radius:10px; border:1px solid rgba(255,255,255,0.06);">
             <polyline fill="none" stroke="#00f0ff" stroke-width="3" points="${points}" />
             <text x="12" y="18" fill="#00f0ff" font-family="monospace" font-size="10">${latestVer} share over time</text>
           </svg>
         `;
+      } else {
+        curveEl.innerHTML = renderEmptyNote(dict.empty_curve);
       }
 
-      // Hardware breakdown bars
+      // Hardware breakdown bars (live D1 fleet if >0, otherwise real GitHub Releases downloads per board)
       const hwList = document.getElementById("hw-bars-list");
-      hwList.innerHTML = (data.hardware || []).map((item) => {
-        const label = HW_LABELS[item.hw] || item.hw;
-        return `
-          <div class="bar-row">
-            <div class="bar-row-header">
-              <span>${label}</span>
-              <span><strong>${item.count}</strong> (${item.pct}%)</span>
+      const activeHw = data.hardware || [];
+      if (activeHw.length > 0) {
+        hwList.innerHTML = activeHw.map((item) => {
+          const label = HW_LABELS[item.hw] || item.hw;
+          return `
+            <div class="bar-row">
+              <div class="bar-row-header">
+                <span>${label}</span>
+                <span><strong>${item.count}</strong> (${item.pct}%)</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${item.pct}%; background:linear-gradient(90deg, #00f0ff, #00e676);"></div>
+              </div>
             </div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width:${item.pct}%; background:linear-gradient(90deg, #00f0ff, #00e676);"></div>
-            </div>
-          </div>
-        `;
-      }).join("");
+          `;
+        }).join("");
+      } else {
+        const ghHw = data.github_hw_downloads || [];
+        if (ghHw.length > 0) {
+          hwList.innerHTML = `<div class="kpi-label" style="margin-bottom:0.45rem;">${dict.gh_hw_heading}</div>` +
+            ghHw.map((item) => {
+              const label = HW_LABELS[item.hw] || item.hw;
+              return `
+                <div class="bar-row">
+                  <div class="bar-row-header">
+                    <span>${label}</span>
+                    <span><strong>${item.downloads}</strong> downloads (${item.pct}%)</span>
+                  </div>
+                  <div class="bar-track">
+                    <div class="bar-fill" style="width:${item.pct}%; background:linear-gradient(90deg, #00f0ff, #00e676);"></div>
+                  </div>
+                </div>
+              `;
+            }).join("");
+        } else {
+          hwList.innerHTML = renderEmptyNote(isLive ? dict.no_checkins_sub : dict.worker_pending_sub);
+        }
+      }
 
       // Filter pills for Resolutions by Board
       const pillsContainer = document.getElementById("hw-filter-pills");
-      const hwKeys = ["all", ...(data.hardware || []).map((h) => h.hw)];
-      pillsContainer.innerHTML = hwKeys.map((key) => {
-        const label = key === "all" ? dict.all_boards : (HW_LABELS[key] || key);
-        const activeClass = selectedHwFilter === key ? "active" : "";
-        return `<button class="filter-pill ${activeClass}" data-hw="${key}">${label}</button>`;
-      }).join("");
+      const hwKeys = ["all", ...activeHw.map((h) => h.hw)];
+      if (!hwKeys.includes(selectedHwFilter)) selectedHwFilter = "all";
+      pillsContainer.innerHTML = activeHw.length > 0
+        ? hwKeys.map((key) => {
+            const label = key === "all" ? dict.all_boards : (HW_LABELS[key] || key);
+            const activeClass = selectedHwFilter === key ? "active" : "";
+            return `<button class="filter-pill ${activeClass}" data-hw="${key}">${label}</button>`;
+          }).join("")
+        : "";
 
       pillsContainer.querySelectorAll(".filter-pill").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1341,17 +1461,19 @@
       }
 
       const resList = document.getElementById("res-bars-list");
-      resList.innerHTML = resEntries.map((r) => `
-        <div class="bar-row">
-          <div class="bar-row-header">
-            <span style="font-family:'JetBrains Mono',monospace;">${r.res}</span>
-            <span><strong>${r.count}</strong> (${r.pct}%)</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill" style="width:${r.pct}%; background:#ff0055;"></div>
-          </div>
-        </div>
-      `).join("");
+      resList.innerHTML = resEntries.length > 0
+        ? resEntries.map((r) => `
+            <div class="bar-row">
+              <div class="bar-row-header">
+                <span style="font-family:'JetBrains Mono',monospace;">${r.res}</span>
+                <span><strong>${r.count}</strong> (${r.pct}%)</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${r.pct}%; background:#ff0055;"></div>
+              </div>
+            </div>
+          `).join("")
+        : renderEmptyNote(dict.empty_res);
     }
 
     async function loadChangelogJson() {
@@ -1366,39 +1488,73 @@
       }
     }
 
-    async function loadLiveStats() {
-      // 1. Try live Cloudflare Worker D1 stats
-      try {
-        const res = await fetch(`${OTA_STATS_WORKER_URL}/v1/stats?p=esp32`);
-        if (res.ok) {
-          const live = await res.json();
-          if (live && live.kpis && live.kpis.total_known > 0) {
-            currentStatsData = { ...live, isPreview: false };
-            renderStatsDashboard();
-            return;
-          }
+    function enrichWithGitHubReleases(target, releases) {
+      if (!Array.isArray(releases) || releases.length === 0) return;
+      let totalDl = 0;
+      const hwMap = new Map();
+      const ghReleases = [];
+
+      for (const rel of releases) {
+        let relDl = 0;
+        for (const asset of rel.assets || []) {
+          const nameLower = String(asset.name || "").toLowerCase();
+          if (nameLower.includes("sdcard")) continue;
+          const dl = Number(asset.download_count || 0);
+          relDl += dl;
+          let hwKey = null;
+          if (nameLower.includes("waveshare")) hwKey = "esp32s3_waveshare";
+          else if (nameLower.includes("n16r8")) hwKey = "esp32s3_n16r8";
+          else if (nameLower.includes("esp32dev")) hwKey = "esp32dev";
+          if (hwKey) hwMap.set(hwKey, (hwMap.get(hwKey) || 0) + dl);
         }
-      } catch (_) {
-        // Worker not deployed yet; enrich preview with live GitHub download count if reachable
+        totalDl += relDl;
+        ghReleases.push({
+          tag: rel.tag_name || rel.name || "unknown",
+          published_at: rel.published_at || null,
+          downloads: relDl
+        });
       }
 
-      // 2. Fetch live GitHub Release downloads count directly from GitHub API
+      const hwSum = Array.from(hwMap.values()).reduce((a, b) => a + b, 0);
+      target.kpis.github_downloads_total = totalDl;
+      if (ghReleases[0]?.tag && (!target.isWorkerLive || !target.kpis.latest_version)) {
+        target.kpis.latest_version = ghReleases[0].tag;
+      }
+      target.github_releases = ghReleases;
+      target.github_hw_downloads = Array.from(hwMap.entries())
+        .map(([hw, downloads]) => ({
+          hw,
+          downloads,
+          pct: hwSum > 0 ? Math.round((downloads / hwSum) * 1000) / 10 : 0
+        }))
+        .sort((a, b) => b.downloads - a.downloads);
+    }
+
+    async function loadLiveStats() {
+      // 1. Query live Cloudflare Worker D1 stats (accepts 0 devices cleanly—never synthetic fallback)
+      try {
+        const res = await fetch(`${OTA_STATS_WORKER_URL}/v1/stats?p=esp32`, {
+          signal: AbortSignal.timeout(4500)
+        });
+        if (res.ok) {
+          const live = await res.json();
+          if (live && live.kpis && typeof live.kpis.total_known === "number") {
+            currentStatsData = { ...createEmptyStats(), ...live, isWorkerLive: true };
+            renderStatsDashboard();
+            if (Array.isArray(live.github_releases) && live.github_releases.length > 0) {
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 2. Fetch live GitHub Release firmware downloads directly from GitHub API
       try {
         const ghRes = await fetch(GITHUB_RELEASES_API);
         if (ghRes.ok) {
           const releases = await ghRes.json();
-          if (Array.isArray(releases) && releases.length > 0) {
-            let totalDl = 0;
-            for (const rel of releases) {
-              for (const asset of rel.assets || []) {
-                totalDl += Number(asset.download_count || 0);
-              }
-            }
-            if (totalDl > 0) {
-              currentStatsData.kpis.github_downloads_total = totalDl;
-              renderStatsDashboard();
-            }
-          }
+          enrichWithGitHubReleases(currentStatsData, releases);
+          renderStatsDashboard();
         }
       } catch (_) {}
     }
