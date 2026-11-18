@@ -119,7 +119,7 @@ class MockD1Database {
         const args = this.boundArgs;
 
         // 1. Version aggregation
-        if (normalizedSql.includes("FROM devices") && normalizedSql.includes("GROUP BY version")) {
+        if (normalizedSql.includes("FROM devices") && normalizedSql.includes("GROUP BY version") && !normalizedSql.includes("GROUP BY hw")) {
           const [project, windowSec] = args;
           const cutoff = db.nowUnix - Number(windowSec);
           const byVer = new Map();
@@ -138,7 +138,7 @@ class MockD1Database {
         }
 
         // 2. Hardware breakdown
-        if (normalizedSql.includes("SELECT hw, COUNT(*) AS count") && !normalizedSql.includes("res")) {
+        if (normalizedSql.includes("SELECT hw, COUNT(*) AS count") && !normalizedSql.includes("res") && !normalizedSql.includes("version")) {
           const [project, windowSec] = args;
           const cutoff = db.nowUnix - Number(windowSec);
           const byHw = new Map();
@@ -204,6 +204,67 @@ class MockD1Database {
             }
           }
           return { results: Array.from(cross.values()) };
+        }
+
+        // 5b. Cross-breakdown hw_by_version
+        if (normalizedSql.includes("SELECT hw, version, COUNT(*) AS count")) {
+          const [project, windowSec] = args;
+          const cutoff = db.nowUnix - Number(windowSec);
+          const cross = new Map();
+          for (const dev of db.devices.values()) {
+            if (dev.project === project && dev.last_seen >= cutoff) {
+              const k = `${dev.hw}|${dev.version}`;
+              cross.set(k, {
+                hw: dev.hw,
+                version: dev.version,
+                count: (cross.get(k)?.count || 0) + 1,
+              });
+            }
+          }
+          return { results: Array.from(cross.values()) };
+        }
+
+        // 5c. Fleet activity recency windows
+        if (normalizedSql.includes("AS active_24h")) {
+          const [project, daySec, weekSec, monthSec] = args;
+          const c24h = db.nowUnix - Number(daySec);
+          const c7d = db.nowUnix - Number(weekSec);
+          const c30d = db.nowUnix - Number(monthSec);
+          const row = {
+            active_24h: 0,
+            active_1d_7d: 0,
+            active_7d_30d: 0,
+            inactive_30d: 0,
+            new_7d: 0,
+            new_30d: 0,
+          };
+          for (const dev of db.devices.values()) {
+            if (dev.project !== project) continue;
+            if (dev.last_seen >= c24h) row.active_24h += 1;
+            else if (dev.last_seen >= c7d) row.active_1d_7d += 1;
+            else if (dev.last_seen >= c30d) row.active_7d_30d += 1;
+            else row.inactive_30d += 1;
+            if (dev.first_seen >= c7d) row.new_7d += 1;
+            if (dev.first_seen >= c30d) row.new_30d += 1;
+          }
+          return { results: [row] };
+        }
+
+        // 5d. Daily new device registrations
+        if (normalizedSql.includes("date(first_seen, 'unixepoch') AS day")) {
+          const [project, windowSec] = args;
+          const cutoff = db.nowUnix - Number(windowSec);
+          const byDay = new Map();
+          for (const dev of db.devices.values()) {
+            if (dev.project === project && dev.first_seen >= cutoff) {
+              const day = new Date(dev.first_seen * 1000).toISOString().slice(0, 10);
+              byDay.set(day, (byDay.get(day) || 0) + 1);
+            }
+          }
+          const results = Array.from(byDay.entries())
+            .map(([day, count]) => ({ day, count }))
+            .sort((a, b) => a.day.localeCompare(b.day));
+          return { results };
         }
 
         // 6. Daily history
@@ -410,9 +471,21 @@ async function runTests() {
     "v3.0.0": 1,
   });
 
-  // Verify hw_by_res cross-matrix
+  // Verify hw_by_res & hw_by_version cross-matrices + activity recency + daily new devices
   assert.equal(statsAfter.hw_by_res.esp32s3_waveshare["128x64"], 1);
   assert.equal(statsAfter.hw_by_res.esp32s3_n16r8["64x32"], 1);
+  assert.equal(statsAfter.hw_by_version.esp32s3_waveshare["v3.0.1"], 1);
+  assert.equal(statsAfter.hw_by_version.esp32s3_n16r8["v3.0.0"], 1);
+  assert.equal(statsAfter.kpis.active_24h, 2);
+  assert.equal(statsAfter.kpis.active_7d, 2);
+  assert.equal(statsAfter.kpis.inactive_30d, 0);
+  assert.equal(statsAfter.kpis.new_30d, 2);
+  assert.equal(statsAfter.kpis.github_latest_downloads, 225);
+  assert.equal(statsAfter.activity.length, 4);
+  assert.equal(statsAfter.activity[0].bucket, "24h");
+  assert.equal(statsAfter.activity[0].count, 2);
+  assert.equal(statsAfter.new_devices_daily.length, 1);
+  assert.equal(statsAfter.new_devices_daily[0].count, 2);
 
   // Verify zero IP leakage in DB or response
   const serializedStats = JSON.stringify(statsAfter);

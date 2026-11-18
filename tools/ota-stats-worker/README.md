@@ -50,7 +50,7 @@ Used by the ESP32 and Raspberry Pi GitHub Pages Portals (`#stats` tab):
 ```text
 GET /v1/stats?p=esp32|rpi
 ```
-Returns aggregated JSON (`kpis`, `versions`, `hardware`, `os_arch`, `resolutions`, `hw_by_res`, `daily_history`, `github_releases`) cached for 15 minutes (`Cache-Control: public, max-age=900`).
+Returns aggregated JSON (`kpis`, `versions`, `hardware`, `hw_by_version`, `os_arch`, `resolutions`, `hw_by_res`, `activity`, `new_devices_daily`, `daily_history`, `github_releases`, `github_hw_downloads`) cached for 15 minutes (`Cache-Control: public, max-age=900`).
 
 ---
 

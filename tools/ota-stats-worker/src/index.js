@@ -360,6 +360,79 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     hw_by_res[row.hw][row.res] = Number(row.count || 0);
   }
 
+  // 5b. Cross-breakdown hw_by_version (active last 30 days)
+  const hwVerRowsResult = await db
+    .prepare(
+      `SELECT hw, version, COUNT(*) AS count
+       FROM devices
+       WHERE project = ?1 AND last_seen >= unixepoch() - ?2
+       GROUP BY hw, version`
+    )
+    .bind(project, ACTIVE_WINDOW_SECONDS)
+    .all();
+
+  const hw_by_version = {};
+  for (const row of hwVerRowsResult?.results || []) {
+    if (!hw_by_version[row.hw]) {
+      hw_by_version[row.hw] = {};
+    }
+    hw_by_version[row.hw][row.version] = Number(row.count || 0);
+  }
+
+  // 5c. Fleet activity recency windows & new device growth
+  const DAY_SECONDS = 86400;
+  const WEEK_SECONDS = 7 * DAY_SECONDS;
+  const activityRowsResult = await db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN last_seen >= unixepoch() - ?2 THEN 1 ELSE 0 END) AS active_24h,
+         SUM(CASE WHEN last_seen >= unixepoch() - ?3 AND last_seen < unixepoch() - ?2 THEN 1 ELSE 0 END) AS active_1d_7d,
+         SUM(CASE WHEN last_seen >= unixepoch() - ?4 AND last_seen < unixepoch() - ?3 THEN 1 ELSE 0 END) AS active_7d_30d,
+         SUM(CASE WHEN last_seen < unixepoch() - ?4 THEN 1 ELSE 0 END) AS inactive_30d,
+         SUM(CASE WHEN first_seen >= unixepoch() - ?3 THEN 1 ELSE 0 END) AS new_7d,
+         SUM(CASE WHEN first_seen >= unixepoch() - ?4 THEN 1 ELSE 0 END) AS new_30d
+       FROM devices
+       WHERE project = ?1`
+    )
+    .bind(project, DAY_SECONDS, WEEK_SECONDS, ACTIVE_WINDOW_SECONDS)
+    .all();
+
+  const actRow = (activityRowsResult?.results || [])[0] || {};
+  const active24h = Number(actRow.active_24h || 0);
+  const active1d7d = Number(actRow.active_1d_7d || 0);
+  const active7d = active24h + active1d7d;
+  const active7d30d = Number(actRow.active_7d_30d || 0);
+  const inactive30d = Number(actRow.inactive_30d || 0);
+  const new7d = Number(actRow.new_7d || 0);
+  const new30d = Number(actRow.new_30d || 0);
+
+  const pctOfKnown = (n) =>
+    totalKnown > 0 ? Math.round((n / totalKnown) * 1000) / 10 : 0;
+
+  const activity = [
+    { bucket: "24h", count: active24h, pct: pctOfKnown(active24h) },
+    { bucket: "7d", count: active1d7d, pct: pctOfKnown(active1d7d) },
+    { bucket: "30d", count: active7d30d, pct: pctOfKnown(active7d30d) },
+    { bucket: "dormant", count: inactive30d, pct: pctOfKnown(inactive30d) },
+  ];
+
+  // 5d. Daily new device registrations (last 30 days)
+  const newDailyRowsResult = await db
+    .prepare(
+      `SELECT date(first_seen, 'unixepoch') AS day, COUNT(*) AS count
+       FROM devices
+       WHERE project = ?1 AND first_seen >= unixepoch() - ?2
+       GROUP BY date(first_seen, 'unixepoch')
+       ORDER BY day ASC`
+    )
+    .bind(project, ACTIVE_WINDOW_SECONDS)
+    .all();
+
+  const new_devices_daily = (newDailyRowsResult?.results || []).map((row) => ({
+    day: row.day,
+    count: Number(row.count || 0),
+  }));
+
   // 6. Daily history (last 30 days)
   const historyRowsResult = await db
     .prepare(
@@ -385,7 +458,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     })
   );
 
-  // 7. GitHub releases firmware download aggregation (excludes sample SD card asset bundles)
+  // 7. Supplementary GitHub releases raw asset download counters (kept strictly separate from Cloudflare telemetry)
   let githubDownloadsTotal = 0;
   const ghHwCounts = new Map();
   const classifyAssetHw = (assetName) => {
@@ -440,22 +513,32 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
   const latestEntry =
     versions.find((v) => v.version === latestVersion) || null;
   const latestAdoptionPct = latestEntry ? latestEntry.pct : 0;
+  const githubLatestDownloads = github_releases[0]?.downloads || 0;
 
   return {
     project,
     updated_at: new Date().toISOString(),
     kpis: {
+      active_24h: active24h,
+      active_7d: active7d,
       active_30d: active30dTotal,
+      inactive_30d: inactive30d,
+      new_7d: new7d,
+      new_30d: new30d,
       total_known: totalKnown,
       latest_version: latestVersion,
       latest_adoption_pct: latestAdoptionPct,
       github_downloads_total: githubDownloadsTotal,
+      github_latest_downloads: githubLatestDownloads,
     },
     versions,
     hardware,
     os_arch,
     resolutions,
     hw_by_res,
+    hw_by_version,
+    activity,
+    new_devices_daily,
     daily_history,
     github_releases,
     github_hw_downloads,

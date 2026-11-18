@@ -1,0 +1,79 @@
+name: Deploy GitHub Pages Portal
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'webinstaller/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy-pages:
+    if: "!github.event.repository.private"
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate WebInstaller manifests
+        run: python3 scripts/validate_webinstaller.py
+
+      - name: Download latest official release binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/rel _site
+          gh release download --repo "${{ github.repository }}" --pattern "ArcadeMatrix-esp32*.zip" -D /tmp/rel
+          for env in esp32dev esp32s3_waveshare esp32s3_n16r8; do
+            unzip -o "/tmp/rel/ArcadeMatrix-${env}.zip" -d _site/
+          done
+          rm -f _site/boot_app0.bin
+
+      - name: Assemble WebInstaller & Portal site
+        run: |
+          cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json webinstaller/manifest-esp32s3_n16r8.json _site/
+          cp -r webinstaller/bin _site/bin
+          cp -r webinstaller/changelog _site/changelog
+          python3 -c "
+          import os, sys
+          for env in ['esp32dev', 'esp32s3_waveshare', 'esp32s3_n16r8']:
+              for prefix in ['bootloader', 'partitions', 'firmware']:
+                  p = f'_site/{prefix}-{env}.bin'
+                  if not os.path.exists(p):
+                      print(f'ERROR: missing {p}!')
+                      sys.exit(1)
+              fw = f'_site/firmware-{env}.bin'
+              size = os.path.getsize(fw)
+              print(f'Installer {fw}: {size} bytes')
+              if size < 1000000:
+                  print(f'ERROR: {fw} is too small ({size} bytes)!')
+                  sys.exit(1)
+              with open(fw, 'rb') as f:
+                  if b'test_hardware' in f.read():
+                      print(f'ERROR: {fw} contains unit test symbols!')
+                      sys.exit(1)
+          print('✅ Portal & official release binaries verified successfully.')
+          "
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
