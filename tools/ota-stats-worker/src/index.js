@@ -689,40 +689,38 @@ export default {
         );
       }
 
+      let upsertPromise = Promise.resolve();
       if (params.canRecordTelemetry) {
-        let promise = null;
         if (env?.DB) {
-          promise = upsertDeviceAndSnapshot(env.DB, params).catch((err) => {
+          upsertPromise = upsertDeviceAndSnapshot(env.DB, params).catch((err) => {
             console.error("D1 telemetry upsert failed:", err);
           });
         } else {
           const stub = getTelemetryStub(env);
           if (stub) {
-            promise = stub
+            upsertPromise = stub
               .fetch("https://telemetry.internal/upsert", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(params),
               })
+              .then((r) => r.arrayBuffer())
               .catch((err) => {
                 console.error("DO SQLite telemetry upsert failed:", err);
               });
-          }
-        }
-        if (promise) {
-          if (ctx && typeof ctx.waitUntil === "function") {
-            ctx.waitUntil(promise);
-          } else {
-            await promise;
           }
         }
       }
 
       try {
         const fetchFn = env?.__mockFetch || fetch;
-        const releases = await fetchGitHubReleases(params.project, fetchFn);
+        const [, releases] = await Promise.all([
+          upsertPromise,
+          fetchGitHubReleases(params.project, fetchFn),
+        ]);
         return jsonResponse(releases, 200, 600);
       } catch (err) {
+        await upsertPromise;
         return jsonResponse(
           { error: "Failed to fetch upstream GitHub releases", detail: String(err.message || err) },
           502
@@ -758,7 +756,7 @@ export default {
 
       if (env?.DB) {
         const stats = await buildProjectStats(env.DB, project, ghReleases);
-        return jsonResponse(stats, 200, 900);
+        return jsonResponse(stats, 200, 0);
       }
 
       const doResp = await stub.fetch("https://telemetry.internal/stats", {
@@ -767,7 +765,7 @@ export default {
         body: JSON.stringify({ project, ghReleases }),
       });
       const stats = await doResp.json();
-      return jsonResponse(stats, 200, 900);
+      return jsonResponse(stats, 200, 0);
     }
 
     // Health / root info endpoint
