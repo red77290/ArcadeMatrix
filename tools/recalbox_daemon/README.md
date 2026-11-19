@@ -88,6 +88,7 @@ installers do, so you can do it by hand:
 | File | Purpose |
 |---|---|
 | `arcadematrix_daemon.py` | Recalbox: polls `/tmp/es_state.inf` (`GamePath=`, `Game=`, `SystemId=`, `State=`) in a loop, publishes MQTT on change. |
+| `arcadematrix_companion_sync.py` | Companion sync helper (Recalbox / Batocera / RetroPie): extracts local MAME/FBNeo `.hi` / NVRAM high scores (per-ROM specs + BCD/tile heuristics) and RetroAchievements progress & live `[RCHEEVOS]` trophy celebrations. |
 | `arcadematrix_launcher(permanent).sh` | Recalbox: EmulationStation startup hook that launches the daemon above. |
 | `arcadematrix_mqtt_batocera.sh` | Batocera: one-shot hook invoked directly by system runner (`gameStart`/`gameStop`, including `$5` game title) and EmulationStation (`game-selected`, `system-selected`, `game-start`, `game-end`, including `$3` game title). |
 | `install.sh` | macOS/Linux automated installer. |
