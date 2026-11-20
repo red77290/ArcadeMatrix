@@ -2198,9 +2198,7 @@ void WebServerAPI::setupRoutes() {
             if (!doc["wifi_hostname"].isNull()) cfg.wifi.hostname = (const char*)doc["wifi_hostname"];
 
             if (!doc["mqtt_enabled"].isNull()) {
-                bool newMqtt = (bool)doc["mqtt_enabled"];
-                if (newMqtt != cfg.mqtt.enabled) willReboot = true;
-                cfg.mqtt.enabled = newMqtt;
+                cfg.mqtt.enabled = (bool)doc["mqtt_enabled"];
             }
             if (!doc["mqtt_broker"].isNull()) {
                 String newBroker = (const char*)doc["mqtt_broker"];
@@ -2916,9 +2914,13 @@ void WebServerAPI::setupRoutes() {
                 domainMask |= CONFIG_DOMAIN_HARDWARE;
             }
 
+            if (!doc["mqtt_enabled"].isNull()) {
+                cfg.mqtt.enabled = doc["mqtt_enabled"].as<bool>();
+                changed = true;
+                domainMask |= CONFIG_DOMAIN_NETWORK;
+            }
             if (doc.containsKey("mqtt")) {
                 JsonObject mq = doc["mqtt"].as<JsonObject>();
-                bool prevMqtt = cfg.mqtt.enabled;
                 String prevBroker = cfg.mqtt.broker;
                 int prevPort = cfg.mqtt.port;
                 if (!mq["enabled"].isNull()) cfg.mqtt.enabled = mq["enabled"].as<bool>();
@@ -2957,7 +2959,7 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["ra_web_api_key"].isNull()) cfg.mqtt.ra_web_api_key = mq["ra_web_api_key"].as<String>();
                 changed = true;
                 domainMask |= CONFIG_DOMAIN_NETWORK;
-                if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
+                if (prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
                 }
             }

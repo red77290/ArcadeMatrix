@@ -940,6 +940,7 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
             if (gifEngine) {
                 gifEngine->stop();
             }
+            m_displayArbiter.cancelRequest(DisplaySourceId::SYNC_CELEBRATION);
         }
     } else if (m_frontendListener && snapshot.mqtt.enabled) {
         uint16_t curW = m_drawingSurface ? static_cast<uint16_t>(m_drawingSurface->width()) : 128;
