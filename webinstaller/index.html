@@ -547,6 +547,200 @@
       box-shadow: 0 0 15px rgba(0, 230, 118, 0.45);
     }
 
+    .guide-inline-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.45rem;
+      padding: 0.32rem 0.72rem;
+      border-radius: 999px;
+      background: rgba(0, 240, 255, 0.14);
+      border: 1px solid rgba(0, 240, 255, 0.38);
+      color: var(--accent-cyan);
+      font-weight: 600;
+      font-size: 0.84rem;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .guide-inline-cta:hover {
+      background: var(--accent-cyan);
+      color: #000;
+    }
+
+    /* Beginner's Guide Tab */
+    .guide-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      text-align: left;
+      min-width: 0;
+    }
+
+    .guide-section {
+      background: var(--card-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 18px;
+      padding: 1.65rem;
+      min-width: 0;
+    }
+
+    .guide-header-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .guide-section h2 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1.25rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .guide-section h3 {
+      margin: 1.15rem 0 0.45rem 0;
+      font-size: 1.04rem;
+      color: var(--accent-cyan);
+    }
+
+    .guide-section p, .guide-section li {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      line-height: 1.6;
+    }
+
+    .guide-section ul, .guide-section ol {
+      margin: 0.45rem 0 0.75rem 1.25rem;
+      padding: 0;
+    }
+
+    .guide-section li {
+      margin-bottom: 0.4rem;
+    }
+
+    .guide-section code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      color: #e2e8f0;
+    }
+
+    .guide-pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      color: #a7f3d0;
+      margin: 0.6rem 0;
+    }
+
+    .guide-img-box {
+      margin: 0.9rem 0;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--glass-border);
+      background: rgba(0, 0, 0, 0.35);
+    }
+
+    .guide-img-box img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .guide-alert {
+      border-radius: 12px;
+      padding: 0.9rem 1.1rem;
+      margin: 0.75rem 0;
+      font-size: 0.9rem;
+      line-height: 1.55;
+      border: 1px solid rgba(255, 204, 0, 0.35);
+      background: rgba(255, 204, 0, 0.08);
+      color: #fde68a;
+    }
+
+    .guide-alert.danger {
+      border-color: rgba(255, 0, 85, 0.4);
+      background: rgba(255, 0, 85, 0.09);
+      color: #fecdd3;
+    }
+
+    .guide-table-wrap {
+      overflow-x: auto;
+      margin: 0.85rem 0;
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+    }
+
+    .guide-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+
+    .guide-table th, .guide-table td {
+      padding: 0.65rem 0.8rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .guide-table th {
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .guide-table td {
+      color: var(--text-muted);
+    }
+
+    .guide-tools-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    @media (min-width: 720px) {
+      .guide-tools-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .guide-tool-item {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 1.1rem;
+    }
+
+    .guide-tool-item h4 {
+      margin: 0 0 0.4rem 0;
+      font-size: 0.96rem;
+      color: var(--accent-green);
+    }
+
+    .guide-tool-item p {
+      margin: 0;
+      font-size: 0.87rem;
+      line-height: 1.5;
+    }
+
     /* Tab 2: Visual Changelog Blog */
     .changelog-list {
       display: flex;
@@ -1307,6 +1501,9 @@
       <button class="tab-btn active" data-tab="installer" role="tab">
         ⚡ <span data-i18n="tab_installer">Web Installer</span>
       </button>
+      <button class="tab-btn" data-tab="guide" role="tab">
+        📘 <span data-i18n="tab_guide">Beginner's Guide</span>
+      </button>
       <button class="tab-btn" data-tab="changelog" role="tab">
         📰 <span data-i18n="tab_changelog">Visual Changelog</span>
       </button>
@@ -1321,7 +1518,10 @@
         <div class="warn-icon">⚠️</div>
         <div>
           <span data-i18n="warn_text">Pick the board that matches your hardware. Flashing the wrong image can boot-loop the board. See</span>
-          <a href="https://github.com/red77290/ArcadeMatrix/blob/main/docs/HARDWARE.md" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline;">docs/HARDWARE.md</a>.
+          <a href="https://github.com/red77290/ArcadeMatrix/blob/main/docs/HARDWARE.md" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline;">docs/HARDWARE.md</a>.<br>
+          <button type="button" class="guide-inline-cta" id="open-guide-cta">
+            📘 <span data-i18n="warn_guide_cta">New here? Open the Beginner's Guide (Boards, Wiring, 5V PSU &amp; Tools) →</span>
+          </button>
         </div>
       </div>
 
@@ -1365,6 +1565,9 @@
             <span class="companion-badge tools" data-i18n="tools_badge">PC &amp; Console Tools</span>
             <h3 data-i18n="tools_title">Companion Tools Pack (ArcadeMatrix-tools.zip)</h3>
             <p data-i18n="tools_desc">Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer &amp; Home Assistant blueprints.</p>
+            <button type="button" class="guide-inline-cta" id="open-tools-guide-cta">
+              📘 <span data-i18n="tools_guide_cta">How to use each tool (Guide Appendix) →</span>
+            </button>
           </div>
           <a id="dl-tools-link" class="companion-btn tools" href="https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip" target="_blank" rel="noopener">
             🧰 <span data-i18n="tools_btn">Download ArcadeMatrix-tools.zip</span>
@@ -1373,7 +1576,12 @@
       </div>
     </section>
 
-    <!-- TAB 2: VISUAL CHANGELOG BLOG -->
+    <!-- TAB 2: BEGINNER'S GUIDE (BOARDS, WIRING, 5V PSU & COMPANION TOOLS APPENDIX) -->
+    <section id="panel-guide" class="tab-panel">
+      <div id="guide-container" class="guide-wrapper"></div>
+    </section>
+
+    <!-- TAB 3: VISUAL CHANGELOG BLOG -->
     <section id="panel-changelog" class="tab-panel">
       <div id="changelog-container" class="changelog-list"></div>
     </section>
@@ -1594,7 +1802,10 @@
         tools_badge: "PC & Console Tools",
         tools_title: "Companion Tools Pack (ArcadeMatrix-tools.zip)",
         tools_desc: "Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer & Home Assistant blueprints.",
-        tools_btn: "Download ArcadeMatrix-tools.zip"
+        tools_btn: "Download ArcadeMatrix-tools.zip",
+        tab_guide: "Beginner's Guide",
+        warn_guide_cta: "New here? Open the Beginner's Guide (Boards, Wiring, 5V PSU & Tools) →",
+        tools_guide_cta: "How to use each tool (Guide Appendix) →"
       },
       fr: {
         switch_rpi: "Portail Raspberry Pi",
@@ -1662,7 +1873,10 @@
         tools_badge: "Outils PC & Consoles",
         tools_title: "Pack d'Outils Compagnons (ArcadeMatrix-tools.zip)",
         tools_desc: "Archive autonome (sans télécharger le code source) : installation Recalbox / Batocera / RetroPie, Pixelcade sync, extracteur MUGEN, convertisseurs de polices BDF/TTF, indexeur GIF et blueprints Home Assistant.",
-        tools_btn: "Télécharger ArcadeMatrix-tools.zip"
+        tools_btn: "Télécharger ArcadeMatrix-tools.zip",
+        tab_guide: "Guide Débutant",
+        warn_guide_cta: "Première installation ? Ouvrir le Guide Débutant (Cartes, Câblage, Alim 5V & Outils) →",
+        tools_guide_cta: "Comment utiliser chaque outil (Annexe du Guide) →"
       },
       es: {
         switch_rpi: "Portal Raspberry Pi",
@@ -1730,7 +1944,10 @@
         tools_badge: "Herramientas PC y Consolas",
         tools_title: "Paquete de Herramientas (ArcadeMatrix-tools.zip)",
         tools_desc: "Paquete independiente (sin clonar el código fuente): instalador Recalbox / Batocera / RetroPie, Pixelcade sync, extractor MUGEN, conversores de fuentes BDF/TTF, indexador GIF y blueprints Home Assistant.",
-        tools_btn: "Descargar ArcadeMatrix-tools.zip"
+        tools_btn: "Descargar ArcadeMatrix-tools.zip",
+        tab_guide: "Guía Principiantes",
+        warn_guide_cta: "¿Primera vez? Abre la Guía para Principiantes (Placas, Conexiones, Fuente 5V y Herramientas) →",
+        tools_guide_cta: "Cómo usar cada herramienta (Anexo de la Guía) →"
       }
     };
 
@@ -1932,6 +2149,309 @@
     let currentStatsData = createEmptyStats();
     let selectedHwFilter = "all";
 
+    let latestSdCardUrl = "https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip";
+    let latestToolsUrl = "https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip";
+
+    const GUIDE_DATA = {
+      en: {
+        mdUrl: "https://github.com/red77290/ArcadeMatrix/blob/main/docs/BEGINNER_GUIDE.md",
+        mdBtn: "Open Full Markdown Guide on GitHub",
+        heroTitle: "📘 Beginner's Guide: Boards, Wiring, HUB75 Panels, 5V PSU & Tools",
+        heroIntro: "Straight to the essentials without technical jargon: choose your controller board, wire or plug your HUB75 panels, size your 5V power supply, and use the optional PC/Console tools.",
+        s1Title: "1. How ArcadeMatrix Works (In 4 Quick Steps)",
+        s1Alert: "⚠️ Mandatory: Wi-Fi cannot be entered from the LED display! You must edit config/network.json on the MicroSD card (2.4 GHz Wi-Fi) before first boot.",
+        s1Steps: [
+          "<strong>Prepare a <code>FAT32</code> MicroSD card</strong>: extract <code>ArcadeMatrix-sdcard.zip</code> directly to the root of the SD card, then open <code>config/network.json</code> in Notepad / TextEdit and fill in your <code>2.4 GHz</code> Wi-Fi <code>ssid</code> and <code>password</code>.",
+          "<strong>Flash the board in 1 click (once)</strong>: plug the ESP32 via a USB <em>data</em> cable into Chrome or Edge on the <strong>Web Installer</strong> tab and click <strong>Install</strong>.",
+          "<strong>Plug onto the LED panel &amp; power with <code>5V</code></strong>: connect the board to <code>HUB75 IN</code> on Panel #1. On boot, the DMD joins your Wi-Fi and displays its IP address.",
+          "<strong>Control from phone or PC</strong>: open <code>http://arcadematrix.local</code> (or the displayed IP) to pick retro clocks, weather/stocks, upload GIFs over Wi-Fi, or sync Recalbox / Batocera."
+        ],
+        s2Title: "2. Choose & Plug In Your Controller Board (3 Options)",
+        optATitle: "Option A — Classic ESP32 + Mortaca / BenFactory Shield (Solderless — 128×32 Max)",
+        optABody: "Plugs directly onto <code>HUB75 IN</code> on the back of Panel #1 (zero ribbon cable) with a 30-pin Classic ESP32 (<code>WROOM-32</code>) on top; MicroSD &amp; 5V terminals built in. <strong>Limit: 64×32 and 128×32 ONLY</strong> (no PSRAM). Flash button: <code>Standard ESP32</code>.",
+        optBTitle: "Option B — All-in-One Waveshare ESP32-S3-RGB-Matrix (Solderless — Up to 256×64 HD — Recommended)",
+        optBBody: "Factory rear female <code>HUB75</code> + MicroSD slot: plugs straight onto Panel #1 with zero soldering. Unlocks <strong>128×64 &amp; 256×64 HD</strong> (16 MB PSRAM + 32 MB Flash), the 4 HD clocks, dual microphones (Decibel + Visualizer), speaker WebRadio, SHTC3 climate sensor, and QMI8658 auto-TATE gyroscope. Flash button: <code>Waveshare ESP32-S3 (N32R16V)</code>.",
+        optCTitle: "Option C — Custom DIY Soldering (ESP32-S3 N16R8 up to 256×64 HD, or Classic ESP32 30-pin)",
+        optCBody: "For soldered builds, use an <code>ESP32-S3-DevKitC-1 (N16R8 / N8R8)</code> + direct <code>3.3V</code> MicroSD breakout (<code>10 kΩ</code> pull-up on CS; <strong>never wire GPIO 35, 36, 37</strong>). Flash button: <code>ESP32-S3 (N16R8 / N8R8)</code>.",
+        diyS3Summary: "Show DIY Soldering Diagrams & Pinout Tables (ESP32-S3 N16R8 & Classic ESP32)",
+        s3Title: "3. Compatible HUB75 Panels & 5V Power Supply Sizing (Amperage)",
+        s3Warn: "⚡ STRICTLY 5 VOLTS (5V) ONLY — NEVER 12V OR 24V! Extra Amps (A) are 100% safe: LED panels only draw what they need.",
+        s3Tip: "💡 Physical Size Tip: A <strong>P2 (128×64)</strong> panel (25.6×12.8 cm) is the exact same physical size as a <strong>P4 (64×32)</strong> panel with 4× more pixels! Chaining <strong>2× P2 (128×64)</strong> gives a <strong>256×64 HD</strong> Pinball DMD (51.2×12.8 cm).",
+        psuHeaders: ["Resolution", "Panels Chained", "Board Required", "config/hardware.json", "5V PSU & Amperage"],
+        psuRows: [
+          ["<strong>64×32</strong>", "1× 64×32 (P2.5–P5)", "ESP32 or ESP32-S3", "<code>width=64, height=32, chain=1</code>", "USB-C <strong>5V / 2A–3A</strong>"],
+          ["<strong>128×32</strong> (Classic DMD)", "2× 64×32 (P2.5–P5)", "Classic ESP32 or S3", "<code>width=64, height=32, chain=2</code>", "USB-C <strong>5V / 3A</strong> (or 5V/5A at 100% on P4/P5)"],
+          ["<strong>128×64</strong>", "1× 128×64 (P2–P3)", "<strong>ESP32-S3 ONLY</strong>", "<code>width=128, height=64, chain=1</code>", "Dedicated <strong>5V / 5A–6A</strong> (25–30W)"],
+          ["<strong>256×64 HD</strong> (Recommended)", "2× 128×64 (P2–P3)", "<strong>ESP32-S3 ONLY</strong>", "<code>width=128, height=64, chain=2</code>", "2× P2: <strong>5V / 8A–10A</strong> · 2× P2.5/P3: <strong>5V / 10A–12A</strong> (Mean Well LRS-50-5 / LRS-75-5)"]
+        ],
+        s4Title: "4. Quick Troubleshooting",
+        s4Items: [
+          "<strong>Red / Blue colors swapped</strong>: in Web UI (<em>System → Hardware → RGB Color Order</em>), switch <code>RGB</code> to <code>RBG</code> (or <code>BGR</code>) and Save.",
+          "<strong>Dark panel despite 5V power</strong>: verify the board is plugged into <code>IN (J1)</code> (follow rear arrows) or set Matrix Driver to <code>FM6124 / FM6126A</code>.",
+          "<strong>Flickering or ghost lines</strong>: toggle <em>Invert Clock Phase (<code>clkphase</code>)</em> or raise <code>Latch Blanking</code> in <em>System → Hardware</em>.",
+          "<strong>No serial port in Web Installer</strong>: swap your charge-only USB cable for a real USB data cable in Chrome or Edge."
+        ],
+        s5Title: "5. Appendix: PC & Console Companion Tools (ArcadeMatrix-tools.zip)",
+        s5Intro: "All optional PC, Mac, Linux, and retro-console helper scripts are packaged in a single standalone archive — you never need to download or clone the firmware source code:",
+        s5DlBtn: "Download ArcadeMatrix-tools.zip",
+        tools: [
+          {
+            title: "🕹️ recalbox_daemon/ — Recalbox, Batocera & RetroPie Sync",
+            desc: "Run <code>install.ps1</code> (Windows) or <code>./install.sh</code> (Mac/Linux) and enter your console IP + DMD IP. Streams menu marquees in 0 ms, triggers In-Game Showcase cards/videos, and celebrates High-Score records across ~3,100 MAME/FBNeo <code>.hi</code> &amp; Neo-Geo/CPS NVRAM games."
+          },
+          {
+            title: "🖼️ pixelcade_sync/ — Official Pixelcade Marquees to SD",
+            desc: "Plug your MicroSD card into your PC/Mac and run <code>pixelcade_sync.ps1</code> or <code>./pixelcade_sync.sh</code> to automatically download and organize official arcade &amp; console marquees."
+          },
+          {
+            title: "🥊 mugen_extractor/ — Custom MUGEN Fighters (.fgt)",
+            desc: "Run <code>start_extractor.bat</code> or <code>./start_extractor.sh</code> (auto-installs Pillow) pointing <code>--src</code> to your MUGEN <code>chars/</code> folder, then copy <code>fighters_32/</code> or <code>fighters_64/</code> to your SD card."
+          },
+          {
+            title: "🔤 bdf_to_amfont/ & font_conversion/ — Custom SD Fonts",
+            desc: "Copy <code>.bdf</code> fonts into <code>SD:/fonts/</code> and run <code>python3 bdf_to_amfont/bdf_to_amfont.py /path/to/SD</code> (zero dependencies) to create <code>.amf</code> fonts selectable immediately in the Web UI."
+          },
+          {
+            title: "🎞️ gif_indexation/ & anim_compiler/ — Bulk Offline SD Prep",
+            desc: "Everyday GIF uploads work over Wi-Fi via the Web UI GIF File Manager. When preparing thousands of GIFs on a PC SD reader, use <code>generate_index.ps1</code> / <code>.sh</code> or <code>gif2amanim.py</code>."
+          },
+          {
+            title: "🏠 home_assistant/ — Smart Home Blueprints (mqttdata)",
+            desc: "Import <code>home_assistant/blueprints/*.yaml</code> into Home Assistant (<em>Settings → Automations → Blueprints</em>) to push live sensors, 24h charts, tables, and weather over MQTT."
+          }
+        ]
+      },
+      fr: {
+        mdUrl: "https://github.com/red77290/ArcadeMatrix/blob/main/docs/BEGINNER_GUIDE_FR.md",
+        mdBtn: "Ouvrir le Guide Complet illustré sur GitHub",
+        heroTitle: "📘 Guide Débutant : Cartes, Branchements, Dalles HUB75, Alim 5V & Outils",
+        heroIntro: "Droit à l'essentiel et sans jargon : choisir votre carte, brancher vos dalles HUB75, dimensionner votre alimentation 5V et utiliser les outils compagnons PC/Consoles.",
+        s1Title: "1. Comment fonctionne ArcadeMatrix ? (En 4 étapes)",
+        s1Alert: "⚠️ Obligatoire : le Wi-Fi ne peut pas se saisir depuis l'écran LED ! Vous devez modifier config/network.json sur la carte MicroSD (Wi-Fi 2.4 GHz) avant le premier allumage.",
+        s1Steps: [
+          "<strong>Préparer une carte MicroSD <code>FAT32</code></strong> : décompressez <code>ArcadeMatrix-sdcard.zip</code> à la racine de la SD, puis ouvrez <code>config/network.json</code> (Bloc-notes / TextEdit) pour renseigner le <code>ssid</code> et <code>password</code> de votre Wi-Fi <code>2.4 GHz</code>.",
+          "<strong>Flasher la carte en 1 clic (une seule fois)</strong> : branchez l'ESP32 avec un câble USB de <em>données</em> sur Chrome ou Edge dans l'onglet <strong>Web Installer</strong> et cliquez sur <strong>Install</strong>.",
+          "<strong>Brancher sur la dalle LED &amp; alimenter en <code>5V</code></strong> : connectez la carte sur la prise <code>HUB75 IN</code> de la dalle n°1. Au démarrage, l'écran rejoint votre Wi-Fi et affiche son IP.",
+          "<strong>Piloter depuis téléphone ou PC</strong> : ouvrez <code>http://arcadematrix.local</code> (ou l'IP affichée) pour choisir vos horloges rétro, météo/bourse, envoyer vos GIFs en Wi-Fi ou lier Recalbox / Batocera."
+        ],
+        s2Title: "2. Choisir et brancher sa carte électronique (3 options)",
+        optATitle: "Option A — ESP32 Classique + Carte fille Mortaca / BenFactory (Sans soudure — 128×32 max)",
+        optABody: "Se clipse directement sur <code>HUB75 IN</code> au dos de la dalle n°1 (zéro nappe) avec un ESP32 30 broches (<code>WROOM-32</code>) par-dessus ; lecteur MicroSD et bornier 5V intégrés. <strong>Limite : 64×32 et 128×32 uniquement</strong> (sans PSRAM). Bouton : <code>Standard ESP32</code>.",
+        optBTitle: "Option B — Carte tout-en-un Waveshare ESP32-S3-RGB-Matrix (Sans soudure — Jusqu'en 256×64 HD — Recommandée)",
+        optBBody: "Prise femelle <code>HUB75</code> et lecteur MicroSD soudés d'usine au dos : s'emboîte directement derrière la dalle n°1 sans soudure. Débloque le <strong>128×64 et 256×64 HD</strong> (16 Mo PSRAM + 32 Mo Flash), les 4 horloges HD exclusives, double micro (Décibels + Visualiseur), WebRadio HP, sonde climat SHTC3 et gyroscope auto-TATE QMI8658. Bouton : <code>Waveshare ESP32-S3 (N32R16V)</code>.",
+        optCTitle: "Option C — Montage maison à souder (DIY : ESP32-S3 N16R8 jusqu'en 256×64 HD ou ESP32 30 broches)",
+        optCBody: "En montage soudé, utilisez un <code>ESP32-S3-DevKitC-1 (N16R8 / N8R8)</code> + module MicroSD <code>3.3V</code> direct (résistance <code>10 kΩ</code> entre CS et 3V3 ; <strong>ne jamais câbler GPIO 35, 36, 37</strong>). Bouton : <code>ESP32-S3 (N16R8 / N8R8)</code>.",
+        diyS3Summary: "Afficher les schémas de soudure DIY & tableaux de broches (ESP32-S3 N16R8 & ESP32 Classique)",
+        s3Title: "3. Dalles HUB75 compatibles & Puissance d'Alimentation 5V (Ampérage)",
+        s3Warn: "⚡ TOUJOURS DU 5 VOLTS (5V) EXACTEMENT — JAMAIS 12V NI 24V ! Prendre plus d'Ampères (A) ne risque rien : l'écran ne tire que ce dont il a besoin.",
+        s3Tip: "💡 Astuce taille physique : une dalle <strong>P2 en 128×64</strong> (25,6×12,8 cm) fait exactement la même taille qu'une <strong>P4 (64×32)</strong> avec 4× plus de pixels ! <strong>2× P2 (128×64)</strong> donnent un DMD flipper <strong>256×64 HD</strong> (51,2×12,8 cm).",
+        psuHeaders: ["Résolution", "Dalles chaînées", "Carte requise", "config/hardware.json", "Alimentation 5V & Ampérage"],
+        psuRows: [
+          ["<strong>64×32</strong>", "1× 64×32 (P2.5–P5)", "ESP32 ou ESP32-S3", "<code>width=64, height=32, chain=1</code>", "Chargeur USB-C <strong>5V / 2A–3A</strong>"],
+          ["<strong>128×32</strong> (DMD Classique)", "2× 64×32 (P2.5–P5)", "ESP32 Classique ou S3", "<code>width=64, height=32, chain=2</code>", "USB-C <strong>5V / 3A</strong> (ou 5V/5A à 100 % sur P4/P5)"],
+          ["<strong>128×64</strong>", "1× 128×64 (P2–P3)", "<strong>ESP32-S3 uniquement</strong>", "<code>width=128, height=64, chain=1</code>", "Alim dédiée <strong>5V / 5A–6A</strong> (25–30W)"],
+          ["<strong>256×64 HD</strong> (Recommandé)", "2× 128×64 (P2–P3)", "<strong>ESP32-S3 uniquement</strong>", "<code>width=128, height=64, chain=2</code>", "2× P2 : <strong>5V / 8A–10A</strong> · 2× P2.5/P3 : <strong>5V / 10A–12A</strong> (Mean Well LRS-50-5 / LRS-75-5)"]
+        ],
+        s4Title: "4. Dépannage express",
+        s4Items: [
+          "<strong>Couleurs Rouge / Bleu inversées</strong> : dans la Web UI (<em>Système → Matériel → Ordre des Couleurs RGB</em>), passez <code>RGB</code> en <code>RBG</code> (ou <code>BGR</code>) et enregistrez.",
+          "<strong>Écran noir malgré le 5V</strong> : vérifiez que la carte est bien sur <code>IN (J1)</code> (suivez les flèches au dos) ou passez Contrôleur Matrice sur <code>FM6124 / FM6126A</code>.",
+          "<strong>Scintillement / lignes baveuses</strong> : activez <em>Inverser la Phase d'Horloge (<code>clkphase</code>)</em> ou montez <code>Latch Blanking</code> dans <em>Système → Matériel</em>.",
+          "<strong>Aucun port USB détecté</strong> : votre câble USB est « charge seule » — utilisez un vrai câble USB de données sous Chrome ou Edge."
+        ],
+        s5Title: "5. Annexe : Utiliser les Outils Compagnons PC & Consoles (ArcadeMatrix-tools.zip)",
+        s5Intro: "Tous les outils optionnels PC, Mac, Linux et consoles rétro sont réunis dans une seule archive autonome — vous n'avez jamais besoin de télécharger le code source complet :",
+        s5DlBtn: "Télécharger ArcadeMatrix-tools.zip",
+        tools: [
+          {
+            title: "🕹️ recalbox_daemon/ — Sync Recalbox, Batocera & RetroPie",
+            desc: "Lancez <code>install.ps1</code> (Windows) ou <code>./install.sh</code> (Mac/Linux) et saisissez l'IP console + l'IP ArcadeMatrix. Affiche les marquees en 0 ms, pilote le Showcase en Jeu et célèbre vos nouveaux records High-Scores sur ~3 100 ROMs MAME/FBNeo <code>.hi</code> &amp; NVRAM Neo-Geo/CPS."
+          },
+          {
+            title: "🖼️ pixelcade_sync/ — Marquees Officiels Pixelcade sur SD",
+            desc: "Branchez votre MicroSD sur PC/Mac et lancez <code>pixelcade_sync.ps1</code> ou <code>./pixelcade_sync.sh</code> pour télécharger et classer automatiquement les marquees arcade et consoles."
+          },
+          {
+            title: "🥊 mugen_extractor/ — Combattants MUGEN (.fgt)",
+            desc: "Lancez <code>start_extractor.bat</code> ou <code>./start_extractor.sh</code> (installe Pillow automatiquement) en pointant <code>--src</code> vers vos dossiers <code>chars/</code>, puis copiez <code>fighters_32/</code> ou <code>fighters_64/</code> sur la carte SD."
+          },
+          {
+            title: "🔤 bdf_to_amfont/ & font_conversion/ — Polices Personnalisées",
+            desc: "Copiez vos polices <code>.bdf</code> dans <code>SD:/fonts/</code> et lancez <code>python3 bdf_to_amfont/bdf_to_amfont.py /chemin/SD</code> (sans dépendance) : vos polices <code>.amf</code> apparaissent aussitôt dans la Web UI sans redémarrer."
+          },
+          {
+            title: "🎞️ gif_indexation/ & anim_compiler/ — Préparation SD en Lot",
+            desc: "Au quotidien, gérez vos GIFs en Wi-Fi via le GIF File Manager de la Web UI. Pour pré-indexer des milliers de GIFs d'un coup sur un lecteur SD PC, utilisez <code>generate_index.ps1</code> / <code>.sh</code> ou <code>gif2amanim.py</code>."
+          },
+          {
+            title: "🏠 home_assistant/ — Blueprints Domotiques (mqttdata)",
+            desc: "Importez <code>home_assistant/blueprints/*.yaml</code> dans Home Assistant (<em>Paramètres → Automatisations → Blueprints</em>) pour afficher capteurs, courbes 24h, tableaux et météo via MQTT."
+          }
+        ]
+      },
+      es: {
+        mdUrl: "https://github.com/red77290/ArcadeMatrix/blob/main/docs/BEGINNER_GUIDE_ES.md",
+        mdBtn: "Abrir Guía Completa ilustrada en GitHub",
+        heroTitle: "📘 Guía para Principiantes: Placas, Conexiones, Paneles HUB75, Fuente 5V y Herramientas",
+        heroIntro: "Directo al grano y sin tecnicismos: elige tu placa, conecta tus paneles HUB75, calcula el amperaje de tu fuente de 5V y aprovecha las herramientas para PC y consolas.",
+        s1Title: "1. ¿Cómo funciona ArcadeMatrix? (En 4 pasos rápidos)",
+        s1Alert: "⚠️ Obligatorio: ¡el Wi-Fi no se puede configurar desde la pantalla LED! Debes editar config/network.json en la MicroSD (Wi-Fi 2.4 GHz) antes del primer encendido.",
+        s1Steps: [
+          "<strong>Preparar una MicroSD <code>FAT32</code></strong>: descomprime <code>ArcadeMatrix-sdcard.zip</code> en la raíz de la SD y abre <code>config/network.json</code> (Bloc de notas / TextEdit) para escribir el <code>ssid</code> y <code>password</code> de tu Wi-Fi <code>2.4 GHz</code>.",
+          "<strong>Flashear en 1 clic (una sola vez)</strong>: conecta el ESP32 con un cable USB de <em>datos</em> en Chrome o Edge desde la pestaña <strong>Instalador Web</strong> y pulsa <strong>Install</strong>.",
+          "<strong>Conectar al panel LED y alimentar a <code>5V</code></strong>: enchufa la placa en <code>HUB75 IN</code> del Panel n.º 1. Al arrancar, el DMD se une a tu Wi-Fi y muestra su IP.",
+          "<strong>Controlar desde móvil o PC</strong>: abre <code>http://arcadematrix.local</code> (o la IP mostrada) para elegir relojes retro, clima/bolsa, subir GIFs por Wi-Fi o enlazar Recalbox / Batocera."
+        ],
+        s2Title: "2. Elegir y conectar la placa electrónica (3 opciones)",
+        optATitle: "Opción A — ESP32 Clásico + Placa hija Mortaca / BenFactory (Sin soldar — 128×32 máx)",
+        optABody: "Se encaja directamente en <code>HUB75 IN</code> detrás del Panel n.º 1 (sin faja) con un ESP32 de 30 pines (<code>WROOM-32</code>) encima; MicroSD y bornas 5V integradas. <strong>Límite: solo 64×32 y 128×32</strong> (sin PSRAM). Botón: <code>Standard ESP32</code>.",
+        optBTitle: "Opción B — Placa todo-en-uno Waveshare ESP32-S3-RGB-Matrix (Sin soldar — Hasta 256×64 HD — Recomendada)",
+        optBBody: "Conector hembra <code>HUB75</code> y ranura MicroSD soldados de fábrica: se encaja detrás del Panel n.º 1 sin soldar. Desbloquea <strong>128×64 y 256×64 HD</strong> (16 MB PSRAM + 32 MB Flash), los 4 relojes HD, doble micrófono (Decibelios + Visualizador), WebRadio con altavoz, sensor SHTC3 y giroscopio auto-TATE QMI8658. Botón: <code>Waveshare ESP32-S3 (N32R16V)</code>.",
+        optCTitle: "Opción C — Montaje casero soldado (DIY: ESP32-S3 N16R8 hasta 256×64 HD o ESP32 30 pines)",
+        optCBody: "Para montajes soldados, usa un <code>ESP32-S3-DevKitC-1 (N16R8 / N8R8)</code> + lector MicroSD <code>3.3V</code> directo (resistencia <code>10 kΩ</code> entre CS y 3V3; <strong>nunca conectes GPIO 35, 36, 37</strong>). Botón: <code>ESP32-S3 (N16R8 / N8R8)</code>.",
+        diyS3Summary: "Mostrar esquemas de soldadura DIY y tablas de pines (ESP32-S3 N16R8 y ESP32 Clásico)",
+        s3Title: "3. Paneles HUB75 compatibles y Potencia de Fuente 5V (Amperaje)",
+        s3Warn: "⚡ ¡SIEMPRE 5 VOLTIOS (5V) EXACTOS — NUNCA 12V NI 24V! Tener Amperios (A) de sobra es 100 % seguro: los paneles solo consumen lo que necesitan.",
+        s3Tip: "💡 Equivalencia física: ¡un panel <strong>P2 (128×64)</strong> (25,6×12,8 cm) mide exactamente lo mismo que un <strong>P4 (64×32)</strong> con 4× más píxeles! Unir <strong>2× P2 (128×64)</strong> crea un DMD pinball <strong>256×64 HD</strong> (51,2×12,8 cm).",
+        psuHeaders: ["Resolución", "Paneles unidos", "Placa requerida", "config/hardware.json", "Fuente 5V y Amperaje"],
+        psuRows: [
+          ["<strong>64×32</strong>", "1× 64×32 (P2.5–P5)", "ESP32 o ESP32-S3", "<code>width=64, height=32, chain=1</code>", "Cargador USB-C <strong>5V / 2A–3A</strong>"],
+          ["<strong>128×32</strong> (DMD Clásico)", "2× 64×32 (P2.5–P5)", "ESP32 Clásico o S3", "<code>width=64, height=32, chain=2</code>", "USB-C <strong>5V / 3A</strong> (o 5V/5A al 100 % en P4/P5)"],
+          ["<strong>128×64</strong>", "1× 128×64 (P2–P3)", "<strong>SOLO ESP32-S3</strong>", "<code>width=128, height=64, chain=1</code>", "Fuente dedicada <strong>5V / 5A–6A</strong> (25–30W)"],
+          ["<strong>256×64 HD</strong> (Recomendado)", "2× 128×64 (P2–P3)", "<strong>SOLO ESP32-S3</strong>", "<code>width=128, height=64, chain=2</code>", "2× P2: <strong>5V / 8A–10A</strong> · 2× P2.5/P3: <strong>5V / 10A–12A</strong> (Mean Well LRS-50-5 / LRS-75-5)"]
+        ],
+        s4Title: "4. Solución rápida de problemas",
+        s4Items: [
+          "<strong>Colores Rojo / Azul invertidos</strong>: en la Web UI (<em>Sistema → Hardware → Orden de Color RGB</em>), cambia <code>RGB</code> a <code>RBG</code> (o <code>BGR</code>) y guarda.",
+          "<strong>Pantalla en negro con corriente</strong>: comprueba que la placa está en <code>IN (J1)</code> (sigue las flechas traseras) o cambia Controlador Matriz a <code>FM6124 / FM6126A</code>.",
+          "<strong>Parpadeo o líneas fantasma</strong>: activa <em>Invertir Fase de Reloj (<code>clkphase</code>)</em> o sube <code>Latch Blanking</code> en <em>Sistema → Hardware</em>.",
+          "<strong>No aparece puerto USB</strong>: cambia tu cable «solo carga» por un cable USB de datos real en Chrome o Edge."
+        ],
+        s5Title: "5. Anexo: Herramientas para PC y Consolas (ArcadeMatrix-tools.zip)",
+        s5Intro: "Todas las herramientas opcionales para PC, Mac, Linux y consolas retro están reunidas en un paquete independiente — nunca necesitas descargar ni clonar el código fuente:",
+        s5DlBtn: "Descargar ArcadeMatrix-tools.zip",
+        tools: [
+          {
+            title: "🕹️ recalbox_daemon/ — Sincronización Recalbox, Batocera y RetroPie",
+            desc: "Ejecuta <code>install.ps1</code> (Windows) o <code>./install.sh</code> (Mac/Linux) e indica la IP de la consola + la IP del DMD. Muestra marquesinas en 0 ms, lanza Showcase en partida y celebra récords High-Score en ~3.100 ROMs MAME/FBNeo <code>.hi</code> y NVRAM Neo-Geo/CPS."
+          },
+          {
+            title: "🖼️ pixelcade_sync/ — Marquesinas Oficiales Pixelcade en SD",
+            desc: "Conecta la MicroSD a tu PC/Mac y ejecuta <code>pixelcade_sync.ps1</code> o <code>./pixelcade_sync.sh</code> para descargar y organizar automáticamente marquesinas arcade y de consolas."
+          },
+          {
+            title: "🥊 mugen_extractor/ — Luchadores MUGEN (.fgt)",
+            desc: "Ejecuta <code>start_extractor.bat</code> o <code>./start_extractor.sh</code> (instala Pillow solo) apuntando <code>--src</code> a <code>chars/</code>, y copia <code>fighters_32/</code> o <code>fighters_64/</code> en tu tarjeta SD."
+          },
+          {
+            title: "🔤 bdf_to_amfont/ y font_conversion/ — Fuentes en SD",
+            desc: "Copia fuentes <code>.bdf</code> en <code>SD:/fonts/</code> y ejecuta <code>python3 bdf_to_amfont/bdf_to_amfont.py /ruta/SD</code> (sin dependencias) para generar fuentes <code>.amf</code> visibles al instante en la Web UI."
+          },
+          {
+            title: "🎞️ gif_indexation/ y anim_compiler/ — Preparación SD en Lote",
+            desc: "Para uso diario, sube GIFs por Wi-Fi con GIF File Manager en la Web UI. Si preparas miles de GIFs en un lector SD de PC, usa <code>generate_index.ps1</code> / <code>.sh</code> o <code>gif2amanim.py</code>."
+          },
+          {
+            title: "🏠 home_assistant/ — Blueprints Domóticos (mqttdata)",
+            desc: "Importa <code>home_assistant/blueprints/*.yaml</code> en Home Assistant (<em>Ajustes → Automatizaciones → Blueprints</em>) para enviar sensores, gráficas de 24h, tablas y clima por MQTT."
+          }
+        ]
+      }
+    };
+
+    function renderBeginnerGuide() {
+      const container = document.getElementById("guide-container");
+      if (!container) return;
+      const lang = GUIDE_DATA[currentLang] ? currentLang : "en";
+      const g = GUIDE_DATA[lang];
+      const imgTag = (stem, alt) =>
+        `<div class="guide-img-box"><img src="guide/${stem}_${lang}.png" onerror="this.onerror=null;this.src='../docs/assets/guide/${stem}_${lang}.png';" alt="${alt}" loading="lazy" /></div>`;
+
+      container.innerHTML = `
+        <div class="guide-section">
+          <div class="guide-header-row">
+            <h2 style="margin:0;">${g.heroTitle}</h2>
+            <a class="release-dl-btn" href="${g.mdUrl}" target="_blank" rel="noopener">📄 ${g.mdBtn}</a>
+          </div>
+          <p style="margin:0;">${g.heroIntro}</p>
+        </div>
+
+        <div class="guide-section">
+          <h2>${g.s1Title}</h2>
+          <div class="guide-alert">${g.s1Alert}</div>
+          <ol>${g.s1Steps.map((s) => `<li>${s}</li>`).join("")}</ol>
+          <pre class="guide-pre">"wifi": {\n  "ssid": "YourHomeWiFi_2.4GHz",\n  "password": "YourWiFiPassword",\n  "hostname": "arcadematrix"\n}</pre>
+        </div>
+
+        <div class="guide-section">
+          <h2>${g.s2Title}</h2>
+          ${imgTag("board_options", g.s2Title)}
+          <h3>${g.optATitle}</h3>
+          <p>${g.optABody}</p>
+          <h3>${g.optBTitle}</h3>
+          <p>${g.optBBody}</p>
+          <h3>${g.optCTitle}</h3>
+          <p>${g.optCBody}</p>
+          <details class="gh-supp-details" style="margin-top:0.85rem;">
+            <summary>${g.diyS3Summary}</summary>
+            <div class="gh-supp-body">
+              ${imgTag("diy_wiring_esp32s3", "ESP32-S3 DIY Wiring")}
+              <div class="guide-table-wrap">
+                <table class="guide-table">
+                  <thead><tr><th>HUB75</th><th>ESP32-S3</th><th>HUB75</th><th>ESP32-S3</th><th>3.3V MicroSD (SD_MMC)</th><th>ESP32-S3</th></tr></thead>
+                  <tbody>
+                    <tr><td>R1 (1) / G1 (2) / B1 (3)</td><td><code>GPIO 4 / 5 / 6</code></td><td>A (9) / B (10) / C (11) / D (12)</td><td><code>GPIO 18 / 8 / 3 / 42</code></td><td>CLK / CMD / D0</td><td><code>GPIO 1 / RX(44) / 17</code></td></tr>
+                    <tr><td>R2 (5) / G2 (6) / B2 (7)</td><td><code>GPIO 7 / 15 / 16</code></td><td>E (8) / CLK (13) / LAT (14) / OE (15)</td><td><code>GPIO 9 / 41 / 40 / 2</code></td><td>CS (DAT3)</td><td><code>3V3 via 10 kΩ</code></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              ${imgTag("diy_wiring_esp32", "Classic ESP32 DIY Wiring")}
+              <div class="guide-table-wrap">
+                <table class="guide-table">
+                  <thead><tr><th>HUB75</th><th>ESP32 (30p)</th><th>HUB75</th><th>ESP32 (30p)</th><th>MicroSD (SPI)</th><th>ESP32 (30p)</th></tr></thead>
+                  <tbody>
+                    <tr><td>R1 (1) / G1 (2) / B1 (3)</td><td><code>D25 / D26 / D27</code></td><td>A (9) / B (10) / C (11) / D (12)</td><td><code>D33 / D32 / D22 / TX2(17)</code></td><td>CS / SCK / MISO / MOSI</td><td><code>D5 / D18 / D19 / D23</code></td></tr>
+                    <tr><td>R2 (5) / G2 (6) / B2 (7)</td><td><code>D14 / D12 / D13</code></td><td>E (8) / CLK (13) / LAT (14) / OE (15)</td><td><code>GND / RX2(16) / D4 / D15</code></td><td>VCC / GND</td><td><code>3V3 / GND</code></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="guide-section">
+          <h2>${g.s3Title}</h2>
+          <div class="guide-alert danger">${g.s3Warn}</div>
+          <div class="guide-alert">${g.s3Tip}</div>
+          ${imgTag("panel_resolutions", g.s3Title)}
+          <div class="guide-table-wrap">
+            <table class="guide-table">
+              <thead><tr>${g.psuHeaders.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+              <tbody>
+                ${g.psuRows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="guide-section">
+          <h2>${g.s4Title}</h2>
+          <ul>${g.s4Items.map((i) => `<li>${i}</li>`).join("")}</ul>
+        </div>
+
+        <div class="guide-section" id="guide-tools-appendix">
+          <div class="guide-header-row">
+            <h2 style="margin:0;">${g.s5Title}</h2>
+            <a class="companion-btn tools" id="guide-dl-tools-link" style="width:auto;" href="${latestToolsUrl}" target="_blank" rel="noopener">🧰 ${g.s5DlBtn}</a>
+          </div>
+          <p>${g.s5Intro}</p>
+          <div class="guide-tools-grid">
+            ${g.tools.map((t) => `<div class="guide-tool-item"><h4>${t.title}</h4><p>${t.desc}</p></div>`).join("")}
+          </div>
+        </div>
+      `;
+    }
+
     function applyLanguage(lang) {
       currentLang = I18N[lang] ? lang : "en";
       localStorage.setItem("am_portal_lang", currentLang);
@@ -1947,12 +2467,13 @@
         if (dict[key]) el.textContent = dict[key];
       });
 
+      renderBeginnerGuide();
       renderChangelog();
       renderStatsDashboard();
     }
 
     function activateTab(tabId, updateHash = true) {
-      const validTabs = ["installer", "changelog", "stats"];
+      const validTabs = ["installer", "guide", "changelog", "stats"];
       const target = validTabs.includes(tabId) ? tabId : "installer";
 
       document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -2583,19 +3104,25 @@
       const latest = releases[0];
       const sdLinkEl = document.getElementById("dl-sdcard-link");
       const toolsLinkEl = document.getElementById("dl-tools-link");
+      const guideToolsLinkEl = document.getElementById("guide-dl-tools-link");
       let foundToolsAsset = false;
       for (const asset of latest.assets || []) {
         const nl = String(asset.name || "").toLowerCase();
-        if (sdLinkEl && nl.includes("sdcard") && asset.browser_download_url) {
-          sdLinkEl.href = asset.browser_download_url;
+        if (nl.includes("sdcard") && asset.browser_download_url) {
+          latestSdCardUrl = asset.browser_download_url;
+          if (sdLinkEl) sdLinkEl.href = latestSdCardUrl;
         }
-        if (toolsLinkEl && nl.includes("tools") && asset.browser_download_url) {
-          toolsLinkEl.href = asset.browser_download_url;
+        if (nl.includes("tools") && asset.browser_download_url) {
+          latestToolsUrl = asset.browser_download_url;
+          if (toolsLinkEl) toolsLinkEl.href = latestToolsUrl;
+          if (guideToolsLinkEl) guideToolsLinkEl.href = latestToolsUrl;
           foundToolsAsset = true;
         }
       }
-      if (toolsLinkEl && !foundToolsAsset && latest.html_url) {
-        toolsLinkEl.href = latest.html_url;
+      if (!foundToolsAsset && latest.html_url) {
+        latestToolsUrl = latest.html_url;
+        if (toolsLinkEl) toolsLinkEl.href = latestToolsUrl;
+        if (guideToolsLinkEl) guideToolsLinkEl.href = latestToolsUrl;
       }
 
       for (const rel of releases) {
@@ -2666,6 +3193,24 @@
     document.querySelectorAll(".tab-btn").forEach((btn) => {
       btn.addEventListener("click", () => activateTab(btn.dataset.tab));
     });
+
+    const openGuideCta = document.getElementById("open-guide-cta");
+    if (openGuideCta) {
+      openGuideCta.addEventListener("click", () => {
+        activateTab("guide");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }
+
+    const openToolsGuideCta = document.getElementById("open-tools-guide-cta");
+    if (openToolsGuideCta) {
+      openToolsGuideCta.addEventListener("click", () => {
+        activateTab("guide");
+        setTimeout(() => {
+          document.getElementById("guide-tools-appendix")?.scrollIntoView({ behavior: "smooth" });
+        }, 50);
+      });
+    }
 
     document.querySelectorAll(".lang-btn").forEach((btn) => {
       btn.addEventListener("click", () => applyLanguage(btn.dataset.lang));

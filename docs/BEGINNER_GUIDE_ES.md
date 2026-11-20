@@ -9,7 +9,7 @@ Esta guía breve y sin tecnicismos va directo al grano: elegir tu placa electró
 ## 1. ¿Cómo funciona ArcadeMatrix? (En 4 pasos rápidos)
 
 La pantalla es **100 % autónoma** (no necesita quedar conectada a ningún PC):
-1. **Preparar la MicroSD (`FAT32`)**: descomprime **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** en la raíz de la tarjeta SD y **abre `config/network.json` con el Bloc de notas / TextEdit para escribir el `ssid` y `password` de tu Wi-Fi 2.4 GHz** *(obligatorio: ¡el Wi-Fi no se puede configurar desde la pantalla LED!)*.
+1. **Preparar la MicroSD (`FAT32`)**: descomprime **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** en la raíz de la tarjeta SD y **abre `config/network.json` con el Bloc de notas / TextEdit para escribir el `ssid` y `password` de tu Wi-Fi 2.4 GHz** *(obligatorio: ¡el Wi-Fi no se puede configurar desde la pantalla LED!)*.
 2. **Flashear en 1 clic (una sola vez)**: conecta el ESP32 por USB al PC/Mac, abre **[red77290.github.io/ArcadeMatrix](https://red77290.github.io/ArcadeMatrix/)** en Chrome o Edge y pulsa **Install**.
 3. **Conectar al panel LED y alimentar a `5V`**: al encenderse, el DMD se conecta solo a tu Wi-Fi y muestra su dirección IP.
 4. **Controlar desde el móvil o PC**: abre **`http://arcadematrix.local`** (o la IP mostrada) en el navegador para cambiar relojes retro, clima/bolsa, subir GIFs o enlazar **Recalbox / Batocera**.
@@ -107,7 +107,7 @@ Compra siempre **paneles LED RGB de interior (`Indoor HUB75` / `HUB75E`)** (evit
 > [!IMPORTANT]
 > **¡El DMD no puede conectarse al Wi-Fi configurándolo desde la pantalla!** Debes **editar obligatoriamente a mano el archivo `config/network.json`** en la MicroSD con tu `ssid` y `password` antes de encenderlo.
 
-1. **Prepara la MicroSD (`FAT32`)**: copia el contenido de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directamente en la raíz de la SD (`config/`, `gifs/`, `fighters_32/`...).
+1. **Prepara la MicroSD (`FAT32`)**: copia el contenido de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** directamente en la raíz de la SD (`config/`, `gifs/`, `fighters_32/`...).
 2. **Edita `config/network.json` en la tarjeta SD** con el *Bloc de notas* (Windows) o *TextEdit* (Mac) para poner tu **Wi-Fi `2.4 GHz`**:
    ```json
    "wifi": {
@@ -129,4 +129,32 @@ Compra siempre **paneles LED RGB de interior (`Indoor HUB75` / `HUB75E`)** (evit
 - **Parpadeo / líneas fantasma**: activa **Invertir Fase de Reloj (`clkphase`)** o sube **`Latch Blanking`** en **Sistema → Hardware**.
 - **No sale puerto USB en Web Installer**: el cable USB es «solo carga»; usa un cable USB de datos real con Chrome o Edge.
 
+---
+
+## 6. Anexo: Uso de las Herramientas para PC y Consolas (`ArcadeMatrix-tools.zip`)
+
+Todas las herramientas opcionales para PC, Mac, Linux y consolas retro están reunidas en un único archivo independiente — **nunca necesitas clonar ni descargar todo el código fuente del proyecto**:
+
+👉 **[⬇️ Descargar `ArcadeMatrix-tools.zip` (Última Release)](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)** *(también disponible directamente en el [Instalador Web](https://red77290.github.io/ArcadeMatrix/)).*
+
+Descomprime `ArcadeMatrix-tools.zip` en tu ordenador para utilizar las herramientas incluidas en `ArcadeMatrix-tools/`:
+
+1. **`recalbox_daemon/` — Sincronizar Recalbox, Batocera y RetroPie (Marquesinas + Récords + Showcase)**
+   - **Para qué sirve**: Muestra las marquesinas de sistema y juego en `0 ms` al navegar por la consola, lanza fichas animadas y vídeos Showcase en partida, y celebra tus nuevos récords High-Score a 60 FPS al salir del juego (~3.100 ROMs MAME/FBNeo `.hi` + NVRAM Neo-Geo/CPS decodificados de serie sin binarios externos).
+   - **Cómo usarlo**: Ejecuta `recalbox_daemon/install.ps1` (Windows PowerShell) o `./recalbox_daemon/install.sh` (macOS / Linux) — o `rpi_emulationstation_base_os_setup.sh` en RetroPie/Linux — e introduce la IP de tu consola + la IP de tu ArcadeMatrix.
+2. **`pixelcade_sync/` — Descargar Marquesinas Oficiales de Pixelcade en la MicroSD**
+   - **Para qué sirve**: Descarga y organiza automáticamente en tu tarjeta MicroSD la colección oficial de marquesinas arcade y consolas de Pixelcade.
+   - **Cómo usarlo**: Conecta la MicroSD al ordenador y ejecuta `pixelcade_sync/pixelcade_sync.ps1` (Windows) o `./pixelcade_sync/pixelcade_sync.sh` (macOS / Linux) indicando la unidad de la tarjeta SD.
+3. **`mugen_extractor/` — Añadir Luchadores MUGEN (`.fgt`)**
+   - **Para qué sirve**: Convierte carpetas de personajes MUGEN (`.sff` / `.air` en `chars/`) en sprites `.fgt` RGB565 optimizados + manifiesto `index.txt` para el overlay `fighter`.
+   - **Cómo usarlo**: Haz doble clic en `mugen_extractor/start_extractor.bat` (Windows) o ejecuta `./mugen_extractor/start_extractor.sh` (macOS / Linux) — instala `Pillow` automáticamente — o lanza `python3 mugen_extractor.py --src /ruta/chars --dest ./fighters_32` y copia `fighters_32/` (o `fighters_64/`) en la tarjeta SD.
+4. **`bdf_to_amfont/` y `font_conversion/` — Añadir Fuentes Personalizadas (Reloj, Fecha y Mensaje)**
+   - **Para qué sirve**: Convierte fuentes bitmap `.bdf` al formato compacto `.amf` en la SD (`bdf_to_amfont.py`, sin dependencias externas) o convierte fuentes `.ttf`/`.otf` (`font_conversion/`).
+   - **Cómo usarlo**: Copia tus archivos `.bdf` en `SD:/fonts/` y ejecuta `python3 bdf_to_amfont/bdf_to_amfont.py /ruta/a/SDCARD`. Las fuentes aparecen al instante en los menús de la Web UI sin reiniciar.
+5. **`gif_indexation/` y `anim_compiler/` — Preparación Masiva sin Conexión en PC**
+   - **Para qué sirve**: Aunque la gestión diaria de GIFs se hace por Wi-Fi desde **GIF File Manager** en la Web UI, `gif_indexation/generate_index.ps1` (`.sh`) permite indexar miles de GIFs por lotes en un lector SD de PC, y `anim_compiler/gif2amanim.py` compila flujos `.amanim`.
+6. **`home_assistant/` — Blueprints Domóticos para Home Assistant (`mqttdata`)**
+   - **Para qué sirve**: Blueprints YAML listos para importar (`home_assistant/blueprints/*.yaml`) en Home Assistant (`Ajustes → Automatizaciones y escenas → Blueprints`) para enviar sensores, gráficas de 24h, tablas y clima al DMD por MQTT.
+
 💬 ¿Dudas? ¡Únete a la comunidad en **[Telegram ArcadeMatrix](https://t.me/+DrSdAO8UMUViNmE0)**!
+

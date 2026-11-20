@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'webinstaller/**'
+      - 'docs/assets/guide/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -46,6 +47,8 @@ jobs:
           cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json webinstaller/manifest-esp32s3_n16r8.json _site/
           cp -r webinstaller/bin _site/bin
           cp -r webinstaller/changelog _site/changelog
+          mkdir -p _site/guide
+          cp docs/assets/guide/*.png _site/guide/
           python3 -c "
           import os, sys
           for env in ['esp32dev', 'esp32s3_waveshare', 'esp32s3_n16r8']:

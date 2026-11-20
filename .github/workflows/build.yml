@@ -129,10 +129,11 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p _site
+          mkdir -p _site _site/guide
           cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json webinstaller/manifest-esp32s3_n16r8.json _site/
           cp -r webinstaller/bin _site/bin
           cp -r webinstaller/changelog _site/changelog
+          cp docs/assets/guide/*.png _site/guide/
           cp artifacts/esp32dev/bootloader.bin _site/bootloader-esp32dev.bin
           cp artifacts/esp32dev/partitions.bin _site/partitions-esp32dev.bin
           cp artifacts/esp32dev/firmware.bin   _site/firmware-esp32dev.bin
