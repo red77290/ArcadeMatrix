@@ -59,6 +59,13 @@ Hermetic Python 3 stdlib unit test suite for `arcadematrix_companion_sync.py`. V
 python3 scripts/test_companion_sync.py
 ```
 
+### 2.5 `scripts/test_tools_e2e.py`
+Hermetic End-to-End (E2E) validation suite for the standalone `ArcadeMatrix-tools.zip` bundle. Packages and unzips `ArcadeMatrix-tools.zip` in an isolated workspace, verifies `0755` permissions + LF line endings + `sh -n` / `bash -n` syntax, launches live local HTTP (`/api/mqtt/broker-target`) and raw TCP MQTT v3.1.1 servers, and exercises `recalbox_daemon/install.sh` + `recalbox_daemon/install.ps1` (via `pwsh` when installed) across mocked Batocera, Recalbox, and RetroPie SSH consoles (verifying byte-exact 150 KB `arcadematrix_companion_sync.py` delivery, live `sync_meta` / `celebrate` high-score MQTT packets, and live double-forked daemon + watchdog startup), plus `pixelcade_sync.{sh,ps1}`, `generate_index.{sh,ps1}`, `bdf_to_amfont.py`, `generate_fonts.py`, `run_gif2amanim.{sh,ps1}`, and `mugen_extractor.py`.
+
+```bash
+python3 scripts/test_tools_e2e.py
+```
+
 ---
 
 ## 3. Static Validation & Quality Gates

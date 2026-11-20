@@ -148,9 +148,9 @@ Unzip `ArcadeMatrix-tools.zip` on your computer to access the following tools in
 3. **`mugen_extractor/` — Add Custom MUGEN Fighters (`.fgt` Sprites)**
    - **What it does**: Converts MUGEN character folders (`.sff` / `.air` in `chars/`) into pre-scaled RGB565 `.fgt` sprites + `index.txt` manifests for the `fighter` combat overlay.
    - **How to use**: Double-click `mugen_extractor/start_extractor.bat` (Windows) or run `./mugen_extractor/start_extractor.sh` (macOS / Linux) — it installs Python `Pillow` automatically — or run `python3 mugen_extractor.py --src /path/to/chars --dest ./fighters_32`, then copy `fighters_32/` (or `fighters_64/`) to your SD card.
-4. **`bdf_to_amfont/` & `font_conversion/` — Add Custom Fonts (Clock, Date & Message)**
-   - **What it does**: Converts `.bdf` bitmap fonts into compact `.amf` SD fonts (`bdf_to_amfont.py`, zero external dependencies) or converts `.ttf`/`.otf` fonts (`font_conversion/`).
-   - **How to use**: Copy `.bdf` files into `SD:/fonts/`, then run `python3 bdf_to_amfont/bdf_to_amfont.py /path/to/SDCARD`. Your new fonts appear immediately in the Web UI dropdowns without restarting.
+4. **`font_conversion/` & `bdf_to_amfont/` — Add Custom Fonts (Clock, Date & Message)**
+   - **What it does**: Converts `.bdf` bitmap fonts into compact `.amf` SD fonts with zero external dependencies (`font_conversion/generate_fonts.py` batch-converts a whole `SD:/fonts/` folder in-place, while `bdf_to_amfont/bdf_to_amfont.py` converts a single file).
+   - **How to use**: Copy `.bdf` files into `SD:/fonts/`, then run `python3 font_conversion/generate_fonts.py /path/to/SDCARD` (or `start_generate_fonts.bat` / `./start_generate_fonts.sh`). Your new fonts appear immediately in the Web UI dropdowns without restarting.
 5. **`gif_indexation/` & `anim_compiler/` — Bulk Offline SD Preparation**
    - **What it does**: While everyday GIF uploads and folder management work directly in your browser via the Web UI **GIF File Manager**, `gif_indexation/generate_index.ps1` (`.sh`) lets you pre-index thousands of GIFs in bulk on a PC card reader, and `anim_compiler/gif2amanim.py` compiles raw `.amanim` streams.
 6. **`home_assistant/` — Smart Home Automation Blueprints (`mqttdata`)**

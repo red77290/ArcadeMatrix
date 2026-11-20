@@ -43,7 +43,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 **[⬇️ Download Latest Pre-built Release & SD Card Kit](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Firmware Bundles**: Pick `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip`, or `ArcadeMatrix-esp32s3_waveshare.zip` depending on your board (contains `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` for manual `esptool.py` flashing - see [Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release)).
 - **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: [⬇️ Direct Download](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip) — Ready-to-copy root folder structure containing the modular `config/` folder (`network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`), GIF/MUGEN asset folders, and playlist indexing scripts.
-- **PC & Console Companion Tools (`ArcadeMatrix-tools.zip`)**: [⬇️ Direct Download](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Standalone archive (no need to clone or download the source code) bundling Recalbox / Batocera / RetroPie sync installers (`recalbox_daemon/`), Pixelcade marquee sync (`pixelcade_sync/`), MUGEN sprite extractor (`mugen_extractor/`), BDF/TTF font converters (`bdf_to_amfont/`, `font_conversion/`), bulk GIF playlist indexer (`gif_indexation/`), and Home Assistant blueprints (`home_assistant/`).
+- **PC & Console Companion Tools (`ArcadeMatrix-tools.zip`)**: [⬇️ Direct Download](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Standalone archive (no need to clone or download the source code) bundling Recalbox / Batocera / RetroPie sync installers (`recalbox_daemon/`), Pixelcade marquee sync (`pixelcade_sync/`), MUGEN sprite extractor (`mugen_extractor/`), BDF→AMF font converters (`font_conversion/`, `bdf_to_amfont/`), bulk GIF playlist indexer (`gif_indexation/`), and Home Assistant blueprints (`home_assistant/`).
 
 
 ## 🕹️ Built-in Engines & Hardware Simulations
@@ -222,12 +222,12 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 1. Copy your `.bdf` font(s) into the `fonts/` folder on your SD card.
 2. Run the batch converter (included in [`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)):
    ```bash
-   python3 bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # pass the SD root or its fonts/ folder
+   python3 font_conversion/generate_fonts.py /Volumes/SDCARD   # pass the SD root or its fonts/ folder
    ```
-   (No external dependencies required. Standard Python only.)
+   (No external dependencies required. Standard Python only — or convert a single file with `python3 bdf_to_amfont/bdf_to_amfont.py input.bdf output.amf`.)
 3. This converts each `.bdf` to an equivalently named `.amf` in-place. The resulting fonts immediately appear in the Web UI Settings page (Clock/Date "Font" dropdowns) - no restart required.
 
-For full details, check `tools/bdf_to_amfont/README.md`.
+For full details, check `tools/font_conversion/README.md` and `tools/bdf_to_amfont/README.md`.
 
 ## 🎬 DMD Media Showcase Server ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)) Integration
 The 4 Showcase engines (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **only work with the companion [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) application installed on another machine on the same local network** (Raspberry Pi, NAS, Docker host, or PC) to stream pre-rendered RGB565 posters, panoramas, multilingual metadata (automatically matching your DMD's configured language: `en`, `fr`, `es`, `de`, `it`), and RGB565 video trailers/gameplay clips:

@@ -148,9 +148,9 @@ Descomprime `ArcadeMatrix-tools.zip` en tu ordenador para utilizar las herramien
 3. **`mugen_extractor/` — Añadir Luchadores MUGEN (`.fgt`)**
    - **Para qué sirve**: Convierte carpetas de personajes MUGEN (`.sff` / `.air` en `chars/`) en sprites `.fgt` RGB565 optimizados + manifiesto `index.txt` para el overlay `fighter`.
    - **Cómo usarlo**: Haz doble clic en `mugen_extractor/start_extractor.bat` (Windows) o ejecuta `./mugen_extractor/start_extractor.sh` (macOS / Linux) — instala `Pillow` automáticamente — o lanza `python3 mugen_extractor.py --src /ruta/chars --dest ./fighters_32` y copia `fighters_32/` (o `fighters_64/`) en la tarjeta SD.
-4. **`bdf_to_amfont/` y `font_conversion/` — Añadir Fuentes Personalizadas (Reloj, Fecha y Mensaje)**
-   - **Para qué sirve**: Convierte fuentes bitmap `.bdf` al formato compacto `.amf` en la SD (`bdf_to_amfont.py`, sin dependencias externas) o convierte fuentes `.ttf`/`.otf` (`font_conversion/`).
-   - **Cómo usarlo**: Copia tus archivos `.bdf` en `SD:/fonts/` y ejecuta `python3 bdf_to_amfont/bdf_to_amfont.py /ruta/a/SDCARD`. Las fuentes aparecen al instante en los menús de la Web UI sin reiniciar.
+4. **`font_conversion/` y `bdf_to_amfont/` — Añadir Fuentes Personalizadas (Reloj, Fecha y Mensaje)**
+   - **Para qué sirve**: Convierte fuentes bitmap `.bdf` al formato compacto `.amf` en la SD sin dependencias externas (`font_conversion/generate_fonts.py` convierte toda la carpeta `SD:/fonts/` por lotes, mientras que `bdf_to_amfont/bdf_to_amfont.py` convierte un archivo individual).
+   - **Cómo usarlo**: Copia tus archivos `.bdf` en `SD:/fonts/` y ejecuta `python3 font_conversion/generate_fonts.py /ruta/a/SDCARD` (o `start_generate_fonts.bat` / `./start_generate_fonts.sh`). Las fuentes aparecen al instante en los menús de la Web UI sin reiniciar.
 5. **`gif_indexation/` y `anim_compiler/` — Preparación Masiva sin Conexión en PC**
    - **Para qué sirve**: Aunque la gestión diaria de GIFs se hace por Wi-Fi desde **GIF File Manager** en la Web UI, `gif_indexation/generate_index.ps1` (`.sh`) permite indexar miles de GIFs por lotes en un lector SD de PC, y `anim_compiler/gif2amanim.py` compila flujos `.amanim`.
 6. **`home_assistant/` — Blueprints Domóticos para Home Assistant (`mqttdata`)**

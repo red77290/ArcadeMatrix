@@ -43,7 +43,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 **[⬇️ Télécharger la dernière Release précompilée & Kit Carte SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Archives Firmware** : Choisissez `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip` ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte (contient `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` pour le flash manuel avec `esptool.py` - voir [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release)).
 - **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : [⬇️ Téléchargement direct](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip) — Contient l'arborescence complète à copier à la racine de la carte SD (dossier `config/` avec `network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`, dossiers GIFs/MUGEN, et scripts d'indexation).
-- **Outils Compagnons PC & Consoles (`ArcadeMatrix-tools.zip`)** : [⬇️ Téléchargement direct](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Archive autonome (sans télécharger le code source complet) regroupant les scripts d'installation Recalbox / Batocera / RetroPie (`recalbox_daemon/`), la synchronisation Pixelcade (`pixelcade_sync/`), l'extracteur MUGEN (`mugen_extractor/`), les convertisseurs de polices BDF/TTF (`bdf_to_amfont/`, `font_conversion/`), l'indexeur GIF (`gif_indexation/`) et les blueprints Home Assistant (`home_assistant/`).
+- **Outils Compagnons PC & Consoles (`ArcadeMatrix-tools.zip`)** : [⬇️ Téléchargement direct](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Archive autonome (sans télécharger le code source complet) regroupant les scripts d'installation Recalbox / Batocera / RetroPie (`recalbox_daemon/`), la synchronisation Pixelcade (`pixelcade_sync/`), l'extracteur MUGEN (`mugen_extractor/`), les convertisseurs de polices BDF→AMF (`font_conversion/`, `bdf_to_amfont/`), l'indexeur GIF (`gif_indexation/`) et les blueprints Home Assistant (`home_assistant/`).
 
 
 ## 🕹️ Moteurs Intégrés & Simulations Matérielles
@@ -222,12 +222,12 @@ L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap p
 1. Copiez votre/vos police(s) `.bdf` dans le dossier `fonts/` de votre carte SD.
 2. Lancez le convertisseur en lot (inclus dans [`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)) :
    ```bash
-   python3 bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # passez la racine SD ou son dossier fonts/
+   python3 font_conversion/generate_fonts.py /Volumes/SDCARD   # passez la racine SD ou son dossier fonts/
    ```
-   (Aucune dépendance externe requise. Python standard uniquement.)
+   (Aucune dépendance externe requise. Python standard uniquement — ou convertissez un fichier unique avec `python3 bdf_to_amfont/bdf_to_amfont.py entree.bdf sortie.amf`.)
 3. Cela convertit chaque `.bdf` en un `.amf` de même nom, sur place. Les polices résultantes apparaissent immédiatement dans la page Settings de l'interface Web (menus déroulants "Font" Horloge/Date) - sans redémarrage nécessaire.
 
-Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
+Pour tous les détails, consultez `tools/font_conversion/README_FR.md` et `tools/bdf_to_amfont/README_FR.md`.
 
 ## 🎬 Intégration du Serveur Media Showcase ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase))
 Les 4 moteurs Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **fonctionnent exclusivement avec l'application compagnon [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) installée sur une autre machine du même réseau local** (Raspberry Pi, NAS, serveur Docker ou PC) afin de diffuser les affiches pré-rendues en RGB565, panoramas, métadonnées multilingues (synchronisées automatiquement sur la langue du DMD : `fr`, `en`, `es`, `de`, `it`) et bandes-annonces/vidéos de gameplay RGB565 :

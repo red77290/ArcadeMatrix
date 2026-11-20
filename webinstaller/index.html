@@ -1564,7 +1564,7 @@
           <div>
             <span class="companion-badge tools" data-i18n="tools_badge">PC &amp; Console Tools</span>
             <h3 data-i18n="tools_title">Companion Tools Pack (ArcadeMatrix-tools.zip)</h3>
-            <p data-i18n="tools_desc">Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer &amp; Home Assistant blueprints.</p>
+            <p data-i18n="tools_desc">Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF→AMF font converters, GIF indexer &amp; Home Assistant blueprints.</p>
             <button type="button" class="guide-inline-cta" id="open-tools-guide-cta">
               📘 <span data-i18n="tools_guide_cta">How to use each tool (Guide Appendix) →</span>
             </button>
@@ -1801,7 +1801,7 @@
         sdkit_btn: "Download ArcadeMatrix-sdcard.zip",
         tools_badge: "PC & Console Tools",
         tools_title: "Companion Tools Pack (ArcadeMatrix-tools.zip)",
-        tools_desc: "Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer & Home Assistant blueprints.",
+        tools_desc: "Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF→AMF font converters, GIF indexer & Home Assistant blueprints.",
         tools_btn: "Download ArcadeMatrix-tools.zip",
         tab_guide: "Beginner's Guide",
         warn_guide_cta: "New here? Open the Beginner's Guide (Boards, Wiring, 5V PSU & Tools) →",
@@ -1872,7 +1872,7 @@
         sdkit_btn: "Télécharger ArcadeMatrix-sdcard.zip",
         tools_badge: "Outils PC & Consoles",
         tools_title: "Pack d'Outils Compagnons (ArcadeMatrix-tools.zip)",
-        tools_desc: "Archive autonome (sans télécharger le code source) : installation Recalbox / Batocera / RetroPie, Pixelcade sync, extracteur MUGEN, convertisseurs de polices BDF/TTF, indexeur GIF et blueprints Home Assistant.",
+        tools_desc: "Archive autonome (sans télécharger le code source) : installation Recalbox / Batocera / RetroPie, Pixelcade sync, extracteur MUGEN, convertisseurs de polices BDF→AMF, indexeur GIF et blueprints Home Assistant.",
         tools_btn: "Télécharger ArcadeMatrix-tools.zip",
         tab_guide: "Guide Débutant",
         warn_guide_cta: "Première installation ? Ouvrir le Guide Débutant (Cartes, Câblage, Alim 5V & Outils) →",
@@ -1943,7 +1943,7 @@
         sdkit_btn: "Descargar ArcadeMatrix-sdcard.zip",
         tools_badge: "Herramientas PC y Consolas",
         tools_title: "Paquete de Herramientas (ArcadeMatrix-tools.zip)",
-        tools_desc: "Paquete independiente (sin clonar el código fuente): instalador Recalbox / Batocera / RetroPie, Pixelcade sync, extractor MUGEN, conversores de fuentes BDF/TTF, indexador GIF y blueprints Home Assistant.",
+        tools_desc: "Paquete independiente (sin clonar el código fuente): instalador Recalbox / Batocera / RetroPie, Pixelcade sync, extractor MUGEN, conversores de fuentes BDF→AMF, indexador GIF y blueprints Home Assistant.",
         tools_btn: "Descargar ArcadeMatrix-tools.zip",
         tab_guide: "Guía Principiantes",
         warn_guide_cta: "¿Primera vez? Abre la Guía para Principiantes (Placas, Conexiones, Fuente 5V y Herramientas) →",
@@ -2208,8 +2208,8 @@
             desc: "Run <code>start_extractor.bat</code> or <code>./start_extractor.sh</code> (auto-installs Pillow) pointing <code>--src</code> to your MUGEN <code>chars/</code> folder, then copy <code>fighters_32/</code> or <code>fighters_64/</code> to your SD card."
           },
           {
-            title: "🔤 bdf_to_amfont/ & font_conversion/ — Custom SD Fonts",
-            desc: "Copy <code>.bdf</code> fonts into <code>SD:/fonts/</code> and run <code>python3 bdf_to_amfont/bdf_to_amfont.py /path/to/SD</code> (zero dependencies) to create <code>.amf</code> fonts selectable immediately in the Web UI."
+            title: "🔤 font_conversion/ & bdf_to_amfont/ — Custom SD Fonts",
+            desc: "Copy <code>.bdf</code> fonts into <code>SD:/fonts/</code> and run <code>python3 font_conversion/generate_fonts.py /path/to/SD</code> (zero dependencies) to create <code>.amf</code> fonts selectable immediately in the Web UI."
           },
           {
             title: "🎞️ gif_indexation/ & anim_compiler/ — Bulk Offline SD Prep",
@@ -2276,8 +2276,8 @@
             desc: "Lancez <code>start_extractor.bat</code> ou <code>./start_extractor.sh</code> (installe Pillow automatiquement) en pointant <code>--src</code> vers vos dossiers <code>chars/</code>, puis copiez <code>fighters_32/</code> ou <code>fighters_64/</code> sur la carte SD."
           },
           {
-            title: "🔤 bdf_to_amfont/ & font_conversion/ — Polices Personnalisées",
-            desc: "Copiez vos polices <code>.bdf</code> dans <code>SD:/fonts/</code> et lancez <code>python3 bdf_to_amfont/bdf_to_amfont.py /chemin/SD</code> (sans dépendance) : vos polices <code>.amf</code> apparaissent aussitôt dans la Web UI sans redémarrer."
+            title: "🔤 font_conversion/ & bdf_to_amfont/ — Polices Personnalisées",
+            desc: "Copiez vos polices <code>.bdf</code> dans <code>SD:/fonts/</code> et lancez <code>python3 font_conversion/generate_fonts.py /chemin/SD</code> (sans dépendance) : vos polices <code>.amf</code> apparaissent aussitôt dans la Web UI sans redémarrer."
           },
           {
             title: "🎞️ gif_indexation/ & anim_compiler/ — Préparation SD en Lot",
@@ -2344,8 +2344,8 @@
             desc: "Ejecuta <code>start_extractor.bat</code> o <code>./start_extractor.sh</code> (instala Pillow solo) apuntando <code>--src</code> a <code>chars/</code>, y copia <code>fighters_32/</code> o <code>fighters_64/</code> en tu tarjeta SD."
           },
           {
-            title: "🔤 bdf_to_amfont/ y font_conversion/ — Fuentes en SD",
-            desc: "Copia fuentes <code>.bdf</code> en <code>SD:/fonts/</code> y ejecuta <code>python3 bdf_to_amfont/bdf_to_amfont.py /ruta/SD</code> (sin dependencias) para generar fuentes <code>.amf</code> visibles al instante en la Web UI."
+            title: "🔤 font_conversion/ y bdf_to_amfont/ — Fuentes en SD",
+            desc: "Copia fuentes <code>.bdf</code> en <code>SD:/fonts/</code> y ejecuta <code>python3 font_conversion/generate_fonts.py /ruta/SD</code> (sin dependencias) para generar fuentes <code>.amf</code> visibles al instante en la Web UI."
           },
           {
             title: "🎞️ gif_indexation/ y anim_compiler/ — Preparación SD en Lote",

@@ -148,9 +148,9 @@ Décompressez `ArcadeMatrix-tools.zip` sur votre ordinateur pour utiliser les ou
 3. **`mugen_extractor/` — Ajouter des Personnages MUGEN (`.fgt`)**
    - **À quoi ça sert** : Convertit vos dossiers de combattants MUGEN (`.sff` / `.air` dans `chars/`) en sprites `.fgt` RGB565 optimisés + manifeste `index.txt` pour l'overlay `fighter`.
    - **Comment l'utiliser** : Double-cliquez sur `mugen_extractor/start_extractor.bat` (Windows) ou lancez `./mugen_extractor/start_extractor.sh` (macOS / Linux) — la bibliothèque Python `Pillow` s'installe toute seule — ou exécutez `python3 mugen_extractor.py --src /chemin/chars --dest ./fighters_32`, puis copiez `fighters_32/` (ou `fighters_64/`) sur la carte SD.
-4. **`bdf_to_amfont/` & `font_conversion/` — Ajouter des Polices Personnalisées (Horloge, Date & Message)**
-   - **À quoi ça sert** : Convertit des polices bitmap `.bdf` au format compact `.amf` lisible sur carte SD (`bdf_to_amfont.py`, sans aucune dépendance externe) ou convertit des polices `.ttf`/`.otf` (`font_conversion/`).
-   - **Comment l'utiliser** : Copiez vos fichiers `.bdf` dans `SD:/fonts/`, puis lancez `python3 bdf_to_amfont/bdf_to_amfont.py /chemin/vers/CARTE_SD`. Vos polices apparaissent aussitôt dans les menus déroulants de la Web UI sans redémarrer.
+4. **`font_conversion/` & `bdf_to_amfont/` — Ajouter des Polices Personnalisées (Horloge, Date & Message)**
+   - **À quoi ça sert** : Convertit des polices bitmap `.bdf` au format compact `.amf` lisible sur carte SD sans aucune dépendance externe (`font_conversion/generate_fonts.py` convertit tout le dossier `SD:/fonts/` en lot, tandis que `bdf_to_amfont/bdf_to_amfont.py` convertit un fichier unitaire).
+   - **Comment l'utiliser** : Copiez vos fichiers `.bdf` dans `SD:/fonts/`, puis lancez `python3 font_conversion/generate_fonts.py /chemin/vers/CARTE_SD` (ou `start_generate_fonts.bat` / `./start_generate_fonts.sh`). Vos polices apparaissent aussitôt dans les menus déroulants de la Web UI sans redémarrer.
 5. **`gif_indexation/` & `anim_compiler/` — Préparation Hors-Ligne en Lot sur PC**
    - **À quoi ça sert** : Au quotidien, l'ajout de GIFs se fait directement en Wi-Fi via la carte **GIF File Manager** de la Web UI. Si vous préparez des milliers de GIFs d'un coup sur un lecteur SD PC, `gif_indexation/generate_index.ps1` (`.sh`) génère les index en lot et `anim_compiler/gif2amanim.py` compile des flux `.amanim`.
 6. **`home_assistant/` — Blueprints Domotiques Home Assistant (`mqttdata`)**

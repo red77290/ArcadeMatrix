@@ -5,7 +5,7 @@ Automates validation and packaging of the ArcadeMatrix PC & Console Companion To
 bundle (ArcadeMatrix-tools.zip) attached to GitHub Releases.
 
 Packages end-user tools (Recalbox/Batocera/RetroPie sync daemon, Pixelcade sync,
-GIF playlist indexers, MUGEN sprite extractor, BDF/TTF font converters, animation
+GIF playlist indexers, MUGEN sprite extractor, BDF->AMF font converters, animation
 compiler, and Home Assistant blueprints) while excluding internal maintainer/cloud
 infrastructure (ota-stats-worker, hiscore_catalog).
 """
@@ -75,6 +75,7 @@ REQUIRED_SOURCE_FILES = [
     "bdf_to_amfont/bdf_to_amfont.py",
     "font_conversion/generate_fonts.py",
     "anim_compiler/gif2amanim.py",
+    "anim_compiler/requirements.txt",
     "rpi_emulationstation_base_os_setup.sh",
 ]
 
@@ -91,10 +92,10 @@ This standalone package bundles all PC, Mac, Linux, and retro-console companion 
 | [`recalbox_daemon/`](recalbox_daemon/README.md) | Real-time EmulationStation sync (`install.sh` / `install.ps1`), universal high-score extractor (~3,100 MAME/FBNeo `.hi` + Neo-Geo/CPS NVRAM), and Showcase triggers for Recalbox, Batocera, and RetroPie. | PC / Mac / Console SSH |
 | [`pixelcade_sync/`](pixelcade_sync/README.md) | Downloads and organizes official Pixelcade arcade/console marquees onto your SD card (`pixelcade_sync.sh` / `pixelcade_sync.ps1`). | PC / Mac / Linux |
 | [`mugen_extractor/`](mugen_extractor/README.md) | Converts MUGEN characters (`chars/`) into optimized `.fgt` RGB565 sprites + `index.txt` manifests for the `fighter` overlay. | PC / Mac / Linux (Python 3 + Pillow) |
-| [`bdf_to_amfont/`](bdf_to_amfont/README.md) | Zero-dependency Python converter turning `.bdf` bitmap fonts into compact `.amf` SD fonts for Clock, Date, and Message engines. | PC / Mac / Linux (Python 3) |
-| [`font_conversion/`](font_conversion/README.md) | Converts `.ttf` / `.otf` TrueType fonts into bitmap header/font assets (`generate_fonts.py`). | PC / Mac / Linux (Python 3) |
+| [`font_conversion/`](font_conversion/README.md) | Batch SD folder converter (`generate_fonts.py <SD_PATH>` / `start_generate_fonts.sh` / `.bat`) turning every `.bdf` in `SD:/fonts/` into `.amf` in-place. | PC / Mac / Linux (Python 3) |
+| [`bdf_to_amfont/`](bdf_to_amfont/README.md) | Zero-dependency single-file CLI converter (`bdf_to_amfont.py input.bdf output.amf`) for Clock, Date, and Message engines. | PC / Mac / Linux (Python 3) |
 | [`gif_indexation/`](gif_indexation/README.md) | Optional bulk offline playlist indexer (`generate_index.sh` / `generate_index.ps1`) when preparing large SD cards on a computer. | PC / Mac / Linux |
-| `anim_compiler/` | Compiles multi-frame `.gif` animations into raw `.amanim` streams (`gif2amanim.py`). | PC / Mac / Linux (Python 3) |
+| `anim_compiler/` | Compiles multi-frame `.gif` animations into raw `.amanim` streams (`run_gif2amanim.sh` / `run_gif2amanim.ps1` / `gif2amanim.py`). | PC / Mac / Linux (Python 3 + Pillow) |
 | `home_assistant/` | Ready-to-import Home Assistant automation blueprints for the `mqttdata` engine. | Home Assistant |
 | `rpi_emulationstation_base_os_setup.sh` | Automated SSH helper for base Linux / RetroPie EmulationStation installations. | Linux / Raspberry Pi |
 
@@ -116,10 +117,10 @@ Cette archive autonome regroupe tous les outils compagnons PC, Mac, Linux et con
 | [`recalbox_daemon/`](recalbox_daemon/README_FR.md) | Synchronisation temps réel EmulationStation (`install.sh` / `install.ps1`), extracteur universel de High-Scores (~3 100 ROMs MAME/FBNeo `.hi` + NVRAM Neo-Geo/CPS) et déclenchement Showcase pour Recalbox, Batocera et RetroPie. | PC / Mac / Console SSH |
 | [`pixelcade_sync/`](pixelcade_sync/README_FR.md) | Télécharge et organise les marquees officiels Pixelcade sur votre carte SD (`pixelcade_sync.sh` / `pixelcade_sync.ps1`). | PC / Mac / Linux |
 | [`mugen_extractor/`](mugen_extractor/README_FR.md) | Convertit vos personnages MUGEN (`chars/`) en sprites `.fgt` RGB565 optimisés + manifeste `index.txt` pour l'overlay `fighter`. | PC / Mac / Linux (Python 3 + Pillow) |
-| [`bdf_to_amfont/`](bdf_to_amfont/README_FR.md) | Convertisseur Python sans dépendance transformant les polices `.bdf` en polices SD `.amf` pour l'Horloge, la Date et les Messages. | PC / Mac / Linux (Python 3) |
-| [`font_conversion/`](font_conversion/README_FR.md) | Convertit des polices `.ttf` / `.otf` TrueType en polices bitmap (`generate_fonts.py`). | PC / Mac / Linux (Python 3) |
+| [`font_conversion/`](font_conversion/README_FR.md) | Convertisseur en lot de dossier SD (`generate_fonts.py <SD_PATH>` / `start_generate_fonts.sh` / `.bat`) transformant toutes les polices `.bdf` de `SD:/fonts/` en `.amf`. | PC / Mac / Linux (Python 3) |
+| [`bdf_to_amfont/`](bdf_to_amfont/README_FR.md) | Convertisseur Python unitaire sans dépendance (`bdf_to_amfont.py entree.bdf sortie.amf`) pour l'Horloge, la Date et les Messages. | PC / Mac / Linux (Python 3) |
 | [`gif_indexation/`](gif_indexation/README_FR.md) | Scripts optionnels d'indexation hors-ligne en lot (`generate_index.sh` / `generate_index.ps1`) pour préparer une grosse carte SD sur PC. | PC / Mac / Linux |
-| `anim_compiler/` | Compile des animations `.gif` en flux binaires `.amanim` (`gif2amanim.py`). | PC / Mac / Linux (Python 3) |
+| `anim_compiler/` | Compile des animations `.gif` en flux binaires `.amanim` (`run_gif2amanim.sh` / `run_gif2amanim.ps1` / `gif2amanim.py`). | PC / Mac / Linux (Python 3 + Pillow) |
 | `home_assistant/` | Blueprints d'automatisation Home Assistant prêts à importer pour le moteur `mqttdata`. | Home Assistant |
 | `rpi_emulationstation_base_os_setup.sh` | Assistant d'installation SSH pour systèmes Linux / RetroPie avec EmulationStation. | Linux / Raspberry Pi |
 
@@ -141,10 +142,10 @@ Este paquete independiente reúne todas las herramientas para PC, Mac, Linux y c
 | [`recalbox_daemon/`](recalbox_daemon/README_ES.md) | Sincronización en tiempo real con EmulationStation (`install.sh` / `install.ps1`), extractor universal de récords (~3.100 ROMs MAME/FBNeo `.hi` + NVRAM Neo-Geo/CPS) y eventos Showcase para Recalbox, Batocera y RetroPie. | PC / Mac / Consola SSH |
 | [`pixelcade_sync/`](pixelcade_sync/README_ES.md) | Descarga y organiza marquesinas oficiales de Pixelcade en tu tarjeta SD (`pixelcade_sync.sh` / `pixelcade_sync.ps1`). | PC / Mac / Linux |
 | [`mugen_extractor/`](mugen_extractor/README_ES.md) | Convierte personajes MUGEN (`chars/`) en sprites `.fgt` RGB565 + manifiesto `index.txt` para el overlay `fighter`. | PC / Mac / Linux (Python 3 + Pillow) |
-| [`bdf_to_amfont/`](bdf_to_amfont/README_ES.md) | Convertidor Python sin dependencias externas de fuentes `.bdf` al formato compacto `.amf` en la tarjeta SD. | PC / Mac / Linux (Python 3) |
-| [`font_conversion/`](font_conversion/README_ES.md) | Convierte fuentes `.ttf` / `.otf` TrueType en recursos bitmap (`generate_fonts.py`). | PC / Mac / Linux (Python 3) |
+| [`font_conversion/`](font_conversion/README_ES.md) | Convertidor por lotes de carpeta SD (`generate_fonts.py <SD_PATH>` / `start_generate_fonts.sh` / `.bat`) que transforma cada `.bdf` de `SD:/fonts/` en `.amf`. | PC / Mac / Linux (Python 3) |
+| [`bdf_to_amfont/`](bdf_to_amfont/README_ES.md) | Convertidor Python individual sin dependencias (`bdf_to_amfont.py entrada.bdf salida.amf`) para Reloj, Fecha y Mensaje. | PC / Mac / Linux (Python 3) |
 | [`gif_indexation/`](gif_indexation/README_ES.md) | Scripts opcionales de indexación por lotes sin conexión (`generate_index.sh` / `generate_index.ps1`) para preparar tarjetas SD en PC. | PC / Mac / Linux |
-| `anim_compiler/` | Compila animaciones `.gif` en flujos binarios `.amanim` (`gif2amanim.py`). | PC / Mac / Linux (Python 3) |
+| `anim_compiler/` | Compila animaciones `.gif` en flujos binarios `.amanim` (`run_gif2amanim.sh` / `run_gif2amanim.ps1` / `gif2amanim.py`). | PC / Mac / Linux (Python 3 + Pillow) |
 | `home_assistant/` | Blueprints de automatización de Home Assistant listos para importar con el motor `mqttdata`. | Home Assistant |
 | `rpi_emulationstation_base_os_setup.sh` | Asistente SSH automatizado para sistemas base Linux / RetroPie con EmulationStation. | Linux / Raspberry Pi |
 

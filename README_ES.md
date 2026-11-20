@@ -43,7 +43,7 @@
 **[⬇️ Descargar la última Release precompilada y Kit de Tarjeta SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Archivos de Firmware**: Elige `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip` o `ArcadeMatrix-esp32s3_waveshare.zip` según tu placa (contiene `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` y `boot_app0.bin` para flasheo manual con `esptool.py`; consulta [Primeros pasos](docs/GETTING_STARTED_ES.md#flashing-a-pre-built-release)).
 - **Kit de Tarjeta SD (`ArcadeMatrix-sdcard.zip`)**: [⬇️ Descarga directa](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip) — Contiene la estructura de carpetas lista para copiar a la raíz de la tarjeta SD (carpeta `config/` con `network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`, carpetas GIFs/MUGEN y scripts de indexación).
-- **Herramientas para PC y Consolas (`ArcadeMatrix-tools.zip`)**: [⬇️ Descarga directa](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Paquete independiente (sin necesidad de descargar todo el código fuente) con los instaladores para Recalbox / Batocera / RetroPie (`recalbox_daemon/`), sincronización Pixelcade (`pixelcade_sync/`), extractor MUGEN (`mugen_extractor/`), conversores de fuentes BDF/TTF (`bdf_to_amfont/`, `font_conversion/`), indexador GIF (`gif_indexation/`) y blueprints de Home Assistant (`home_assistant/`).
+- **Herramientas para PC y Consolas (`ArcadeMatrix-tools.zip`)**: [⬇️ Descarga directa](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Paquete independiente (sin necesidad de descargar todo el código fuente) con los instaladores para Recalbox / Batocera / RetroPie (`recalbox_daemon/`), sincronización Pixelcade (`pixelcade_sync/`), extractor MUGEN (`mugen_extractor/`), conversores de fuentes BDF→AMF (`font_conversion/`, `bdf_to_amfont/`), indexador GIF (`gif_indexation/`) y blueprints de Home Assistant (`home_assistant/`).
 
 
 ## 🕹️ Motores Integrados y Simulaciones de Hardware
@@ -222,12 +222,12 @@ El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personali
 1. Copia tu(s) fuente(s) `.bdf` en la carpeta `fonts/` de tu tarjeta SD.
 2. Ejecuta el convertidor por lotes (incluido en [`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)):
    ```bash
-   python3 bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
+   python3 font_conversion/generate_fonts.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
    ```
-   (No requiere dependencias externas. Solo Python estándar.)
+   (No requiere dependencias externas. Solo Python estándar — o convierte un archivo suelto con `python3 bdf_to_amfont/bdf_to_amfont.py entrada.bdf salida.amf`.)
 3. Esto convierte cada `.bdf` en un `.amf` del mismo nombre en el mismo lugar. Las fuentes resultantes aparecen de inmediato en la página de Configuración de la interfaz web (menús desplegables "Font" de Reloj/Fecha) - sin necesidad de reiniciar.
 
-Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
+Para todos los detalles, revisa `tools/font_conversion/README_ES.md` y `tools/bdf_to_amfont/README_ES.md`.
 
 ## 🎬 Integración del Servidor Media Showcase ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase))
 Los 4 motores Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **funcionan exclusivamente con la aplicación complementaria [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) instalada en otra máquina de la misma red local** (Raspberry Pi, NAS, servidor Docker o PC) para transmitir pósters pre-renderizados en RGB565, panoramas, metadatos multilingües (sincronizados automáticamente con el idioma configurado en el DMD: `es`, `en`, `fr`, `de`, `it`) y tráilers/vídeos de gameplay RGB565:
