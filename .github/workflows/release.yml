@@ -38,6 +38,9 @@ jobs:
       - name: Validate WebInstaller manifest
         run: python3 scripts/validate_webinstaller.py
 
+      - name: Validate companion tools bundle sources
+        run: python3 scripts/package_tools.py --verify-only
+
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
 
@@ -122,6 +125,10 @@ jobs:
         run: |
           python3 scripts/package_sdcard.py
 
+      - name: Zip PC & console companion tools bundle
+        run: |
+          python3 scripts/package_tools.py
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -130,6 +137,7 @@ jobs:
             ArcadeMatrix-esp32s3_waveshare.zip
             ArcadeMatrix-esp32s3_n16r8.zip
             ArcadeMatrix-sdcard.zip
+            ArcadeMatrix-tools.zip
             release/esp32dev/firmware-esp32dev.bin
             release/esp32s3_waveshare/firmware-esp32s3_waveshare.bin
             release/esp32s3_n16r8/firmware-esp32s3_n16r8.bin

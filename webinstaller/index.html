@@ -425,6 +425,128 @@
       box-shadow: 0 0 15px rgba(255, 0, 85, 0.5);
     }
 
+    .companion-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.25rem;
+      margin-top: 0.25rem;
+    }
+
+    @media (min-width: 720px) {
+      .companion-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .companion-card {
+      background: var(--card-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 0.9rem;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+      min-width: 0;
+    }
+
+    .companion-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      background: var(--glass-border);
+      transition: background 0.3s ease;
+    }
+
+    .companion-card:nth-child(1):hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 240, 255, 0.35);
+      box-shadow: 0 12px 26px rgba(0, 240, 255, 0.09);
+    }
+    .companion-card:nth-child(1):hover::before { background: var(--accent-cyan); }
+
+    .companion-card:nth-child(2):hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 230, 118, 0.35);
+      box-shadow: 0 12px 26px rgba(0, 230, 118, 0.09);
+    }
+    .companion-card:nth-child(2):hover::before { background: var(--accent-green); }
+
+    .companion-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      align-self: flex-start;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.24rem 0.6rem;
+      border-radius: 999px;
+      background: rgba(0, 240, 255, 0.12);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(0, 240, 255, 0.28);
+    }
+
+    .companion-badge.tools {
+      background: rgba(0, 230, 118, 0.12);
+      color: var(--accent-green);
+      border-color: rgba(0, 230, 118, 0.28);
+    }
+
+    .companion-card h3 {
+      margin: 0.35rem 0 0.45rem 0;
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    .companion-card p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .companion-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      width: 100%;
+      box-sizing: border-box;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.09);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 9px;
+      padding: 0.72rem 1rem;
+      font-weight: 600;
+      font-size: 0.92rem;
+      transition: all 0.25s ease;
+      text-align: center;
+    }
+
+    .companion-btn:hover {
+      background: var(--accent-cyan);
+      border-color: var(--accent-cyan);
+      color: #000;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.45);
+    }
+
+    .companion-btn.tools:hover {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: #000;
+      box-shadow: 0 0 15px rgba(0, 230, 118, 0.45);
+    }
+
     /* Tab 2: Visual Changelog Blog */
     .changelog-list {
       display: flex;
@@ -1225,6 +1347,30 @@
           <esp-web-install-button manifest="manifest-esp32s3_waveshare.json"></esp-web-install-button>
         </div>
       </div>
+
+      <div class="companion-grid">
+        <div class="companion-card">
+          <div>
+            <span class="companion-badge" data-i18n="sdkit_badge">Micro-SD Starter Kit</span>
+            <h3 data-i18n="sdkit_title">SD Card Starter Kit (ArcadeMatrix-sdcard.zip)</h3>
+            <p data-i18n="sdkit_desc">Ready-to-copy root folder structure with modular /config/ templates, sample GIF/MUGEN directories, and quickstart assets.</p>
+          </div>
+          <a id="dl-sdcard-link" class="companion-btn" href="https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip" target="_blank" rel="noopener">
+            💾 <span data-i18n="sdkit_btn">Download ArcadeMatrix-sdcard.zip</span>
+          </a>
+        </div>
+
+        <div class="companion-card">
+          <div>
+            <span class="companion-badge tools" data-i18n="tools_badge">PC &amp; Console Tools</span>
+            <h3 data-i18n="tools_title">Companion Tools Pack (ArcadeMatrix-tools.zip)</h3>
+            <p data-i18n="tools_desc">Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer &amp; Home Assistant blueprints.</p>
+          </div>
+          <a id="dl-tools-link" class="companion-btn tools" href="https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip" target="_blank" rel="noopener">
+            🧰 <span data-i18n="tools_btn">Download ArcadeMatrix-tools.zip</span>
+          </a>
+        </div>
+      </div>
     </section>
 
     <!-- TAB 2: VISUAL CHANGELOG BLOG -->
@@ -1440,7 +1586,15 @@
         gh_supp_summary: "Supplementary Info — Raw GitHub Release Asset Downloads (Separate from Cloudflare Telemetry)",
         gh_supp_disclaimer: "Note: Raw GitHub API asset counters include manual .bin/.zip downloads, USB reflashes, and automated crawlers. They are never merged into the Cloudflare UUID fleet charts above.",
         gh_rel_heading: "Raw Downloads per GitHub Release Tag",
-        gh_hw_heading: "Raw Asset Downloads per Target Archive"
+        gh_hw_heading: "Raw Asset Downloads per Target Archive",
+        sdkit_badge: "Micro-SD Starter Kit",
+        sdkit_title: "SD Card Starter Kit (ArcadeMatrix-sdcard.zip)",
+        sdkit_desc: "Ready-to-copy root folder structure with modular /config/ templates, sample GIF/MUGEN directories, and quickstart assets.",
+        sdkit_btn: "Download ArcadeMatrix-sdcard.zip",
+        tools_badge: "PC & Console Tools",
+        tools_title: "Companion Tools Pack (ArcadeMatrix-tools.zip)",
+        tools_desc: "Standalone bundle (no source repo needed): Recalbox / Batocera / RetroPie sync installer, Pixelcade sync, MUGEN sprite extractor, BDF/TTF font converters, GIF indexer & Home Assistant blueprints.",
+        tools_btn: "Download ArcadeMatrix-tools.zip"
       },
       fr: {
         switch_rpi: "Portail Raspberry Pi",
@@ -1500,7 +1654,15 @@
         gh_supp_summary: "Informations complémentaires — Téléchargements bruts GitHub Releases (Hors télémétrie Cloudflare)",
         gh_supp_disclaimer: "Note : Les compteurs bruts de l'API GitHub incluent les téléchargements manuels (.bin/.zip), les reflashs USB et les robots/crawlers. Ils ne sont jamais fusionnés aux graphiques Cloudflare ci-dessus.",
         gh_rel_heading: "Téléchargements bruts par tag GitHub Release",
-        gh_hw_heading: "Téléchargements bruts par archive matérielle"
+        gh_hw_heading: "Téléchargements bruts par archive matérielle",
+        sdkit_badge: "Kit Carte Micro-SD",
+        sdkit_title: "Kit de Démarrage Carte SD (ArcadeMatrix-sdcard.zip)",
+        sdkit_desc: "Arborescence prête à copier à la racine de la carte SD : dossier modulaire /config/, dossiers GIF/MUGEN et ressources de démarrage.",
+        sdkit_btn: "Télécharger ArcadeMatrix-sdcard.zip",
+        tools_badge: "Outils PC & Consoles",
+        tools_title: "Pack d'Outils Compagnons (ArcadeMatrix-tools.zip)",
+        tools_desc: "Archive autonome (sans télécharger le code source) : installation Recalbox / Batocera / RetroPie, Pixelcade sync, extracteur MUGEN, convertisseurs de polices BDF/TTF, indexeur GIF et blueprints Home Assistant.",
+        tools_btn: "Télécharger ArcadeMatrix-tools.zip"
       },
       es: {
         switch_rpi: "Portal Raspberry Pi",
@@ -1560,7 +1722,15 @@
         gh_supp_summary: "Información complementaria — Descargas brutas en GitHub Releases (Independiente de Cloudflare)",
         gh_supp_disclaimer: "Nota: Los contadores brutos de la API de GitHub incluyen descargas manuales (.bin/.zip), reflasheos USB y bots. Nunca se mezclan con los gráficos de Cloudflare.",
         gh_rel_heading: "Descargas brutas por versión en GitHub",
-        gh_hw_heading: "Descargas brutas por archivo de placa"
+        gh_hw_heading: "Descargas brutas por archivo de placa",
+        sdkit_badge: "Kit Tarjeta Micro-SD",
+        sdkit_title: "Kit Inicial de Tarjeta SD (ArcadeMatrix-sdcard.zip)",
+        sdkit_desc: "Estructura lista para copiar en la raíz de la tarjeta SD con plantillas modulares /config/, carpetas GIF/MUGEN y recursos iniciales.",
+        sdkit_btn: "Descargar ArcadeMatrix-sdcard.zip",
+        tools_badge: "Herramientas PC y Consolas",
+        tools_title: "Paquete de Herramientas (ArcadeMatrix-tools.zip)",
+        tools_desc: "Paquete independiente (sin clonar el código fuente): instalador Recalbox / Batocera / RetroPie, Pixelcade sync, extractor MUGEN, conversores de fuentes BDF/TTF, indexador GIF y blueprints Home Assistant.",
+        tools_btn: "Descargar ArcadeMatrix-tools.zip"
       }
     };
 
@@ -2410,11 +2580,29 @@
       const hwMap = new Map();
       const ghReleases = [];
 
+      const latest = releases[0];
+      const sdLinkEl = document.getElementById("dl-sdcard-link");
+      const toolsLinkEl = document.getElementById("dl-tools-link");
+      let foundToolsAsset = false;
+      for (const asset of latest.assets || []) {
+        const nl = String(asset.name || "").toLowerCase();
+        if (sdLinkEl && nl.includes("sdcard") && asset.browser_download_url) {
+          sdLinkEl.href = asset.browser_download_url;
+        }
+        if (toolsLinkEl && nl.includes("tools") && asset.browser_download_url) {
+          toolsLinkEl.href = asset.browser_download_url;
+          foundToolsAsset = true;
+        }
+      }
+      if (toolsLinkEl && !foundToolsAsset && latest.html_url) {
+        toolsLinkEl.href = latest.html_url;
+      }
+
       for (const rel of releases) {
         let relDl = 0;
         for (const asset of rel.assets || []) {
           const nameLower = String(asset.name || "").toLowerCase();
-          if (nameLower.includes("sdcard")) continue;
+          if (nameLower.includes("sdcard") || nameLower.includes("tools")) continue;
           const dl = Number(asset.download_count || 0);
           relDl += dl;
           let hwKey = null;
@@ -2459,14 +2647,11 @@
           if (live && live.kpis && typeof live.kpis.total_known === "number") {
             currentStatsData = { ...createEmptyStats(), ...live, isWorkerLive: true };
             renderStatsDashboard();
-            if (Array.isArray(live.github_releases) && live.github_releases.length > 0) {
-              return;
-            }
           }
         }
       } catch (_) {}
 
-      // 2. Fetch live GitHub Release firmware downloads directly from GitHub API
+      // 2. Fetch GitHub Releases to bind direct SD/tools zip links & supplementary firmware breakdown
       try {
         const ghRes = await fetch(GITHUB_RELEASES_API);
         if (ghRes.ok) {

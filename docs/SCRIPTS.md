@@ -106,8 +106,23 @@ python3 scripts/benchmark_endurance.py --host 192.168.1.50 --duration 1800 --csv
 
 ---
 
-## 5. Arcade Console Integration
+## 5. Release Packaging & Arcade Console Integration
 
-### 5.1 `scripts/sync-recalbox.sh`
+### 5.1 `scripts/package_sdcard.py`
+Validates the modular `/config/` domain files in `release/sdCard/` (ensuring no legacy monolithic `config.json` is shipped) and builds `ArcadeMatrix-sdcard.zip` for GitHub Releases (`--verify-only` supported in CI).
+
+```bash
+python3 scripts/package_sdcard.py --verify-only
+python3 scripts/package_sdcard.py
+```
+
+### 5.2 `scripts/package_tools.py`
+Validates and packages all end-user PC & console companion tools (`recalbox_daemon/`, `pixelcade_sync/`, `gif_indexation/`, `mugen_extractor/`, `bdf_to_amfont/`, `font_conversion/`, `anim_compiler/`, `home_assistant/`, and `rpi_emulationstation_base_os_setup.sh`) into `ArcadeMatrix-tools.zip` with normalized LF line endings, `0755` script permissions, and trilingual overview `README` files, while strictly excluding internal maintainer/cloud directories (`ota-stats-worker/`, `hiscore_catalog/`).
+
+```bash
+python3 scripts/package_tools.py --verify-only
+python3 scripts/package_tools.py
+```
+
+### 5.3 `scripts/sync-recalbox.sh`
 Lightweight shell daemon deployed to Recalbox / Batocera / RetroPie consoles (automatically installable via `POST /api/mqtt/install` in the WebUI). Watches EmulationStation state events and publishes active system/game marquee updates to ArcadeMatrix over MQTT or HTTP.
-

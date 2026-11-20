@@ -59,6 +59,9 @@ jobs:
       - name: Execute companion sync high-score decoder tests
         run: python3 scripts/test_companion_sync.py
 
+      - name: Validate companion tools bundle sources
+        run: python3 scripts/package_tools.py --verify-only
+
 
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
