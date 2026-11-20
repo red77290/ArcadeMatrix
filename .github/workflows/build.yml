@@ -56,6 +56,9 @@ jobs:
       - name: Execute host native unit test suite
         run: python3 scripts/run_native_tests.py
 
+      - name: Execute companion sync high-score decoder tests
+        run: python3 scripts/test_companion_sync.py
+
 
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}

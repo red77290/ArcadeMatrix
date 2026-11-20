@@ -52,6 +52,13 @@ python3 scripts/generate_engine_matrix.py
 python3 scripts/generate_engine_matrix.py --check
 ```
 
+### 2.4 `scripts/test_companion_sync.py`
+Hermetic Python 3 stdlib unit test suite for `arcadematrix_companion_sync.py`. Validates embedded `_HI2TXT_CATALOG_B85` decompression performance (`< 15 ms`) and integrity (`>= 2,500` ROMs), `combined` / `separate` / `score_only` / non-BCD scaled integer decoders, inter-core `±1..8 B` tolerance + corrupt-buffer rejection, M68000 16-bit byte-swapped Neo-Geo NVRAM non-regression, MAME Lua `hiscore/` + `st_mtime` / configured-core discovery, `start` -> `stop` record celebration payloads, and SHA-256 parity between both repository copies.
+
+```bash
+python3 scripts/test_companion_sync.py
+```
+
 ---
 
 ## 3. Static Validation & Quality Gates
