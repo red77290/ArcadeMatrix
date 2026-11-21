@@ -1095,6 +1095,177 @@ select.input option {
   <style>
     .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
     .form-grid.col-4 { grid-template-columns: repeat(4, 1fr); }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    .sidebar-sync-quick {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.55rem 0.7rem;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(99, 102, 241, 0.22);
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+    }
+
+    .sidebar-sync-quick.active {
+      background: rgba(16, 185, 129, 0.09);
+      border-color: rgba(16, 185, 129, 0.38);
+    }
+
+    .dash-sync-quick {
+      margin-top: 1.25rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .sync-quick-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+
+    .sync-quick-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #64748b;
+      flex-shrink: 0;
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .sync-quick-dot.online {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+    }
+
+    .sync-quick-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sync-quick-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .sync-quick-sub {
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+      margin-top: 0.1rem;
+    }
+
+    .sync-quick-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-shrink: 0;
+    }
+
+    .sync-toggle-pill {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .sync-toggle-pill.sm {
+      width: 36px;
+      height: 20px;
+    }
+
+    .sync-toggle-pill input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .sync-toggle-track {
+      position: absolute;
+      inset: 0;
+      background: rgba(100, 116, 139, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .sync-toggle-track::before {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      border-radius: 50%;
+      background: #f8fafc;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s ease;
+    }
+
+    .sync-toggle-pill.sm .sync-toggle-track::before {
+      width: 14px;
+      height: 14px;
+    }
+
+    .sync-toggle-pill input:checked + .sync-toggle-track {
+      background: #10b981;
+      border-color: #34d399;
+    }
+
+    .sync-toggle-pill input:checked + .sync-toggle-track::before {
+      transform: translateX(18px);
+    }
+
+    .sync-toggle-pill.sm input:checked + .sync-toggle-track::before {
+      transform: translateX(16px);
+    }
+
+    .sync-toggle-pill input:disabled + .sync-toggle-track {
+      opacity: 0.5;
+      cursor: wait;
+    }
+
+    .btn-sync-gear {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+    }
+
+    .btn-sync-gear:hover {
+      background: var(--accent-glow);
+      border-color: var(--accent-primary);
+      transform: rotate(25deg);
+    }
   </style>
 </head>
 <body>
@@ -1124,6 +1295,19 @@ select.input option {
         </li>
       </ul>
       <div class="sidebar-footer">
+        <div class="sidebar-sync-quick" id="sidebar-sync-quick">
+          <div class="sync-quick-meta">
+            <span class="sync-quick-dot" id="sidebar-sync-dot"></span>
+            <span class="sync-quick-label">🕹️ <span data-i18n="quick_sync_label">Console Sync</span></span>
+          </div>
+          <div class="sync-quick-actions">
+            <label class="sync-toggle-pill sm" data-i18n-title="quick_sync_toggle_tt" title="Enable or pause Console Sync (MQTT)">
+              <input type="checkbox" id="quick-mqtt-toggle-sidebar">
+              <span class="sync-toggle-track"></span>
+            </label>
+            <button type="button" class="btn-sync-gear" id="btn-goto-sync-sidebar" data-i18n-title="quick_sync_gear_tt" title="Open Console Sync (MQTT) settings" aria-label="Console Sync Settings">⚙️</button>
+          </div>
+        </div>
         <select id="lang-selector">
           <option value="en">English (EN)</option>
           <option value="fr">Français (FR)</option>
@@ -1154,6 +1338,22 @@ select.input option {
             <div class="slider-group" style="margin-top: 1.5rem;">
               <label><span data-i18n="dash_brightness">Matrix Brightness</span> (<span id="val-brightness">40</span>%)</label>
               <input type="range" id="slider-brightness" min="1" max="100" value="40">
+            </div>
+            <div class="dash-sync-quick" id="dash-sync-quick">
+              <div class="sync-quick-meta">
+                <span class="sync-quick-dot" id="dash-sync-dot"></span>
+                <div>
+                  <div class="sync-quick-title">🕹️ <span data-i18n="quick_sync_dash_title">Console Sync (MQTT)</span></div>
+                  <div class="sync-quick-sub" id="dash-sync-status-text" data-i18n="quick_sync_off">Paused — Idle rotation active</div>
+                </div>
+              </div>
+              <div class="sync-quick-actions">
+                <label class="sync-toggle-pill" data-i18n-title="quick_sync_toggle_tt" title="Enable or pause Console Sync (MQTT)">
+                  <input type="checkbox" id="quick-mqtt-toggle-dash">
+                  <span class="sync-toggle-track"></span>
+                </label>
+                <button type="button" class="btn-sync-gear" id="btn-goto-sync-dash" data-i18n-title="quick_sync_gear_tt" title="Open Console Sync (MQTT) settings" aria-label="Console Sync Settings">⚙️</button>
+              </div>
             </div>
           </div>
 
@@ -2793,6 +2993,15 @@ const translations = {
     mqtt_user: "Username",
     mqtt_pass: "Password",
     mqtt_save_btn: "Save MQTT Settings",
+    quick_sync_label: "Console Sync",
+    quick_sync_dash_title: "Console Sync (MQTT)",
+    quick_sync_on: "Active — Recalbox / Batocera / RetroPie",
+    quick_sync_off: "Paused — Idle rotation active",
+    quick_sync_toggle_tt: "Enable or pause Console Sync (MQTT)",
+    quick_sync_gear_tt: "Open Console Sync (MQTT) settings",
+    quick_sync_toast_on: "Console Sync (MQTT) enabled!",
+    quick_sync_toast_off: "Console Sync (MQTT) paused — idle rotation resumed",
+    quick_sync_toast_err: "Failed to update Console Sync state",
     dmqtt_title: "MQTT Data",
     dmqtt_desc: "Broker the MQTT Data screen connects to while it is on display (see docs/MQTT_DATA_CONTRACT.md). Separate from the arcade MQTT above; nothing runs in the background.",
     dmqtt_save_btn: "Save Data MQTT Settings",
@@ -3933,6 +4142,15 @@ const translations = {
     mqtt_user: "Nom d'utilisateur",
     mqtt_pass: "Mot de passe",
     mqtt_save_btn: "Enregistrer les paramètres MQTT",
+    quick_sync_label: "Sync Console",
+    quick_sync_dash_title: "Sync Console (MQTT)",
+    quick_sync_on: "Active — Recalbox / Batocera / RetroPie",
+    quick_sync_off: "En pause — Rotation normale active",
+    quick_sync_toggle_tt: "Activer ou mettre en pause la Sync Console (MQTT)",
+    quick_sync_gear_tt: "Ouvrir les paramètres Sync Console (MQTT)",
+    quick_sync_toast_on: "Sync Console (MQTT) activée !",
+    quick_sync_toast_off: "Sync Console (MQTT) en pause — retour à la rotation",
+    quick_sync_toast_err: "Échec de la mise à jour Sync Console",
     dmqtt_title: "Données MQTT",
     dmqtt_desc: "Broker auquel l'écran Données MQTT se connecte pendant qu'il est affiché (voir docs/MQTT_DATA_CONTRACT_FR.md). Distinct du MQTT arcade ci-dessus ; rien ne tourne en arrière-plan.",
     dmqtt_save_btn: "Enregistrer le MQTT Données",
@@ -5073,6 +5291,15 @@ const translations = {
     mqtt_user: "Usuario",
     mqtt_pass: "Contraseña",
     mqtt_save_btn: "Guardar ajustes MQTT",
+    quick_sync_label: "Sync Consola",
+    quick_sync_dash_title: "Sync Consola (MQTT)",
+    quick_sync_on: "Activa — Recalbox / Batocera / RetroPie",
+    quick_sync_off: "En pausa — Rotación normal activa",
+    quick_sync_toggle_tt: "Activar o pausar Sync Consola (MQTT)",
+    quick_sync_gear_tt: "Abrir ajustes de Sync Consola (MQTT)",
+    quick_sync_toast_on: "¡Sync Consola (MQTT) activada!",
+    quick_sync_toast_off: "Sync Consola (MQTT) en pausa — rotación reanudada",
+    quick_sync_toast_err: "Error al actualizar Sync Consola",
     dmqtt_title: "Datos MQTT",
     dmqtt_desc: "Broker al que se conecta la pantalla Datos MQTT mientras se muestra (ver docs/MQTT_DATA_CONTRACT_ES.md). Separado del MQTT arcade de arriba; nada se ejecuta en segundo plano.",
     dmqtt_save_btn: "Guardar MQTT de Datos",
@@ -9160,15 +9387,11 @@ window.switchTab = function(tabId) {
 window.switchDisplayTab = window.switchTab;
 
 window.switchSystemTab = function(tabId) {
-  // Update buttons
-  if (window.event && window.event.currentTarget) {
-    document.querySelectorAll('#page-system > .tabs > .tab-btn').forEach(btn => {
-      btn.classList.remove('active');
-    });
-    window.event.currentTarget.classList.add('active');
-  }
+  document.querySelectorAll('#page-system > .tabs > .tab-btn').forEach(btn => {
+    const oc = btn.getAttribute('onclick') || '';
+    btn.classList.toggle('active', oc.includes(`'${tabId}'`));
+  });
 
-  // Update panes
   document.querySelectorAll('#page-system .tab-pane').forEach(pane => {
     pane.classList.remove('active');
   });
@@ -9183,10 +9406,10 @@ window.switchSystemTab = function(tabId) {
 };
 
 window.switchMqttSubTab = function(subTabId) {
-  document.querySelectorAll('#sys-tab-mqtt .mqtt-subtabs .tab-btn').forEach(btn => btn.classList.remove('active'));
-  if (window.event && window.event.currentTarget) {
-    window.event.currentTarget.classList.add('active');
-  }
+  document.querySelectorAll('#sys-tab-mqtt .mqtt-subtabs .tab-btn').forEach(btn => {
+    const oc = btn.getAttribute('onclick') || '';
+    btn.classList.toggle('active', oc.includes(`'${subTabId}'`));
+  });
   document.querySelectorAll('#sys-tab-mqtt .mqtt-subtab-pane').forEach(p => {
     p.classList.remove('active');
     p.style.display = 'none';
@@ -9199,13 +9422,96 @@ window.switchMqttSubTab = function(subTabId) {
   }
 };
 
+window.syncQuickMqttUi = function(enabled) {
+  const isOn = !!enabled;
+  const sbChk = document.getElementById('quick-mqtt-toggle-sidebar');
+  const dsChk = document.getElementById('quick-mqtt-toggle-dash');
+  const sbDot = document.getElementById('sidebar-sync-dot');
+  const dsDot = document.getElementById('dash-sync-dot');
+  const sbWrap = document.getElementById('sidebar-sync-quick');
+  const dsSub = document.getElementById('dash-sync-status-text');
+  const selMqtt = document.getElementById('hw-mqtt-enable');
+
+  if (sbChk) sbChk.checked = isOn;
+  if (dsChk) dsChk.checked = isOn;
+  if (sbDot) sbDot.classList.toggle('online', isOn);
+  if (dsDot) dsDot.classList.toggle('online', isOn);
+  if (sbWrap) sbWrap.classList.toggle('active', isOn);
+  if (dsSub) {
+    const key = isOn ? 'quick_sync_on' : 'quick_sync_off';
+    dsSub.setAttribute('data-i18n', key);
+    dsSub.textContent = t(key, isOn ? 'Active — Recalbox / Batocera / RetroPie' : 'Paused — Idle rotation active');
+  }
+  if (selMqtt) selMqtt.value = isOn ? '1' : '0';
+  if (window.__sysConfig && window.__sysConfig.mqtt) {
+    window.__sysConfig.mqtt.enabled = isOn;
+  }
+};
+
+window.openConsoleSyncSettings = function() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+
+  switchPage('system');
+  window.switchSystemTab('mqtt');
+  window.switchMqttSubTab('frontend');
+  const target = document.getElementById('mqtt-subtab-frontend');
+  if (target && target.scrollIntoView) {
+    setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }
+};
+
+function initQuickMqttControls() {
+  const sbChk = document.getElementById('quick-mqtt-toggle-sidebar');
+  const dsChk = document.getElementById('quick-mqtt-toggle-dash');
+  const handleToggle = async (nextState) => {
+    const prevState = !nextState;
+    if (sbChk) sbChk.disabled = true;
+    if (dsChk) dsChk.disabled = true;
+    window.syncQuickMqttUi(nextState);
+    try {
+      await API.post('/api/system', { mqtt_enabled: nextState });
+      window.showToast(
+        nextState
+          ? t('quick_sync_toast_on', 'Console Sync (MQTT) enabled!')
+          : t('quick_sync_toast_off', 'Console Sync (MQTT) paused — idle rotation resumed'),
+        nextState ? 'success' : 'info'
+      );
+    } catch (_) {
+      window.syncQuickMqttUi(prevState);
+      window.showToast(t('quick_sync_toast_err', 'Failed to update Console Sync state'), 'error');
+    } finally {
+      if (sbChk) sbChk.disabled = false;
+      if (dsChk) dsChk.disabled = false;
+    }
+  };
+
+  [sbChk, dsChk].forEach(chk => {
+    if (chk && !chk.dataset.boundQuickMqtt) {
+      chk.dataset.boundQuickMqtt = '1';
+      chk.addEventListener('change', (e) => handleToggle(!!e.target.checked));
+    }
+  });
+
+  ['btn-goto-sync-sidebar', 'btn-goto-sync-dash'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn && !btn.dataset.boundQuickGear) {
+      btn.dataset.boundQuickGear = '1';
+      btn.addEventListener('click', () => window.openConsoleSyncSettings());
+    }
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   // Ordered startup:
   // 1. initHardwareCapabilities sets HttpRequestQueue concurrency (1 on ESP32_STD, 3 on WAVESHARE_S3).
-  // 2. initNavigation + loadVersion populate the active tab.
-  // 3. Preload the Display ("Affichage") catalog, instances, rotation, and Showcase server endpoint
+  // 2. initNavigation + initQuickMqttControls + loadVersion populate the active tab.
+  // 3. Preload the Display ("Affichage") catalog, instances, rotation, MQTT sync state, and Showcase server endpoint
   //    during the initial WEBUI_SYNC pause window so later tab switches require zero heavy ESP32 I/O.
   await initHardwareCapabilities();
+  initQuickMqttControls();
   initNavigation();
   loadVersion();
   (async () => {
@@ -9213,6 +9519,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       await fetchCachedEndpoint('/api/engines', 10000);
       await fetchCachedEndpoint('/api/instances', 5000);
       await fetchCachedEndpoint('/api/rotation', 5000);
+      if (!window.__sysConfig || !window.__sysConfig.mqtt) {
+        const mq = await API.get('/api/system?section=mqtt', 5000).catch(() => null);
+        if (mq && typeof mq === 'object' && !mq.error) {
+          window.__sysConfig = Object.assign({}, window.__sysConfig || {}, { mqtt: mq });
+          if (typeof mq.enabled === 'boolean') {
+            window.syncQuickMqttUi(mq.enabled);
+          }
+        }
+      }
       if (!window.__sysConfig || !window.__sysConfig.showcase) {
         const sc = await API.get('/api/system?section=showcase', 5000).catch(() => null);
         if (sc && typeof sc === 'object' && !sc.error) {
@@ -9384,7 +9699,7 @@ function initDashboard() {
     });
   }
 
-  // Fetch initial power and brightness state
+  // Fetch initial power, brightness, and Console Sync state
   API.get('/api/system').then(cfg => {
     const sys = cfg?.system || {};
     const b = sys.day_brightness ?? sys.brightness_limit ?? 50;
@@ -9395,6 +9710,9 @@ function initDashboard() {
       btnPower.setAttribute('data-i18n', isPowerOn ? 'dash_power_off_btn' : 'dash_power_on_btn');
       btnPower.textContent = isPowerOn ? t('dash_power_off_btn', 'Turn Panel OFF') : t('dash_power_on_btn', 'Turn Panel ON');
       btnPower.className = `btn ${isPowerOn ? 'btn-power-on' : 'btn-power-off'}`;
+    }
+    if (cfg?.mqtt && typeof cfg.mqtt.enabled === 'boolean' && window.syncQuickMqttUi) {
+      window.syncQuickMqttUi(cfg.mqtt.enabled);
     }
   }).catch(() => {});
 
@@ -9687,7 +10005,7 @@ function initOta() {
   }
 
   async function fetchOtaReleases(sysInfo) {
-    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '4.2.1', arch: 'esp32', board_env: '' }));
+    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '4.3.0', arch: 'esp32', board_env: '' }));
     const params = new URLSearchParams({ p: 'esp32' });
     if (info.ota_auto_check !== false) {
       params.set('id', resolveInstallUuid(info.install_id));
@@ -10621,6 +10939,7 @@ function initNetworkSettings() {
       try {
         const res = await API.post('/api/system', { mqtt });
         if (window.__sysConfig) window.__sysConfig.mqtt = mqtt;
+        if (window.syncQuickMqttUi) window.syncQuickMqttUi(mqtt.enabled);
         if (res && res.status === 'rebooting') {
           window.showToast('MQTT Settings Saved! Restarting...', 'info');
         } else {
@@ -11140,6 +11459,7 @@ async function initSettings() {
 
     // MQTT (nested mqtt.*)
     setVal('hw-mqtt-enable', mqtt.enabled ? '1' : '0');
+    if (window.syncQuickMqttUi) window.syncQuickMqttUi(!!mqtt.enabled);
     setVal('hw-mqtt-overlay', mqtt.allow_overlay ? '1' : '0');
     setVal('hw-mqtt-broker', mqtt.broker);
     setVal('hw-mqtt-port', mqtt.port);

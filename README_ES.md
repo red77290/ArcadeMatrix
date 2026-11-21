@@ -42,7 +42,9 @@
 
 **[⬇️ Descargar la última Release precompilada y Kit de Tarjeta SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Archivos de Firmware**: Elige `ArcadeMatrix-esp32dev.zip`, `ArcadeMatrix-esp32s3_n16r8.zip` o `ArcadeMatrix-esp32s3_waveshare.zip` según tu placa (contiene `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` y `boot_app0.bin` para flasheo manual con `esptool.py`; consulta [Primeros pasos](docs/GETTING_STARTED_ES.md#flashing-a-pre-built-release)).
-- **Kit de Tarjeta SD (`ArcadeMatrix-sdcard.zip`)**: Contiene la estructura de carpetas lista para copiar a la raíz de la tarjeta SD (carpeta `config/` con `network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`, carpetas GIFs/MUGEN y scripts de indexación).
+- **Kit de Tarjeta SD (`ArcadeMatrix-sdcard.zip`)**: [⬇️ Descarga directa](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip) — Contiene la estructura de carpetas lista para copiar a la raíz de la tarjeta SD (carpeta `config/` con `network.json`, `hardware.json`, `system.json`, `playlist.json`, `instances/`, carpetas GIFs/MUGEN y scripts de indexación).
+- **Herramientas para PC y Consolas (`ArcadeMatrix-tools.zip`)**: [⬇️ Descarga directa](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip) — Paquete independiente (sin necesidad de descargar todo el código fuente) con los instaladores para Recalbox / Batocera / RetroPie (`recalbox_daemon/`), sincronización Pixelcade (`pixelcade_sync/`), extractor MUGEN (`mugen_extractor/`), conversores de fuentes BDF→AMF (`font_conversion/`, `bdf_to_amfont/`), indexador GIF (`gif_indexation/`) y blueprints de Home Assistant (`home_assistant/`).
+
 
 ## 🕹️ Motores Integrados y Simulaciones de Hardware
 
@@ -178,8 +180,8 @@ Abre los archivos incluidos en la carpeta `release/sdCard/config/` (o consulta `
 Para mostrar luchadores en el módulo `SPRITES`, el ESP32 espera archivos brutos `.fgt`. Como el ESP32 no es lo bastante potente para decodificar de forma nativa formatos complejos de personajes MUGEN, proporcionamos un script Python personalizado para convertirlos y generar un manifiesto `index.txt` con cajas englobantes perfectas y valores de suelo virtual.
 
 ### Cómo usar el extractor:
-1. Asegúrate de tener Python 3 instalado con la biblioteca `Pillow` (`pip install Pillow`), o simplemente ejecuta `tools/mugen_extractor/start_extractor.sh`/`.bat`, que lo instala automáticamente por ti.
-2. Ve a la carpeta `tools/mugen_extractor/` dentro del repositorio.
+1. Asegúrate de tener Python 3 instalado con la biblioteca `Pillow` (`pip install Pillow`), o simplemente ejecuta `mugen_extractor/start_extractor.sh`/`.bat`, que lo instala automáticamente por ti.
+2. Descarga y descomprime **[`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)**, y abre la carpeta `mugen_extractor/` (o `tools/mugen_extractor/` en el código fuente).
 3. Ejecuta el script apuntando `--src` a tu carpeta `chars/` de MUGEN:
    ```bash
    python mugen_extractor.py --src /Ruta/A/Tus/Personajes/Mugen/chars --dest ./fighters_32
@@ -218,14 +220,14 @@ El firmware ESP32 escanea dinámicamente las carpetas `/gifs/` y `/gifs_tate/` d
 El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personalizadas cargadas desde la tarjeta SD en lugar de las ~6 fuentes compiladas en el firmware, usando las mismas fuentes `.bdf` que `ArcadeMatrix_RPi` ya incluye. Sin embargo, el ESP32 no tiene un analizador BDF a bordo, por lo que primero deben convertirse al formato compacto `.amf`.
 
 1. Copia tu(s) fuente(s) `.bdf` en la carpeta `fonts/` de tu tarjeta SD.
-2. Ejecuta el convertidor por lotes:
+2. Ejecuta el convertidor por lotes (incluido en [`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)):
    ```bash
-   python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
+   python3 font_conversion/generate_fonts.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
    ```
-   (No requiere dependencias externas. Solo Python estándar.)
+   (No requiere dependencias externas. Solo Python estándar — o convierte un archivo suelto con `python3 bdf_to_amfont/bdf_to_amfont.py entrada.bdf salida.amf`.)
 3. Esto convierte cada `.bdf` en un `.amf` del mismo nombre en el mismo lugar. Las fuentes resultantes aparecen de inmediato en la página de Configuración de la interfaz web (menús desplegables "Font" de Reloj/Fecha) - sin necesidad de reiniciar.
 
-Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
+Para todos los detalles, revisa `tools/font_conversion/README_ES.md` y `tools/bdf_to_amfont/README_ES.md`.
 
 ## 🎬 Integración del Servidor Media Showcase ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase))
 Los 4 motores Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **funcionan exclusivamente con la aplicación complementaria [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) instalada en otra máquina de la misma red local** (Raspberry Pi, NAS, servidor Docker o PC) para transmitir pósters pre-renderizados en RGB565, panoramas, metadatos multilingües (sincronizados automáticamente con el idioma configurado en el DMD: `es`, `en`, `fr`, `de`, `it`) y tráilers/vídeos de gameplay RGB565:
@@ -256,7 +258,7 @@ ArcadeMatrix se sincroniza en tiempo real con **Recalbox**, **Batocera** (`v33+`
 
 ### 🚀 Tutorial de Activación Paso a Paso
 1. **Instalar el script en la consola (una sola vez)**:
-   - Desde tu PC/Mac, ejecuta `tools/recalbox_daemon/install.sh` (Linux/macOS) o `tools/recalbox_daemon/install.ps1` (Windows) — o por SSH con `tools/rpi_emulationstation_base_os_setup.sh` — indicando **solo la IP de tu ArcadeMatrix** (ver [`tools/recalbox_daemon/README_ES.md`](tools/recalbox_daemon/README_ES.md)).
+   - Descarga y descomprime **[`ArcadeMatrix-tools.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)** en tu PC/Mac (sin descargar el código fuente), y ejecuta `recalbox_daemon/install.sh` (Linux/macOS) o `recalbox_daemon/install.ps1` (Windows) — o por SSH con `rpi_emulationstation_base_os_setup.sh` — indicando **solo la IP de tu ArcadeMatrix** (ver [`tools/recalbox_daemon/README_ES.md`](tools/recalbox_daemon/README_ES.md)).
 2. **Activar FrontendSync en ArcadeMatrix**:
    - Abre la Web UI de ArcadeMatrix -> **Sistema** -> **MQTT & API** -> **🎮 FrontendSync**.
    - Pon **Activar MQTT** en **Activado** (deja `127.0.0.1` para usar el broker integrado en modo autónomo).

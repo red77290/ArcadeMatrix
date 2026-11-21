@@ -4,6 +4,14 @@ All notable changes to the **ArcadeMatrix (ESP32)** firmware, WebUI, and tooling
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-11-21
+
+### Added
+- **Universal High-Score Decoder (`arcadematrix_companion_sync.py`)**: Embedded compressed `GreatStoneEx/hi2txt-xml` structural catalog covering ~3,020 MAME/FBNeo `.hi` ROMs natively with zero external binary, alongside MAME Lua `hiscore/` discovery, inter-core `±1..8 B` check-byte tolerance, and M68000 16-bit byte-swapped Neo-Geo/CPS NVRAM scanning.
+- **Standalone `ArcadeMatrix-tools.zip` Release Bundle & E2E Suite**: Packaged all PC/Mac/Console companion tools with trilingual READMEs directly into GitHub Releases, backed by hermetic Bash, POSIX `sh`, and PowerShell 7 E2E tests.
+- **Interactive WebInstaller Beginner's Guide (`#guide`)**: Added a dedicated trilingual Beginner's Guide tab and Companion Tools Appendix directly inside the Web Installer portal.
+- **Hot Console Sync Quick-Toggle & `⚙️` Shortcut**: Added persistent Console Sync (`FrontendSync` MQTT) pill toggles and one-click `⚙️` settings navigation in both the WebUI sidebar footer and Dashboard `Matrix Power` card with zero-reboot live switching.
+
 ## [4.0.3] - 2026-10-14
 
 ### Added

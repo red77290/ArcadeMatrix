@@ -464,7 +464,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
   const ghHwCounts = new Map();
   const classifyAssetHw = (assetName) => {
     const lower = String(assetName || "").toLowerCase();
-    if (lower.includes("sdcard")) return null;
+    if (lower.includes("sdcard") || lower.includes("tools")) return null;
     if (project === "esp32") {
       if (lower.includes("waveshare")) return "esp32s3_waveshare";
       if (lower.includes("n16r8")) return "esp32s3_n16r8";
@@ -483,7 +483,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     let downloads = 0;
     for (const asset of assets) {
       const nameLower = String(asset.name || "").toLowerCase();
-      if (nameLower.includes("sdcard")) continue;
+      if (nameLower.includes("sdcard") || nameLower.includes("tools")) continue;
       const dl = Number(asset.download_count || 0);
       downloads += dl;
       const hwKey = classifyAssetHw(nameLower);
@@ -508,7 +508,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     }))
     .sort((a, b) => b.downloads - a.downloads);
 
-  const defaultLatest = project === "esp32" ? "v4.2.1" : "v4.2.0";
+  const defaultLatest = "v4.3.0";
   const latestVersion =
     github_releases[0]?.tag || versions[0]?.version || defaultLatest;
   const latestEntry =

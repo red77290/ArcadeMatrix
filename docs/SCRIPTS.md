@@ -52,6 +52,20 @@ python3 scripts/generate_engine_matrix.py
 python3 scripts/generate_engine_matrix.py --check
 ```
 
+### 2.4 `scripts/test_companion_sync.py`
+Hermetic Python 3 stdlib unit test suite for `arcadematrix_companion_sync.py`. Validates embedded `_HI2TXT_CATALOG_B85` decompression performance (`< 15 ms`) and integrity (`>= 2,500` ROMs), `combined` / `separate` / `score_only` / non-BCD scaled integer decoders, inter-core `±1..8 B` tolerance + corrupt-buffer rejection, M68000 16-bit byte-swapped Neo-Geo NVRAM non-regression, MAME Lua `hiscore/` + `st_mtime` / configured-core discovery, `start` -> `stop` record celebration payloads, and SHA-256 parity between both repository copies.
+
+```bash
+python3 scripts/test_companion_sync.py
+```
+
+### 2.5 `scripts/test_tools_e2e.py`
+Hermetic End-to-End (E2E) validation suite for the standalone `ArcadeMatrix-tools.zip` bundle. Packages and unzips `ArcadeMatrix-tools.zip` in an isolated workspace, verifies `0755` permissions + LF line endings + `sh -n` / `bash -n` syntax, launches live local HTTP (`/api/mqtt/broker-target`) and raw TCP MQTT v3.1.1 servers, and exercises `recalbox_daemon/install.sh` + `recalbox_daemon/install.ps1` (via `pwsh` when installed) across mocked Batocera, Recalbox, and RetroPie SSH consoles (verifying byte-exact 150 KB `arcadematrix_companion_sync.py` delivery, live `sync_meta` / `celebrate` high-score MQTT packets, and live double-forked daemon + watchdog startup), plus `pixelcade_sync.{sh,ps1}`, `generate_index.{sh,ps1}`, `bdf_to_amfont.py`, `generate_fonts.py`, `run_gif2amanim.{sh,ps1}`, and `mugen_extractor.py`.
+
+```bash
+python3 scripts/test_tools_e2e.py
+```
+
 ---
 
 ## 3. Static Validation & Quality Gates
@@ -99,8 +113,23 @@ python3 scripts/benchmark_endurance.py --host 192.168.1.50 --duration 1800 --csv
 
 ---
 
-## 5. Arcade Console Integration
+## 5. Release Packaging & Arcade Console Integration
 
-### 5.1 `scripts/sync-recalbox.sh`
+### 5.1 `scripts/package_sdcard.py`
+Validates the modular `/config/` domain files in `release/sdCard/` (ensuring no legacy monolithic `config.json` is shipped) and builds `ArcadeMatrix-sdcard.zip` for GitHub Releases (`--verify-only` supported in CI).
+
+```bash
+python3 scripts/package_sdcard.py --verify-only
+python3 scripts/package_sdcard.py
+```
+
+### 5.2 `scripts/package_tools.py`
+Validates and packages all end-user PC & console companion tools (`recalbox_daemon/`, `pixelcade_sync/`, `gif_indexation/`, `mugen_extractor/`, `bdf_to_amfont/`, `font_conversion/`, `anim_compiler/`, `home_assistant/`, and `rpi_emulationstation_base_os_setup.sh`) into `ArcadeMatrix-tools.zip` with normalized LF line endings, `0755` script permissions, and trilingual overview `README` files, while strictly excluding internal maintainer/cloud directories (`ota-stats-worker/`, `hiscore_catalog/`).
+
+```bash
+python3 scripts/package_tools.py --verify-only
+python3 scripts/package_tools.py
+```
+
+### 5.3 `scripts/sync-recalbox.sh`
 Lightweight shell daemon deployed to Recalbox / Batocera / RetroPie consoles (automatically installable via `POST /api/mqtt/install` in the WebUI). Watches EmulationStation state events and publishes active system/game marquee updates to ArcadeMatrix over MQTT or HTTP.
-

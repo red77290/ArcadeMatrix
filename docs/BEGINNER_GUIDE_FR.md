@@ -9,7 +9,7 @@ Ce guide va droit à l'essentiel, sans jargon technique, pour choisir votre mat�
 ## 1. Comment fonctionne ArcadeMatrix ? (En 4 étapes)
 
 L'écran est **100 % autonome** (aucun PC n'a besoin de rester allumé) :
-1. **Préparer la carte MicroSD (`FAT32`)** : décompressez **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** à la racine de la carte SD, puis **ouvrez `config/network.json` avec le Bloc-notes / TextEdit pour y écrire le nom (`ssid`) et le mot de passe (`password`) de votre Wi-Fi 2.4 GHz** *(obligatoire : le Wi-Fi ne peut pas se saisir depuis l'écran !)*.
+1. **Préparer la carte MicroSD (`FAT32`)** : décompressez **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** à la racine de la carte SD, puis **ouvrez `config/network.json` avec le Bloc-notes / TextEdit pour y écrire le nom (`ssid`) et le mot de passe (`password`) de votre Wi-Fi 2.4 GHz** *(obligatoire : le Wi-Fi ne peut pas se saisir depuis l'écran !)*.
 2. **Flasher la carte en 1 clic (une seule fois)** : branchez l'ESP32 en USB à votre PC/Mac sur Chrome ou Edge via **[red77290.github.io/ArcadeMatrix](https://red77290.github.io/ArcadeMatrix/)** et cliquez sur **Install**.
 3. **Brancher la carte sur la dalle LED et alimenter en `5V`** : au démarrage, l'écran se connecte automatiquement à votre Wi-Fi et affiche son adresse IP.
 4. **Piloter depuis votre téléphone ou PC** : ouvrez **`http://arcadematrix.local`** (ou l'IP affichée) dans votre navigateur pour changer d'horloge rétro, activer la météo/bourse, envoyer vos GIFs ou lier **Recalbox / Batocera**.
@@ -107,7 +107,7 @@ Prenez toujours des **panneaux LED RGB d'intérieur (`Indoor HUB75` / `HUB75E`)*
 > [!IMPORTANT]
 > **Le DMD ne peut pas configurer le Wi-Fi depuis l'écran !** Vous devez **impérativement modifier à la main le fichier `config/network.json`** sur votre carte MicroSD avant le premier allumage.
 
-1. **Préparez la MicroSD (`FAT32`)** : copiez le contenu de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directement à la racine de la carte SD (`config/`, `gifs/`, `fighters_32/`...).
+1. **Préparez la MicroSD (`FAT32`)** : copiez le contenu de **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** directement à la racine de la carte SD (`config/`, `gifs/`, `fighters_32/`...).
 2. **Modifiez `config/network.json` sur la carte SD** avec le *Bloc-notes* (Windows) ou *TextEdit* (Mac) pour renseigner votre **Wi-Fi `2.4 GHz`** :
    ```json
    "wifi": {
@@ -129,4 +129,32 @@ Prenez toujours des **panneaux LED RGB d'intérieur (`Indoor HUB75` / `HUB75E`)*
 - **Scintillement / lignes baveuses** : activez **Inverser la Phase d'Horloge (`clkphase`)** ou montez **`Latch Blanking`** dans **Système → Matériel**.
 - **Aucun port USB dans le Web Installer** : votre câble USB est un câble « charge seule » — prenez un vrai câble USB de données avec Chrome ou Edge.
 
+---
+
+## 6. Annexe : Utiliser les Outils Compagnons PC & Consoles (`ArcadeMatrix-tools.zip`)
+
+Tous les outils optionnels pour PC, Mac, Linux et consoles rétro sont regroupés dans une seule archive autonome — **vous n'avez jamais besoin de télécharger tout le code source du projet** :
+
+👉 **[⬇️ Télécharger `ArcadeMatrix-tools.zip` (Dernière Release)](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)** *(également disponible directement depuis le [Web Installer](https://red77290.github.io/ArcadeMatrix/)).*
+
+Décompressez `ArcadeMatrix-tools.zip` sur votre ordinateur pour utiliser les outils présents dans `ArcadeMatrix-tools/` :
+
+1. **`recalbox_daemon/` — Synchroniser Recalbox, Batocera & RetroPie (Marquees + High-Scores + Showcase)**
+   - **À quoi ça sert** : Affiche les marquees système et jeu en `0 ms` quand vous naviguez dans les menus de votre console, déclenche le Showcase en Jeu (fiche animée + vidéo gameplay) et célèbre vos nouveaux records High-Scores à 60 FPS à la sortie d'une partie (~3 100 ROMs MAME/FBNeo `.hi` + NVRAM Neo-Geo/CPS décodés nativement sans binaire externe).
+   - **Comment l'utiliser** : Lancez `recalbox_daemon/install.ps1` (Windows PowerShell) ou `./recalbox_daemon/install.sh` (macOS / Linux) — ou `rpi_emulationstation_base_os_setup.sh` sur RetroPie/Linux — et saisissez l'IP de votre console + l'IP de votre ArcadeMatrix.
+2. **`pixelcade_sync/` — Télécharger les Marquees Officiels Pixelcade sur la Carte SD**
+   - **À quoi ça sert** : Télécharge et range automatiquement sur votre carte MicroSD la bibliothèque officielle de marquees arcade et consoles Pixelcade.
+   - **Comment l'utiliser** : Branchez votre carte MicroSD sur votre ordinateur, lancez `pixelcade_sync/pixelcade_sync.ps1` (Windows) ou `./pixelcade_sync/pixelcade_sync.sh` (macOS / Linux) et indiquez le lecteur de votre carte SD.
+3. **`mugen_extractor/` — Ajouter des Personnages MUGEN (`.fgt`)**
+   - **À quoi ça sert** : Convertit vos dossiers de combattants MUGEN (`.sff` / `.air` dans `chars/`) en sprites `.fgt` RGB565 optimisés + manifeste `index.txt` pour l'overlay `fighter`.
+   - **Comment l'utiliser** : Double-cliquez sur `mugen_extractor/start_extractor.bat` (Windows) ou lancez `./mugen_extractor/start_extractor.sh` (macOS / Linux) — la bibliothèque Python `Pillow` s'installe toute seule — ou exécutez `python3 mugen_extractor.py --src /chemin/chars --dest ./fighters_32`, puis copiez `fighters_32/` (ou `fighters_64/`) sur la carte SD.
+4. **`font_conversion/` & `bdf_to_amfont/` — Ajouter des Polices Personnalisées (Horloge, Date & Message)**
+   - **À quoi ça sert** : Convertit des polices bitmap `.bdf` au format compact `.amf` lisible sur carte SD sans aucune dépendance externe (`font_conversion/generate_fonts.py` convertit tout le dossier `SD:/fonts/` en lot, tandis que `bdf_to_amfont/bdf_to_amfont.py` convertit un fichier unitaire).
+   - **Comment l'utiliser** : Copiez vos fichiers `.bdf` dans `SD:/fonts/`, puis lancez `python3 font_conversion/generate_fonts.py /chemin/vers/CARTE_SD` (ou `start_generate_fonts.bat` / `./start_generate_fonts.sh`). Vos polices apparaissent aussitôt dans les menus déroulants de la Web UI sans redémarrer.
+5. **`gif_indexation/` & `anim_compiler/` — Préparation Hors-Ligne en Lot sur PC**
+   - **À quoi ça sert** : Au quotidien, l'ajout de GIFs se fait directement en Wi-Fi via la carte **GIF File Manager** de la Web UI. Si vous préparez des milliers de GIFs d'un coup sur un lecteur SD PC, `gif_indexation/generate_index.ps1` (`.sh`) génère les index en lot et `anim_compiler/gif2amanim.py` compile des flux `.amanim`.
+6. **`home_assistant/` — Blueprints Domotiques Home Assistant (`mqttdata`)**
+   - **À quoi ça sert** : Blueprints YAML prêts à importer (`home_assistant/blueprints/*.yaml`) dans Home Assistant (`Paramètres → Automatisations et scènes → Blueprints`) pour diffuser capteurs, courbes 24h, tableaux et météo sur le DMD via MQTT.
+
 💬 Une question ? Rejoignez la communauté sur **[Telegram ArcadeMatrix](https://t.me/+DrSdAO8UMUViNmE0)** !
+

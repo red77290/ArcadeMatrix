@@ -9,7 +9,7 @@ This short, jargon-free guide goes straight to the essentials: picking the right
 ## 1. How ArcadeMatrix Works (In 4 Quick Steps)
 
 Your display is **100% standalone** (no computer needs to stay connected):
-1. **Prepare a `FAT32` MicroSD card**: extract **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directly to the root of the SD card, then **open `config/network.json` in Notepad / TextEdit and enter your `2.4 GHz` Wi-Fi `ssid` and `password`** *(mandatory: Wi-Fi cannot be configured from the LED screen itself!)*.
+1. **Prepare a `FAT32` MicroSD card**: extract **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** directly to the root of the SD card, then **open `config/network.json` in Notepad / TextEdit and enter your `2.4 GHz` Wi-Fi `ssid` and `password`** *(mandatory: Wi-Fi cannot be configured from the LED screen itself!)*.
 2. **Flash the board in 1 click (one time only)**: plug the ESP32 into your PC/Mac via USB, open **[red77290.github.io/ArcadeMatrix](https://red77290.github.io/ArcadeMatrix/)** in Chrome or Edge, and click **Install**.
 3. **Plug the board onto the LED panel & power with `5V`**: on boot, the DMD connects to your Wi-Fi and displays its IP address.
 4. **Control from your phone or PC**: open **`http://arcadematrix.local`** (or the displayed IP) in any browser to pick retro clocks, enable weather/stocks, upload GIFs, or sync **Recalbox / Batocera**.
@@ -107,7 +107,7 @@ Always buy **Indoor RGB `HUB75` / `HUB75E` LED Panels** (avoid *Outdoor* panels)
 > [!IMPORTANT]
 > **Wi-Fi cannot be configured from the LED display!** You **must manually edit `config/network.json`** on the MicroSD card with your `ssid` and `password` before powering on.
 
-1. **Prepare the `FAT32` MicroSD card**: extract **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest)** directly to the root of the SD card (`config/`, `gifs/`, `fighters_32/`...).
+1. **Prepare the `FAT32` MicroSD card**: extract **[`ArcadeMatrix-sdcard.zip`](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-sdcard.zip)** directly to the root of the SD card (`config/`, `gifs/`, `fighters_32/`...).
 2. **Edit `config/network.json` on the SD card** using *Notepad* (Windows) or *TextEdit* (Mac) to enter your **`2.4 GHz` Wi-Fi** credentials:
    ```json
    "wifi": {
@@ -129,4 +129,32 @@ Always buy **Indoor RGB `HUB75` / `HUB75E` LED Panels** (avoid *Outdoor* panels)
 - **Flickering / ghosting**: enable **Invert Clock Phase (`clkphase`)** or increase **`Latch Blanking`** in **System → Hardware**.
 - **No USB port in Web Installer**: you are using a charge-only USB cable — swap to a real USB data cable in Chrome or Edge.
 
+---
+
+## 6. Appendix: PC & Console Companion Tools (`ArcadeMatrix-tools.zip`)
+
+All optional PC, Mac, Linux, and retro-console helper scripts are bundled in a single standalone archive — **you never need to download or clone the firmware source code**:
+
+👉 **[⬇️ Download `ArcadeMatrix-tools.zip` (Latest Release)](https://github.com/red77290/ArcadeMatrix/releases/latest/download/ArcadeMatrix-tools.zip)** *(also available directly on the [Web Installer](https://red77290.github.io/ArcadeMatrix/)).*
+
+Unzip `ArcadeMatrix-tools.zip` on your computer to access the following tools inside `ArcadeMatrix-tools/`:
+
+1. **`recalbox_daemon/` — Sync Recalbox, Batocera & RetroPie (Marquees + High-Scores + Showcase)**
+   - **What it does**: Displays system & game marquees in `0 ms` as you browse your console menus, triggers optional In-Game Showcase cards/gameplay videos, and celebrates personal High-Score records at 60 FPS when exiting a game (~3,100 MAME/FBNeo `.hi` ROMs + Neo-Geo/CPS NVRAM decoded natively without external binaries).
+   - **How to use**: Run `recalbox_daemon/install.ps1` (Windows PowerShell) or `./recalbox_daemon/install.sh` (macOS / Linux) — or `rpi_emulationstation_base_os_setup.sh` for base RetroPie/Linux setups — and enter your console IP + your ArcadeMatrix IP.
+2. **`pixelcade_sync/` — Download Official Pixelcade Marquees to Your SD Card**
+   - **What it does**: Automatically downloads and organizes official Pixelcade console and arcade marquee banners onto your MicroSD card.
+   - **How to use**: Plug your MicroSD card into your computer and run `pixelcade_sync/pixelcade_sync.ps1` (Windows) or `./pixelcade_sync/pixelcade_sync.sh` (macOS / Linux), selecting your SD card drive.
+3. **`mugen_extractor/` — Add Custom MUGEN Fighters (`.fgt` Sprites)**
+   - **What it does**: Converts MUGEN character folders (`.sff` / `.air` in `chars/`) into pre-scaled RGB565 `.fgt` sprites + `index.txt` manifests for the `fighter` combat overlay.
+   - **How to use**: Double-click `mugen_extractor/start_extractor.bat` (Windows) or run `./mugen_extractor/start_extractor.sh` (macOS / Linux) — it installs Python `Pillow` automatically — or run `python3 mugen_extractor.py --src /path/to/chars --dest ./fighters_32`, then copy `fighters_32/` (or `fighters_64/`) to your SD card.
+4. **`font_conversion/` & `bdf_to_amfont/` — Add Custom Fonts (Clock, Date & Message)**
+   - **What it does**: Converts `.bdf` bitmap fonts into compact `.amf` SD fonts with zero external dependencies (`font_conversion/generate_fonts.py` batch-converts a whole `SD:/fonts/` folder in-place, while `bdf_to_amfont/bdf_to_amfont.py` converts a single file).
+   - **How to use**: Copy `.bdf` files into `SD:/fonts/`, then run `python3 font_conversion/generate_fonts.py /path/to/SDCARD` (or `start_generate_fonts.bat` / `./start_generate_fonts.sh`). Your new fonts appear immediately in the Web UI dropdowns without restarting.
+5. **`gif_indexation/` & `anim_compiler/` — Bulk Offline SD Preparation**
+   - **What it does**: While everyday GIF uploads and folder management work directly in your browser via the Web UI **GIF File Manager**, `gif_indexation/generate_index.ps1` (`.sh`) lets you pre-index thousands of GIFs in bulk on a PC card reader, and `anim_compiler/gif2amanim.py` compiles raw `.amanim` streams.
+6. **`home_assistant/` — Smart Home Automation Blueprints (`mqttdata`)**
+   - **What it does**: Ready-to-import YAML blueprints (`home_assistant/blueprints/*.yaml`) for Home Assistant (`Settings → Automations & Scenes → Blueprints`) to stream live sensors, 24h history charts, tables, and weather to your DMD over MQTT.
+
 💬 Need help? Join the **[ArcadeMatrix Telegram Community](https://t.me/+DrSdAO8UMUViNmE0)**!
+

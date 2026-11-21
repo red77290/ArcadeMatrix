@@ -83,7 +83,7 @@ Si vous préférez ne pas exécuter un script tiers contre votre appareil, voici
 | Fichier | Rôle |
 |---|---|
 | `arcadematrix_daemon.py` | Recalbox : scrute `/tmp/es_state.inf` (`GamePath=`, `Game=`, `SystemId=`, `State=`) en boucle et publie sur MQTT lorsqu'un changement est détecté. |
-| `arcadematrix_companion_sync.py` | Compagnon de synchro (Recalbox / Batocera / RetroPie) : extrait les high scores locaux MAME/FBNeo `.hi` / NVRAM (specs par ROM + heuristiques BCD/tuiles) ainsi que la progression et les trophées RetroAchievements `[RCHEEVOS]` en direct. |
+| `arcadematrix_companion_sync.py` | Compagnon de synchro (Recalbox / Batocera / RetroPie) : extrait les high scores locaux MAME/FBNeo `.hi` (`hi/` et MAME Lua `hiscore/`, triés par core actif + `st_mtime`) et NVRAM via un catalogue `hi2txt-xml` embarqué (~3 020 ROMs, passes exacte et tolérante inter-cores `±1..8 o`), specs par ROM, heuristiques BCD/tuiles et scan NVRAM M68000 16-bit byte-swapped, ainsi que la progression et les trophées RetroAchievements `[RCHEEVOS]` en direct. |
 | `arcadematrix_launcher(permanent).sh` | Recalbox : hook de démarrage EmulationStation qui lance le daemon ci-dessus. |
 | `arcadematrix_mqtt_batocera.sh` | Batocera : hook one-shot appelé directement par le lanceur système (`gameStart`/`gameStop`, incluant le titre `$5`) et EmulationStation (`game-selected`, `system-selected`, `game-start`, `game-end`, incluant le titre `$3`). |
 | `install.sh` | Installateur automatisé macOS/Linux. |
@@ -91,5 +91,6 @@ Si vous préférez ne pas exécuter un script tiers contre votre appareil, voici
 
 ## Liens liés
 
+- `../hiscore_catalog/README_FR.md` - compilateur hors-ligne et vérificateur déterministe du catalogue `_HI2TXT_CATALOG_B85` embarqué dans `arcadematrix_companion_sync.py`.
 - `../pixelcade_sync/README_FR.md` - remplit `/pixelcade/<system>/*.png` sur votre carte SD afin que l'artwork puisse être affiché instantanément sans accès réseau sur l'ESP32.
-- `ArcadeMatrix_RPi/core/ssh_installer.py` - le flux d'installation équivalent pour le projet RPi (même protocole de daemon, déclenché depuis son interface web au lieu d'un script autonome).
+- `ArcadeMatrix_RPi/src/core/ssh_installer.rs` - le flux d'installation équivalent pour le projet RPi (même protocole de daemon, déclenché depuis son interface web au lieu d'un script autonome).

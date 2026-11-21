@@ -56,6 +56,14 @@ jobs:
       - name: Execute host native unit test suite
         run: python3 scripts/run_native_tests.py
 
+      - name: Execute companion sync high-score decoder tests
+        run: python3 scripts/test_companion_sync.py
+
+      - name: Validate companion tools bundle & E2E scripts (Bash + PowerShell)
+        run: |
+          python3 scripts/package_tools.py --verify-only
+          python3 scripts/test_tools_e2e.py
+
 
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
@@ -123,10 +131,11 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p _site
+          mkdir -p _site _site/guide
           cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json webinstaller/manifest-esp32s3_n16r8.json _site/
           cp -r webinstaller/bin _site/bin
           cp -r webinstaller/changelog _site/changelog
+          cp docs/assets/guide/*.png _site/guide/
           cp artifacts/esp32dev/bootloader.bin _site/bootloader-esp32dev.bin
           cp artifacts/esp32dev/partitions.bin _site/partitions-esp32dev.bin
           cp artifacts/esp32dev/firmware.bin   _site/firmware-esp32dev.bin
