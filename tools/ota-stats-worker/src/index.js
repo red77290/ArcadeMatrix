@@ -508,7 +508,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     }))
     .sort((a, b) => b.downloads - a.downloads);
 
-  const defaultLatest = project === "esp32" ? "v4.2.1" : "v4.2.0";
+  const defaultLatest = "v4.3.0";
   const latestVersion =
     github_releases[0]?.tag || versions[0]?.version || defaultLatest;
   const latestEntry =
