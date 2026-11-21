@@ -10076,7 +10076,7 @@ function initOta() {
   }
 
   async function fetchOtaReleases(sysInfo) {
-    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '4.3.0', arch: 'esp32', board_env: '' }));
+    const info = sysInfo || await API.get('/api/version').catch(() => ({ version: '4.3.1', arch: 'esp32', board_env: '' }));
     const params = new URLSearchParams({ p: 'esp32' });
     if (info.ota_auto_check !== false) {
       params.set('id', resolveInstallUuid(info.install_id));

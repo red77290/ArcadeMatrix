@@ -508,7 +508,7 @@ export async function buildProjectStats(db, project, githubReleasesRaw = []) {
     }))
     .sort((a, b) => b.downloads - a.downloads);
 
-  const defaultLatest = "v4.3.0";
+  const defaultLatest = "v4.3.1";
   const latestVersion =
     github_releases[0]?.tag || versions[0]?.version || defaultLatest;
   const latestEntry =

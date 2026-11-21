@@ -4,6 +4,11 @@ All notable changes to the **ArcadeMatrix (ESP32)** firmware, WebUI, and tooling
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.1] - 2026-11-21
+
+### Fixed
+- **Mobile MQTT & Sidebar WebUI Polish**: Fixed `.mobile-menu-btn` header alignment across Display/Media/System pages, auto-centered active horizontal tabs on mobile (`🔄 MQTT & API` and single-row `🎮 FrontendSync` sub-tabs), kept the mobile page header visible when jumping via `⚙️`, eliminated sidebar `Sync Console` ellipsis truncation across EN/FR/ES, and styled secondary `.btn-sm` actions and `#lang-selector` in dark glass.
+
 ## [4.3.0] - 2026-11-21
 
 ### Added
