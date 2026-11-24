@@ -54,3 +54,13 @@ python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD
 
 - **Format**: Raw RGB565 little-endian pixels (exactly `width * height * 2` bytes).
 - **Usage**: Displaying static battle stage backgrounds (`SD:/fighters_32/backgrounds/stage1.raw`) or POSTing live marquees over REST via `POST /api/marquee`.
+
+---
+
+## ⚡ 5. Offline In-Game Showcase GIF Packs (`/showcase` & `/showcase_tate`)
+
+- **Purpose**: Instant `0 ms` zero-network In-Game Showcase synchronization (Info Card + Description + Artwork + Gameplay Video) on Recalbox, Batocera, and RetroPie without requiring a live `dmd_media_showcase` server at runtime.
+- **Directory Layout** (generated automatically from `gamelist.xml` via `dmd_media_showcase` Tab #7):
+  - 🖥️ **Horizontal (YOKO)**: `/showcase/<system>/<rom_stem>.gif` (e.g. `/showcase/snes/smw.gif`, `/showcase/neogeo/mslugx.gif`).
+  - 📱 **Vertical (TATE)**: `/showcase_tate/<system>/<rom_stem>.gif` (falls back automatically to `/showcase/<system>/<rom_stem>.gif`).
+- **Encoding & Cycle Modes**: 24-bit `RGB888` `.gif` (`-gifflags -offsetting-transdiff`), honoring `ingame_cycle_mode` (`once`, `alternating` every `ingame_marquee_interval_sec`, or `loop`) and automatically falling back to the remote Showcase server only when a game has no local offline `.gif`.

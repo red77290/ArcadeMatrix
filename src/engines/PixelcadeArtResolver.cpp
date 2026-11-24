@@ -1443,4 +1443,158 @@ uint32_t PixelcadeArtResolver::hashArtKey(const char* folder, const char* name) 
     return (h == 0U) ? 1U : h;
 }
 
+size_t PixelcadeArtResolver::buildOfflineShowcaseProbePaths(
+    const char* cleanSystem,
+    const char* primaryFolder,
+    const char* secondaryFolder,
+    const char* localStem,
+    const char* strippedStem,
+    const char* rawGame,
+    bool isTate,
+    char (*outPaths)[128],
+    size_t maxPaths
+) {
+    if (!outPaths || maxPaths == 0U) return 0U;
+
+    const char* roots[2] = {
+        isTate ? "/showcase_tate" : "/showcase",
+        isTate ? "/showcase" : nullptr
+    };
+    const size_t rootCount = isTate ? 2U : 1U;
+
+    const char* rawFolders[3] = { cleanSystem, primaryFolder, secondaryFolder };
+    const char* folders[3] = { nullptr, nullptr, nullptr };
+    size_t folderCount = 0U;
+    for (size_t i = 0U; i < 3U; ++i) {
+        const char* f = rawFolders[i];
+        if (!f || f[0] == '\0') continue;
+        bool dup = false;
+        for (size_t j = 0U; j < folderCount; ++j) {
+            if (strEqIgnoreCase(folders[j], f)) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            folders[folderCount++] = f;
+        }
+    }
+    if (folderCount == 0U) return 0U;
+
+    char rawGameStemBuf[96] = "";
+    if (rawGame && rawGame[0] != '\0') {
+        const char* slash = strrchr(rawGame, '/');
+        const char* bslash = strrchr(rawGame, '\\');
+        const char* base = rawGame;
+        if (slash && (!bslash || slash > bslash)) base = slash + 1;
+        else if (bslash) base = bslash + 1;
+        size_t bLen = stripKnownRomOrImageExtLen(base, strlen(base));
+        if (bLen >= sizeof(rawGameStemBuf)) bLen = sizeof(rawGameStemBuf) - 1U;
+        if (bLen > 0U) {
+            memcpy(rawGameStemBuf, base, bLen);
+            rawGameStemBuf[bLen] = '\0';
+        }
+    }
+
+    const char* rawStems[3] = { localStem, strippedStem, rawGameStemBuf };
+    const char* stems[3] = { nullptr, nullptr, nullptr };
+    size_t stemCount = 0U;
+    for (size_t i = 0U; i < 3U; ++i) {
+        const char* s = rawStems[i];
+        if (!s || s[0] == '\0') continue;
+        bool dup = false;
+        for (size_t j = 0U; j < stemCount; ++j) {
+            if (strEqIgnoreCase(stems[j], s)) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            stems[stemCount++] = s;
+        }
+    }
+    if (stemCount == 0U) return 0U;
+
+    size_t written = 0U;
+    for (size_t ri = 0U; ri < rootCount && written < maxPaths; ++ri) {
+        for (size_t fi = 0U; fi < folderCount && written < maxPaths; ++fi) {
+            for (size_t si = 0U; si < stemCount && written < maxPaths; ++si) {
+                const int n = snprintf(
+                    outPaths[written],
+                    128U,
+                    "%s/%s/%s.gif",
+                    roots[ri],
+                    folders[fi],
+                    stems[si]
+                );
+                if (n > 0 && static_cast<size_t>(n) < 128U) {
+                    ++written;
+                }
+            }
+        }
+    }
+    return written;
+}
+
+OfflineShowcaseCycleAction PixelcadeArtResolver::stepOfflineShowcaseCycle(
+    OfflineShowcaseCycleState& state,
+    uint32_t nowMs,
+    uint32_t completedGifLoops,
+    bool isGamePlaying,
+    bool syncCardPreempting,
+    const char* cycleMode,
+    uint16_t marqueeIntervalSec,
+    uint32_t initialMarqueeDwellMs
+) {
+    if (!isGamePlaying || !state.hasOfflineGif) {
+        state.isPlayingOfflineGif = false;
+        return OfflineShowcaseCycleAction::None;
+    }
+
+    if (syncCardPreempting) {
+        if (state.isPlayingOfflineGif) {
+            state.isPlayingOfflineGif = false;
+            state.lastCycleEndedMs = (nowMs == 0U) ? 1U : nowMs;
+        }
+        return OfflineShowcaseCycleAction::None;
+    }
+
+    const bool isLoop = (cycleMode && strEqIgnoreCase(cycleMode, "loop"));
+    const bool isAlt = (cycleMode && strEqIgnoreCase(cycleMode, "alternating"));
+
+    if (!state.isPlayingOfflineGif) {
+        if (state.gameStartedAtMs != 0U && (nowMs - state.gameStartedAtMs) < initialMarqueeDwellMs) {
+            return OfflineShowcaseCycleAction::None;
+        }
+        if (state.completedOnce) {
+            if (!isLoop && !isAlt) {
+                return OfflineShowcaseCycleAction::None;
+            }
+            if (isAlt) {
+                const uint32_t clampedSec = (marqueeIntervalSec < 5U)
+                    ? 5U
+                    : ((marqueeIntervalSec > 600U) ? 600U : marqueeIntervalSec);
+                const uint32_t intervalMs = clampedSec * 1000UL;
+                if (state.lastCycleEndedMs != 0U && (nowMs - state.lastCycleEndedMs) < intervalMs) {
+                    return OfflineShowcaseCycleAction::None;
+                }
+            }
+        }
+        state.isPlayingOfflineGif = true;
+        return OfflineShowcaseCycleAction::StartOfflineGif;
+    }
+
+    if (completedGifLoops >= 1U) {
+        if (isLoop) {
+            return OfflineShowcaseCycleAction::None;
+        }
+        state.isPlayingOfflineGif = false;
+        state.completedOnce = true;
+        state.lastCycleEndedMs = (nowMs == 0U) ? 1U : nowMs;
+        return OfflineShowcaseCycleAction::RestoreMarquee;
+    }
+
+    return OfflineShowcaseCycleAction::None;
+}
+
 } // namespace engines

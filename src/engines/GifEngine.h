@@ -118,6 +118,7 @@ public:
     const String& getFitMode() const { return m_fitMode; }
     void setSpeedMultiplier(float speed) { m_speedMultiplier = (speed > 0.05f) ? speed : 1.0f; }
     float getSpeedMultiplier() const { return m_speedMultiplier; }
+    uint32_t completedLoops() const { return m_completedLoops.load(std::memory_order_acquire); }
 
 private:
     AnimatedGIF* gif = nullptr;      ///< The AnimatedGIF decoder instance, allocated dynamically (or in PSRAM)
@@ -296,6 +297,7 @@ private:
     bool m_hasPsram = false;
     bool m_lastFrameDrew = true;
     bool m_borrowedSurfaceCanvas = false;
+    std::atomic<uint32_t> m_completedLoops{0};
     String m_fitMode = "fit";
     float m_speedMultiplier = 1.0f;
 };

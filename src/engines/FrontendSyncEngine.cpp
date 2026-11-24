@@ -922,6 +922,9 @@ void FrontendSyncEngine::updateRuntimeConfig(
     if (!showcaseConfig.enabled || !mqttConfig.ingame_showcase_enabled) {
         cancelInGameShowcaseSession();
     }
+    if (!mqttConfig.ingame_showcase_enabled) {
+        resetOfflineShowcaseCycle(isGamePlaying);
+    }
     if (!mqttConfig.sync_show_hiscores && !mqttConfig.sync_show_ra) {
         resetSyncCardCycle();
     } else if (m_hasSessionSyncMeta && m_inGameEngine) {
@@ -1435,6 +1438,7 @@ void FrontendSyncEngine::stop() {
     m_transportConfigured = false;
     writeSharedBrokerState(false, "", 1883, false);
 
+    resetOfflineShowcaseCycle(false);
     if (gif) gif->stop();
     if (message) message->deactivate();
     LOGI("RetroFrontend", "MQTT Listener stopped.");
@@ -1470,8 +1474,13 @@ bool FrontendSyncEngine::loop() {
             }
             if (res.downloaded && res.savedPath[0] != '\0' &&
                 res.reqId == currentRequestId && isGamePlaying) {
-                LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", res.savedPath);
-                (void)tryPlayMarqueePath(res.savedPath);
+                if (m_offlineShowcaseState.isPlayingOfflineGif) {
+                    LOGI("RetroFrontend", "Cached downloaded marquee for post-Showcase restore: %s", res.savedPath);
+                    copySafeCStr(m_activeMarqueePath, sizeof(m_activeMarqueePath), res.savedPath);
+                } else {
+                    LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", res.savedPath);
+                    (void)tryPlayMarqueePath(res.savedPath);
+                }
             }
         }
     }
@@ -1532,12 +1541,14 @@ bool FrontendSyncEngine::loop() {
         }
     }
 
-    // Advance opportunistic High-Score / RetroAchievements card cycle when playing
+    // Advance opportunistic High-Score / RetroAchievements card cycle & Offline Showcase GIF cycle when playing
     updateSyncCardCycle();
+    updateOfflineShowcaseCycle();
 
     // Restore static PNG marquee cleanly onto shared surface when InGameShowcase yields back (`once` / `alternating`)
     bool showingInGame = wantsInGameShowcaseDisplay();
-    if (m_wasShowingInGame && !showingInGame && isGamePlaying && gif && m_activeMarqueePath[0] != '\0') {
+    if (m_wasShowingInGame && !showingInGame && isGamePlaying && gif &&
+        !m_offlineShowcaseState.isPlayingOfflineGif && m_activeMarqueePath[0] != '\0') {
         size_t pLen = strlen(m_activeMarqueePath);
         if (pLen > 4 && strcasecmp(m_activeMarqueePath + pLen - 4, ".png") == 0) {
             gif->playGif(m_activeMarqueePath);
@@ -2859,6 +2870,60 @@ void FrontendSyncEngine::updateSyncCardCycle() {
     }
 }
 
+void FrontendSyncEngine::resetOfflineShowcaseCycle(bool restoreMarqueeIfPlaying) {
+    const bool wasPlayingOffline = m_offlineShowcaseState.isPlayingOfflineGif;
+    m_offlineShowcaseState = engines::OfflineShowcaseCycleState{};
+    m_offlineShowcaseGifPath[0] = '\0';
+    if (restoreMarqueeIfPlaying && wasPlayingOffline && isGamePlaying) {
+        if (m_activeMarqueePath[0] != '\0' && gif) {
+            (void)gif->playGif(m_activeMarqueePath);
+        } else if (m_activeGameFallback[0] != '\0' || m_activeTitleFallback[0] != '\0') {
+            showCyanTitleBanner(m_activeTitleFallback, String(m_activeGameFallback));
+        }
+    }
+}
+
+void FrontendSyncEngine::updateOfflineShowcaseCycle() {
+    if (!m_offlineShowcaseState.hasOfflineGif || !gif) {
+        return;
+    }
+    const uint32_t now = (millis() == 0U) ? 1U : millis();
+    const bool syncPreempting =
+        m_wantsSyncCardDisplay.load(std::memory_order_acquire) ||
+        m_wantsInGameDisplay.load(std::memory_order_acquire);
+    const engines::OfflineShowcaseCycleAction action =
+        engines::PixelcadeArtResolver::stepOfflineShowcaseCycle(
+            m_offlineShowcaseState,
+            now,
+            gif->completedLoops(),
+            isGamePlaying,
+            syncPreempting,
+            m_workerCfg.cycleMode,
+            m_workerCfg.marqueeIntervalSec,
+            3500U
+        );
+
+    if (action == engines::OfflineShowcaseCycleAction::StartOfflineGif) {
+        if (m_offlineShowcaseGifPath[0] != '\0' && gif->playGif(m_offlineShowcaseGifPath)) {
+            if (message) {
+                message->deactivate();
+            }
+            LOGI("RetroFrontend", "Playing Offline In-Game Showcase GIF: %s", m_offlineShowcaseGifPath);
+        } else {
+            LOGW("RetroFrontend", "Failed to open Offline Showcase GIF %s; keeping marquee.", m_offlineShowcaseGifPath);
+            m_offlineShowcaseState.hasOfflineGif = false;
+            m_offlineShowcaseState.isPlayingOfflineGif = false;
+        }
+    } else if (action == engines::OfflineShowcaseCycleAction::RestoreMarquee) {
+        if (m_activeMarqueePath[0] != '\0') {
+            LOGI("RetroFrontend", "Offline Showcase cycle completed; restoring marquee %s", m_activeMarqueePath);
+            (void)gif->playGif(m_activeMarqueePath);
+        } else {
+            showCyanTitleBanner(m_activeTitleFallback, String(m_activeGameFallback));
+        }
+    }
+}
+
 bool FrontendSyncEngine::handleCompanionEvent(const String& jsonPayload) {
     StaticJsonDocument<1024> doc;
     if (deserializeJson(doc, jsonPayload) != DeserializationError::Ok) {
@@ -3134,6 +3199,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         LOGI("RetroFrontend", "Received stopped event, releasing any In-Game Showcase and keeping last marquee.");
         cancelInGameShowcaseSession();
         resetSyncCardCycle();
+        resetOfflineShowcaseCycle(/*restoreMarqueeIfPlaying=*/true);
         hasPendingEvent = false;
         m_hasPendingNetArt = false;
         return;
@@ -3144,6 +3210,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         // Menu navigation ("browsing" or system selection) -> 100% local/async marquee, cancel any previous in-game Showcase
         cancelInGameShowcaseSession();
         resetSyncCardCycle();
+        resetOfflineShowcaseCycle(false);
     }
 
     String rawSysResolved = extractSystemFromRomPath(systemRaw, romPathRaw);
@@ -3158,11 +3225,13 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     isGamePlaying = true;
     waitingDisplayed = false;
     m_activeMarqueePath[0] = '\0';
+    copySafeCStr(m_activeTitleFallback, sizeof(m_activeTitleFallback), titleRaw);
+    copySafeCStr(m_activeGameFallback, sizeof(m_activeGameFallback), gameRaw);
 
     if (isPlaying && gameRaw[0] != '\0') {
         resetSyncCardCycle();
+        resetOfflineShowcaseCycle(false);
         m_gameStartedAtMs = (millis() == 0U) ? 1U : millis();
-        startInGameShowcaseSession(cleanSystem, String(gameRaw), String(titleRaw));
     }
 
     String game = String(gameRaw);
@@ -3180,6 +3249,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     // Fast Core 1 local SD cache probe (< 3 ms, bounded 15 ms lock, checks only existing directories)
     char foundArtPath[128] = "";
+    char foundOfflineShowcasePath[128] = "";
     {
         SdLockGuard guard(pdMS_TO_TICKS(15));
         if (guard) {
@@ -3230,10 +3300,70 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
                     }
                 }
             }
+
+            // Probe local Offline In-Game Showcase RGB888 GIF (`/showcase[_tate]/<folder>/<stem>.gif`)
+            if (isPlaying && mqttConfig.ingame_showcase_enabled && gameRaw[0] != '\0') {
+                const bool isTatePanel = (m_panelH > m_panelW);
+                const bool hasShowcaseYoko = sd.exists("/showcase");
+                const bool hasShowcaseTate = isTatePanel && sd.exists("/showcase_tate");
+                if (hasShowcaseYoko || hasShowcaseTate) {
+                    char offlineProbes[12][128];
+                    const size_t nProbes = engines::PixelcadeArtResolver::buildOfflineShowcaseProbePaths(
+                        cleanSystem.c_str(),
+                        primaryFolder.c_str(),
+                        secondaryFolder.c_str(),
+                        localStemBuf,
+                        cleanGameStripped,
+                        gameRaw,
+                        isTatePanel,
+                        offlineProbes,
+                        12U
+                    );
+                    char lastCheckedParent[80] = "";
+                    bool lastParentExists = false;
+                    for (size_t pi = 0U; pi < nProbes; ++pi) {
+                        const char* candGif = offlineProbes[pi];
+                        if (!hasShowcaseTate && strncmp(candGif, "/showcase_tate/", 15) == 0) continue;
+                        if (!hasShowcaseYoko && strncmp(candGif, "/showcase/", 10) == 0) continue;
+
+                        const char* lastSlash = strrchr(candGif, '/');
+                        if (!lastSlash) continue;
+                        const size_t parentLen = static_cast<size_t>(lastSlash - candGif);
+                        if (parentLen == 0U || parentLen >= sizeof(lastCheckedParent)) continue;
+                        if (strncmp(lastCheckedParent, candGif, parentLen) != 0 ||
+                            lastCheckedParent[parentLen] != '\0') {
+                            memcpy(lastCheckedParent, candGif, parentLen);
+                            lastCheckedParent[parentLen] = '\0';
+                            lastParentExists = sd.exists(lastCheckedParent);
+                        }
+                        if (lastParentExists && sd.exists(candGif)) {
+                            copySafeCStr(foundOfflineShowcasePath, sizeof(foundOfflineShowcasePath), candGif);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
     if (reqId != currentRequestId) return;
+
+    if (isPlaying && gameRaw[0] != '\0') {
+        if (foundOfflineShowcasePath[0] != '\0') {
+            cancelInGameShowcaseSession();
+            copySafeCStr(m_offlineShowcaseGifPath, sizeof(m_offlineShowcaseGifPath), foundOfflineShowcasePath);
+            m_offlineShowcaseState.hasOfflineGif = true;
+            m_offlineShowcaseState.gameStartedAtMs = m_gameStartedAtMs;
+            LOGI(
+                "RetroFrontend",
+                "Offline In-Game Showcase GIF detected on SD: %s (cycle=%s, 0 network calls)",
+                m_offlineShowcaseGifPath,
+                mqttConfig.ingame_cycle_mode.c_str()
+            );
+        } else {
+            startInGameShowcaseSession(cleanSystem, String(gameRaw), String(titleRaw));
+        }
+    }
 
     if (foundArtPath[0] != '\0' && tryPlayMarqueePath(foundArtPath)) {
         LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath);

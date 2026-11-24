@@ -156,5 +156,21 @@ Descomprime `ArcadeMatrix-tools.zip` en tu ordenador para utilizar las herramien
 6. **`home_assistant/` — Blueprints Domóticos para Home Assistant (`mqttdata`)**
    - **Para qué sirve**: Blueprints YAML listos para importar (`home_assistant/blueprints/*.yaml`) en Home Assistant (`Ajustes → Automatizaciones y escenas → Blueprints`) para enviar sensores, gráficas de 24h, tablas y clima al DMD por MQTT.
 
+---
+
+## 7. Modo Online vs Modo Offline Autónomo (Con `DMD Media Showcase`) — ¿Cuál elegir?
+
+Sin conocimientos informáticos, puedes disfrutar de tu pantalla de **3 formas** con la aplicación gratuita **[DMD Media Showcase](https://github.com/red77290/dmd_media_showcase)**:
+
+1. 🌐 **Modo 100 % ONLINE (Cero archivos que copiar en la tarjeta SD)**:
+   - Inicia Showcase en tu PC, Mac o NAS Docker y activa **Showcase Server** en la Web de tu pantalla (`🟢 Communication OK`). Recibirás miles de juegos retro, películas, series y animes en directo sin repeticiones.
+2. 💾 **Modo 100 % OFFLINE (PC Apagado y Sin Internet — Packs en MicroSD)**:
+   - Abre una vez la pestaña **`7. Batch Scraper & Packs Offline`** de Showcase desde tu PC, Mac o móvil:
+     - **Para el Reloj / Rotación**: genera `100` a `1 000+` archivos `.gif` `RGB888` a la carta (`Completo`, `Solo Vídeo`, `Solo Póster`..., `2 s` a `120 s` máx.) ordenados en `snes_platformer`, `megadrive_fighting`, `neogeo_run&gun` + `playlists.json` y cópialos en **`SD:/gifs/`** (o `SD:/gifs_tate/` en vertical).
+     - **Para recreativas Recalbox / Batocera sin conexión**: importa tus `gamelist.xml` y copia **`showcase/`** (o `showcase_tate/`) + **`pixelcade/`** en la raíz de la SD. Al iniciar un juego, el marquee sale en `0 ms` y el `.gif` Showcase arranca tras `3,5 s` sin ningún PC encendido.
+3. ⚡ **Modo HÍBRIDO (Automático)**:
+   - Conserva `SD:/showcase/` en la SD **y** deja **Showcase Server** activado: la pantalla reproduce siempre primero tus `.gif` locales (`0` tráfico Wi-Fi) y recurre al servidor Online solo para juegos nuevos que no estén en la SD.
+   - 👉 **[Leer el Tutorial Completo Paso a Paso (Principiantes, PC, Docker y Móvil)](https://github.com/red77290/dmd_media_showcase/blob/main/docs/TUTORIAL_ONLINE_OFFLINE_SCRAPING_ES.md)**
+
 💬 ¿Dudas? ¡Únete a la comunidad en **[Telegram ArcadeMatrix](https://t.me/+DrSdAO8UMUViNmE0)**!
 

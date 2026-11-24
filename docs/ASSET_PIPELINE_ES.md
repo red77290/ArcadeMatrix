@@ -54,3 +54,13 @@ python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD
 
 - **Formato**: Píxeles crudos en RGB565 little-endian (exactamente `ancho * alto * 2` bytes).
 - **Uso**: Mostrar fondos de escenarios de combate (`SD:/fighters_32/backgrounds/stage1.raw`) o enviar marquees en directo a través de la API REST `POST /api/marquee`.
+
+---
+
+## ⚡ 5. Paquetes GIF Showcase In-Game Offline (`/showcase` y `/showcase_tate`)
+
+- **Propósito**: Sincronización Showcase In-Game instantánea (`0 ms`, `0` llamadas de red — Ficha Informativa + Sinopsis + Arte + Vídeo de Gameplay) en Recalbox, Batocera y RetroPie sin necesitar un servidor `dmd_media_showcase` encendido durante la partida.
+- **Estructura en Tarjeta SD** (generada automáticamente desde sus archivos `gamelist.xml` mediante la pestaña #7 de `dmd_media_showcase`):
+  - 🖥️ **Horizontal (YOKO)**: `/showcase/<system>/<rom_stem>.gif` (ej. `/showcase/snes/smw.gif`, `/showcase/neogeo/mslugx.gif`).
+  - 📱 **Vertical (TATE)**: `/showcase_tate/<system>/<rom_stem>.gif` (con respaldo automático a `/showcase/<system>/<rom_stem>.gif`).
+- **Codificación y Modos de Ciclo**: `.gif` `RGB888` de 24 bits (`-gifflags -offsetting-transdiff`), respetando `ingame_cycle_mode` (`once`, `alternating` cada `ingame_marquee_interval_sec` o `loop`) y recurriendo al servidor Showcase remoto únicamente cuando el juego no dispone de `.gif` local.

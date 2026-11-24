@@ -514,8 +514,15 @@ private:
     uint32_t m_lastSyncCardCycleEndedMs = 0;
     SyncCardMode m_currentSyncCardPhase = SyncCardMode::None;
 
+    engines::OfflineShowcaseCycleState m_offlineShowcaseState{};
+    char m_offlineShowcaseGifPath[128] = "";
+    char m_activeTitleFallback[64] = "";
+    char m_activeGameFallback[64] = "";
+
     void updateSyncCardCycle();
     void resetSyncCardCycle();
+    void updateOfflineShowcaseCycle();
+    void resetOfflineShowcaseCycle(bool restoreMarqueeIfPlaying = false);
     bool handleCompanionEvent(const String& jsonPayload);
 
     std::atomic<uint32_t> m_artJobSeq{0};
