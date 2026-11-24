@@ -110,4 +110,9 @@ void drawNotice(IDrawingSurface* m, Message msg) {
     }
 }
 
+void drawWaitingLabel(IDrawingSurface* m, const char* text) {
+    if (!m || !text || !*text) return;
+    drawCentred(m, text, m->color565(0x78, 0x78, 0x78));
+}
+
 }  // namespace panel_text

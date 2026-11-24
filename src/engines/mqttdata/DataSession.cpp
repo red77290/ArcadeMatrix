@@ -33,6 +33,27 @@ uint8_t parseTopics(const char* list, char out[][TOPIC_LEN], uint8_t max, uint8_
     return n;
 }
 
+uint8_t parseWaitingLabels(const char* list, char out[][WAIT_LABEL_LEN], uint8_t max) {
+    if (!list || !*list) return 0;
+    uint8_t n = 0;
+    const char* p = list;
+    while (n < max) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char* start = p;
+        while (*p && *p != ',' && *p != '\n' && *p != '\r') p++;
+        const char* end = p;
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) end--;
+        size_t len = (size_t)(end - start);
+        if (len >= WAIT_LABEL_LEN) len = WAIT_LABEL_LEN - 1;
+        memcpy(out[n], start, len);
+        out[n][len] = '\0';
+        n++;
+        if (!*p) break;
+        p++;   // consume the one separator
+    }
+    return n;
+}
+
 uint8_t subPageCount(const View& v) {
     if (v.kind != feed::Kind::Weather || !v.weather.valid) return 1;
     uint8_t days = v.weather.dayCount < MAX_WEATHER_DAYS ? v.weather.dayCount : MAX_WEATHER_DAYS;

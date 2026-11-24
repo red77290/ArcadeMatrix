@@ -59,6 +59,10 @@ void MqttDataEngine::onConfigChanged(const EngineConfig* cfg) {
     uint8_t tooLong = 0;
     m_topicCount[spare] = mqd::parseTopics(list.c_str(), m_topics[spare], limits.maxTopics, &tooLong);
     if (tooLong) LOGW("MqttData", "%u topic(s) longer than %u characters ignored", tooLong, (unsigned)(mqd::TOPIC_LEN - 1));
+    // Per-topic waiting labels, written to the spare slot like the topics and published with them.
+    String waitingList = cfg->getString("waiting_labels", "");
+    memset(m_waitingLabels[spare], 0, sizeof(m_waitingLabels[spare]));
+    m_waitingCount[spare] = mqd::parseWaitingLabels(waitingList.c_str(), m_waitingLabels[spare], limits.maxTopics);
     // Every settings save notifies every engine; reconnect only when this instance's topics changed.
     bool changed = m_topicCount[spare] != m_topicCount[cur];
     for (uint8_t i = 0; !changed && i < m_topicCount[spare]; i++) changed = strcmp(m_topics[spare][i], m_topics[cur][i]) != 0;
@@ -68,6 +72,11 @@ void MqttDataEngine::onConfigChanged(const EngineConfig* cfg) {
         m_cycle = mqd::Cycle();
         m_cycle.sinceMs = millis();
         m_viewTopic = -1;
+    } else if (m_waitingCount[spare] != m_waitingCount[cur] ||
+               memcmp(m_waitingLabels[spare], m_waitingLabels[cur], sizeof(m_waitingLabels[0])) != 0) {
+        // Labels changed but topics didn't: swap the buffer so the render thread picks it up,
+        // no reconnect.
+        m_topicsIdx.store(spare, std::memory_order_release);
     }
     requestRedraw();
 }
@@ -228,7 +237,9 @@ void MqttDataEngine::update(EngineContext* context) {
         if (m_redrawFrames) {
             m_redrawFrames--;
             m_surface->fillScreen(0);
-            drawNotice(m_notice);
+            // No session yet: no current topic. Use the first configured waiting label (if any)
+            // as the "the whole engine is connecting" sentinel.
+            drawNotice(m_notice, 0);
             m_presented = true;
         }
     }
@@ -283,14 +294,22 @@ void MqttDataEngine::draw(mqd::Session& s) {
         case feed::Kind::Value:
         case feed::Kind::Table:   values_renderer::drawValues(m_surface, v.values, v.values.showTitle); break;
         case feed::Kind::Weather: weather_page::draw(m_surface, v.weather, m_cycle.sub); break;
-        default: drawNotice(m_notice); break;
+        default: drawNotice(m_notice, m_cycle.topic); break;
     }
     m_presented = true;
 }
 
-void MqttDataEngine::drawNotice(Notice n) {
+void MqttDataEngine::drawNotice(Notice n, int topicIdx) {
     if (n == Notice::NoData) { panel_text::drawNoData(m_surface); return; }
-    if (n == Notice::Connecting) { panel_text::drawNotice(m_surface, panel_text::Message::Connecting); return; }
+    if (n == Notice::Connecting) {
+        const uint8_t idx = m_topicsIdx.load(std::memory_order_acquire);
+        if (topicIdx >= 0 && (uint8_t)topicIdx < m_waitingCount[idx]) {
+            const char* label = m_waitingLabels[idx][topicIdx];
+            if (label && *label) { panel_text::drawWaitingLabel(m_surface, label); return; }
+        }
+        panel_text::drawNotice(m_surface, panel_text::Message::Connecting);
+        return;
+    }
     if (n == Notice::NoConnection) { panel_text::drawNotice(m_surface, panel_text::Message::NoConnection); return; }
     if (n == Notice::Unsupported) { panel_text::drawNotice(m_surface, panel_text::Message::Unsupported); return; }
 }
@@ -307,7 +326,8 @@ EngineDescriptor MqttDataEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.internalContiguousBytes = 8000;
     // Only the subscriptions are configured here; everything else comes from the payloads.
     desc.schema.fields = {
-        ConfigField("topics", ConfigType::STRING, "MQTT Topics", "Comma-separated full topics, one page each (up to 6 with PSRAM, 4 without)", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept)
+        ConfigField("topics", ConfigType::STRING, "MQTT Topics", "Comma-separated full topics, one page each (up to 6 with PSRAM, 4 without)", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("waiting_labels", ConfigType::STRING, "Waiting Labels", "Optional per-topic label shown instead of CONNECTING while that topic has no payload yet. Comma or newline separated, aligned to Topics by position. Leave an entry blank to use the default. Example: 'FETCHING WEATHER, ,SENSORS...'", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new MqttDataEngine()); };
     return desc;
