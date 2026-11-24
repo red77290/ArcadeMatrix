@@ -156,5 +156,21 @@ Décompressez `ArcadeMatrix-tools.zip` sur votre ordinateur pour utiliser les ou
 6. **`home_assistant/` — Blueprints Domotiques Home Assistant (`mqttdata`)**
    - **À quoi ça sert** : Blueprints YAML prêts à importer (`home_assistant/blueprints/*.yaml`) dans Home Assistant (`Paramètres → Automatisations et scènes → Blueprints`) pour diffuser capteurs, courbes 24h, tableaux et météo sur le DMD via MQTT.
 
+---
+
+## 7. Mode Online vs Mode Offline Autonome (Avec `DMD Media Showcase`) — Que choisir ?
+
+Sans aucune compétence informatique, vous pouvez enrichir votre écran de **3 façons** grâce à l'application gratuite **[DMD Media Showcase](https://github.com/red77290/dmd_media_showcase)** :
+
+1. 🌐 **Mode 100 % ONLINE (Zéro fichier à copier sur la carte SD)** :
+   - Lancez Showcase sur votre PC, Mac ou NAS Docker, puis activez simplement **Showcase Server** dans la page Web de l'écran (`🟢 Communication OK`). Votre écran reçoit en direct des milliers de jeux rétro, films, séries et animes sans jamais se répéter.
+2. 💾 **Mode 100 % OFFLINE (PC éteint & Sans Internet — Packs sur Carte MicroSD)** :
+   - Ouvrez l'onglet **`7. Batch Scraper & Packs Offline`** de Showcase une seule fois depuis votre PC, Mac ou même votre smartphone :
+     - **Pour l'Horloge / Rotation** : générez `100` à `1 000+` `.gif` `RGB888` à la carte (`La Totale`, `Vidéo Seule`, `Affiche Seule`..., vidéo de `2 s` à `120 s` max) déjà triés dans `snes_platformer`, `megadrive_fighting`, `neogeo_run&gun` + `playlists.json`, et glissez-les dans **`SD:/gifs/`** (ou `SD:/gifs_tate/` en vertical).
+     - **Pour votre borne Recalbox / Batocera hors-ligne** : importez vos fichiers `gamelist.xml` et copiez **`showcase/`** (ou `showcase_tate/`) + **`pixelcade/`** à la racine de la carte SD. Dès que vous lancez un jeu, le marquee s'affiche en `0 ms` puis votre `.gif` (fiche + gameplay) démarre tout seul après `3,5 s`, même avec le PC éteint !
+3. ⚡ **Mode HYBRIDE (Automatique)** :
+   - Gardez votre pack `SD:/showcase/` **et** laissez **Showcase Server** activé : l'écran joue toujours vos `.gif` de la carte SD en priorité instantanée (`0` trafic Wi-Fi), et interroge le serveur Online uniquement si vous lancez un nouveau jeu absent de la carte SD !
+   - 👉 **[Lire le Tutoriel Complet Pas-à-Pas (Débutants, PC, Docker & Smartphone)](https://github.com/red77290/dmd_media_showcase/blob/main/docs/TUTORIAL_ONLINE_OFFLINE_SCRAPING_FR.md)**
+
 💬 Une question ? Rejoignez la communauté sur **[Telegram ArcadeMatrix](https://t.me/+DrSdAO8UMUViNmE0)** !
 

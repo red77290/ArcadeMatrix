@@ -156,5 +156,21 @@ Unzip `ArcadeMatrix-tools.zip` on your computer to access the following tools in
 6. **`home_assistant/` — Smart Home Automation Blueprints (`mqttdata`)**
    - **What it does**: Ready-to-import YAML blueprints (`home_assistant/blueprints/*.yaml`) for Home Assistant (`Settings → Automations & Scenes → Blueprints`) to stream live sensors, 24h history charts, tables, and weather to your DMD over MQTT.
 
+---
+
+## 7. Online Mode vs Standalone Offline Mode (With `DMD Media Showcase`) — Which Should I Pick?
+
+With zero computer expertise required, you can power up your display in **3 ways** using the free **[DMD Media Showcase](https://github.com/red77290/dmd_media_showcase)** companion app:
+
+1. 🌐 **100% ONLINE Mode (Zero files to copy onto the SD card)**:
+   - Launch Showcase on your PC, Mac, or Docker NAS, and turn on **Showcase Server** in your display's Web UI (`🟢 Communication OK`). Your display streams thousands of retro games, movies, TV series, and anime live with zero repeats.
+2. 💾 **100% OFFLINE Mode (PC Turned Off & No Internet — MicroSD Packs)**:
+   - Open **Tab `7. Batch Scraper & Offline Packs`** in Showcase once from your PC, Mac, or smartphone:
+     - **For Clock / Rotation Playlists**: generate `100` to `1,000+` à-la-carte `RGB888` `.gif` files (`Full Showcase`, `Video Only`, `Poster Only`..., `2s` up to `120s` max) sorted into `snes_platformer`, `megadrive_fighting`, `neogeo_run&gun` + `playlists.json`, and drop them into **`SD:/gifs/`** (or `SD:/gifs_tate/` on vertical panels).
+     - **For Offline Recalbox / Batocera Cabinets**: import your `gamelist.xml` file(s) and copy **`showcase/`** (or `showcase_tate/`) + **`pixelcade/`** to the root of your SD card. Launching any game shows its marquee in `0 ms` and plays its `.gif` showcase after `3.5s` with zero server running!
+3. ⚡ **HYBRID Mode (Automatic)**:
+   - Keep `SD:/showcase/` on your SD card **and** leave **Showcase Server** enabled: your display always plays local SD `.gif` files first (`0` Wi-Fi traffic) and automatically asks the Online server only when you launch a new game missing from the SD card!
+   - 👉 **[Read the Complete Beginner Tutorial (PC, Docker & Smartphone)](https://github.com/red77290/dmd_media_showcase/blob/main/docs/TUTORIAL_ONLINE_OFFLINE_SCRAPING.md)**
+
 💬 Need help? Join the **[ArcadeMatrix Telegram Community](https://t.me/+DrSdAO8UMUViNmE0)**!
 

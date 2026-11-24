@@ -1576,6 +1576,7 @@ void GifEngine::stop() {
     }
     playlistMode = false;
     hasPendingPlaylists = false;
+    m_completedLoops.store(0U, std::memory_order_release);
     freePsramBuffer();
     // The preloaded next file is deliberately kept: loadNextFileInPlaylist() calls stop() right before
     // swapping it in, and the preload task may be writing m_preloaded while it is not ready. It is freed
@@ -1692,9 +1693,12 @@ bool GifEngine::loop() {
             if (playlistMode) {
                 loadNextFileInPlaylist();
             } else if (ownsDecoder) {
+                m_completedLoops.fetch_add(1U, std::memory_order_acq_rel);
                 gif->reset(); // Loop single file
             } else if (lastPlayedGif.length() > 0) {
+                const uint32_t prevLoops = m_completedLoops.load(std::memory_order_acquire);
                 playGif(lastPlayedGif.c_str());
+                m_completedLoops.store(prevLoops + 1U, std::memory_order_release);
             }
         }
         return true; // Frame decoded, requires flip

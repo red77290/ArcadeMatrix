@@ -4722,6 +4722,254 @@ void test_marquee_fit_geometry_proportional_and_text_bounds(void) {
     TEST_ASSERT_EQUAL_INT(34, cy); // cy + boundsY1 = 29 == (64 - 5)/2
 }
 
+void test_offline_showcase_gif_probe_paths_and_cycle_modes(void) {
+    using engines::OfflineShowcaseCycleAction;
+    using engines::OfflineShowcaseCycleState;
+    using engines::PixelcadeArtResolver;
+
+    // 1. YOKO path probing: canonical system (`megadrive`) precedes Pixelcade alias (`genesis`) with deduplication
+    char yokoPaths[12][128];
+    const size_t nYoko = PixelcadeArtResolver::buildOfflineShowcaseProbePaths(
+        "megadrive",
+        "genesis",
+        "megadrive",
+        "sonic_2_world",
+        "Sonic 2",
+        "./roms/megadrive/Sonic 2 (World).md",
+        false,
+        yokoPaths,
+        12U
+    );
+    TEST_ASSERT_EQUAL_UINT32(6U, static_cast<uint32_t>(nYoko));
+    TEST_ASSERT_EQUAL_STRING("/showcase/megadrive/sonic_2_world.gif", yokoPaths[0]);
+    TEST_ASSERT_EQUAL_STRING("/showcase/megadrive/Sonic 2.gif", yokoPaths[1]);
+    TEST_ASSERT_EQUAL_STRING("/showcase/megadrive/Sonic 2 (World).gif", yokoPaths[2]);
+    TEST_ASSERT_EQUAL_STRING("/showcase/genesis/sonic_2_world.gif", yokoPaths[3]);
+
+    // 2. TATE path probing: `/showcase_tate` probed first, then `/showcase` fallback
+    char tatePaths[12][128];
+    const size_t nTate = PixelcadeArtResolver::buildOfflineShowcaseProbePaths(
+        "neogeo",
+        "neogeo",
+        "mame",
+        "mslugx",
+        "mslugx",
+        "mslugx.zip",
+        true,
+        tatePaths,
+        12U
+    );
+    TEST_ASSERT_EQUAL_UINT32(4U, static_cast<uint32_t>(nTate));
+    TEST_ASSERT_EQUAL_STRING("/showcase_tate/neogeo/mslugx.gif", tatePaths[0]);
+    TEST_ASSERT_EQUAL_STRING("/showcase_tate/mame/mslugx.gif", tatePaths[1]);
+    TEST_ASSERT_EQUAL_STRING("/showcase/neogeo/mslugx.gif", tatePaths[2]);
+    TEST_ASSERT_EQUAL_STRING("/showcase/mame/mslugx.gif", tatePaths[3]);
+
+    // 3. `once` cycle mode: waits 3.5s marquee dwell -> plays 1 full loop -> restores marquee permanently
+    OfflineShowcaseCycleState st{};
+    st.hasOfflineGif = true;
+    st.gameStartedAtMs = 1000U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(st, 4400U, 0U, true, false, "once", 30U))
+    );
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(st, 4500U, 0U, true, false, "once", 30U))
+    );
+    TEST_ASSERT_TRUE(st.isPlayingOfflineGif);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(st, 9000U, 0U, true, false, "once", 30U))
+    );
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::RestoreMarquee),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(st, 12000U, 1U, true, false, "once", 30U))
+    );
+    TEST_ASSERT_FALSE(st.isPlayingOfflineGif);
+    TEST_ASSERT_TRUE(st.completedOnce);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(st, 60000U, 0U, true, false, "once", 30U))
+    );
+
+    // 4. `alternating` + SyncCard preemption + `loop` mode
+    OfflineShowcaseCycleState altSt{};
+    altSt.hasOfflineGif = true;
+    altSt.gameStartedAtMs = 100U;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 4000U, 0U, true, false, "alternating", 10U))
+    );
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::RestoreMarquee),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 9000U, 1U, true, false, "alternating", 10U))
+    );
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 18999U, 0U, true, false, "alternating", 10U))
+    );
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 19000U, 0U, true, false, "alternating", 10U))
+    );
+    // SyncCard preemption cleanly yields and resumes once card finishes
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 20000U, 0U, true, true, "loop", 10U))
+    );
+    TEST_ASSERT_FALSE(altSt.isPlayingOfflineGif);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 28000U, 0U, true, false, "loop", 10U))
+    );
+    // `loop` keeps playing across loop completions
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(altSt, 35000U, 3U, true, false, "loop", 10U))
+    );
+    TEST_ASSERT_TRUE(altSt.isPlayingOfflineGif);
+}
+
+void test_offline_showcase_e2e_arbiter_preemption_stack_celebration_and_edge_cases(void) {
+    using engines::OfflineShowcaseCycleAction;
+    using engines::OfflineShowcaseCycleState;
+    using engines::PixelcadeArtResolver;
+
+    // 1. Virtual collection extraction (`favorites` + `/recalbox/share/roms/cps2/ssf2t.zip` -> `cps2`)
+    String extractedSys = PixelcadeArtResolver::extractSystemFromRomPath(
+        "favorites",
+        "/recalbox/share/roms/cps2/SSF2T.ZIP"
+    );
+    TEST_ASSERT_EQUAL_STRING("cps2", extractedSys.c_str());
+
+    char localStem[96] = {0};
+    char strippedStem[96] = {0};
+    PixelcadeArtResolver::sanitizeLocalStem("SSF2T.ZIP", localStem, sizeof(localStem));
+    PixelcadeArtResolver::stripRomOrArtExtensionAndTags("SSF2T.ZIP", strippedStem, sizeof(strippedStem));
+
+    // Bounded maxPaths = 2 must never overflow caller's fixed stack buffer
+    char boundedPaths[2][128];
+    const size_t nBounded = PixelcadeArtResolver::buildOfflineShowcaseProbePaths(
+        extractedSys.c_str(),
+        PixelcadeArtResolver::mapSystemToPixelcadeFolder(extractedSys).c_str(),
+        PixelcadeArtResolver::getSecondaryPixelcadeFolder(extractedSys).c_str(),
+        localStem,
+        strippedStem,
+        "SSF2T.ZIP",
+        /*isTate=*/true,
+        boundedPaths,
+        2U
+    );
+    TEST_ASSERT_EQUAL_UINT32(2U, static_cast<uint32_t>(nBounded));
+    TEST_ASSERT_EQUAL_STRING("/showcase_tate/cps2/SSF2T.gif", boundedPaths[0]);
+
+    // 2. Full 4-Tier DisplayArbiter + OfflineShowcaseCycleState E2E:
+    //    Rotation Clock (P10) -> GIF Marquee (P40) -> 3.5s Dwell -> OfflineGif (P40)
+    //    -> SyncCard INGAME_SHOWCASE (P45) -> RetroAchievements SYNC_CELEBRATION (P55)
+    //    -> Unwind back to INGAME_SHOWCASE -> Unwind back to OfflineGif -> Loop Done -> RestoreMarquee
+    //    -> Game Stopped -> Exact return to Rotation Clock (P10)!
+    DisplayArbiter arbiter;
+    arbiter.submitRequest(DisplayRequest{
+        DisplaySourceId::ROTATION,
+        DisplayPriority::ROTATION,
+        RequestLifecycle::UNTIL_CANCELLED,
+        false,
+        1U,
+        EngineHandle("clock", "clock_main")
+    });
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
+
+    const uint32_t launchMs = millis();
+    OfflineShowcaseCycleState cyc{};
+    cyc.hasOfflineGif = true;
+    cyc.gameStartedAtMs = launchMs;
+
+    // Game launched: Marquee GIF submitted at MQTT priority 40 preempts Rotation
+    arbiter.submitRequest(DisplayRequest{
+        DisplaySourceId::GIF,
+        DisplayPriority::MQTT,
+        RequestLifecycle::UNTIL_CANCELLED,
+        true,
+        2U,
+        EngineHandle("gifs", "gifs_marquee")
+    });
+    TEST_ASSERT_EQUAL(DisplaySourceId::GIF, arbiter.evaluate().sourceId);
+
+    // After 3.6s dwell, OfflineShowcaseCycle switches GIF source to `/showcase_tate/cps2/ssf2t.gif`
+    advanceVirtualMillis(3600);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(cyc, millis(), 0U, true, false, "once", 15U))
+    );
+    TEST_ASSERT_TRUE(cyc.isPlayingOfflineGif);
+
+    // SyncMeta arrives (`HallOfFame` / `RA` card at INGAME_SHOWCASE priority 45) -> preempts OfflineGif cleanly
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::INGAME_SHOWCASE,
+        DisplayPriority::INGAME_SHOWCASE,
+        RequestLifecycle::TIMED,
+        true,
+        3U,
+        EngineHandle("ingame_showcase", "ingame_sync_cards"),
+        6000U,
+        millis(),
+        false,
+        true,
+        true
+    ), true);
+    TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, arbiter.evaluate().sourceId);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::None),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(cyc, millis(), 0U, true, true, "once", 15U))
+    );
+    TEST_ASSERT_FALSE(cyc.isPlayingOfflineGif);
+
+    // Trophy unlocked mid-card -> SYNC_CELEBRATION (priority 55, 5000ms) preempts INGAME_SHOWCASE!
+    arbiter.submitRequest(DisplayRequest(
+        DisplaySourceId::SYNC_CELEBRATION,
+        DisplayPriority::SYNC_CELEBRATION,
+        RequestLifecycle::TIMED,
+        true,
+        4U,
+        EngineHandle("sync_celebration", "sync_celeb"),
+        5000U,
+        millis(),
+        false,
+        true,
+        true
+    ), true);
+    TEST_ASSERT_EQUAL(DisplaySourceId::SYNC_CELEBRATION, arbiter.evaluate().sourceId);
+
+    // Advance 5200ms -> SYNC_CELEBRATION expires, INGAME_SHOWCASE still has ~800ms left -> resumes INGAME_SHOWCASE
+    advanceVirtualMillis(5200);
+    TEST_ASSERT_EQUAL(DisplaySourceId::INGAME_SHOWCASE, arbiter.evaluate().sourceId);
+
+    // Advance 1000ms -> INGAME_SHOWCASE expires -> back to GIF slot -> OfflineShowcaseCycle resumes OfflineGif!
+    advanceVirtualMillis(1000);
+    TEST_ASSERT_EQUAL(DisplaySourceId::GIF, arbiter.evaluate().sourceId);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::StartOfflineGif),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(cyc, millis(), 0U, true, false, "once", 15U))
+    );
+    TEST_ASSERT_TRUE(cyc.isPlayingOfflineGif);
+
+    // OfflineGif completes 1 loop in `once` mode -> restores companion marquee permanently
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(OfflineShowcaseCycleAction::RestoreMarquee),
+        static_cast<uint8_t>(PixelcadeArtResolver::stepOfflineShowcaseCycle(cyc, millis(), 1U, true, false, "once", 15U))
+    );
+    TEST_ASSERT_TRUE(cyc.completedOnce);
+
+    // Console exits game / powers down (`cancelRequest(GIF)`) -> exact unwind back to Rotation Clock (P10)
+    arbiter.cancelRequest(DisplaySourceId::GIF);
+    DisplayDecision dFinal = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, dFinal.sourceId);
+    TEST_ASSERT_FALSE(arbiter.hasActiveSource(DisplaySourceId::GIF));
+    TEST_ASSERT_FALSE(arbiter.hasActiveSource(DisplaySourceId::INGAME_SHOWCASE));
+    TEST_ASSERT_FALSE(arbiter.hasActiveSource(DisplaySourceId::SYNC_CELEBRATION));
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -4831,6 +5079,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_pixelcade_art_resolver_catalog_scoring_and_folder_mappings);
     RUN_TEST(test_mqtt_stream_parser_fragmented_oversized_qos1_and_keepalive);
     RUN_TEST(test_marquee_fit_geometry_proportional_and_text_bounds);
+    RUN_TEST(test_offline_showcase_gif_probe_paths_and_cycle_modes);
+    RUN_TEST(test_offline_showcase_e2e_arbiter_preemption_stack_celebration_and_edge_cases);
 
     return UNITY_END();
 }

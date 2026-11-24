@@ -36,6 +36,20 @@ struct PixelcadeQueryPlan {
  * Designed for both ESP32 (`esp32dev` / `ESP32-S3`) and host native C++17 verification
  * with zero network or filesystem dependencies.
  */
+enum class OfflineShowcaseCycleAction : uint8_t {
+    None = 0,
+    StartOfflineGif = 1,
+    RestoreMarquee = 2
+};
+
+struct OfflineShowcaseCycleState {
+    uint32_t gameStartedAtMs = 0;
+    uint32_t lastCycleEndedMs = 0;
+    bool hasOfflineGif = false;
+    bool isPlayingOfflineGif = false;
+    bool completedOnce = false;
+};
+
 class PixelcadeArtResolver {
 public:
     static String cleanSystemName(const String& rawSystem);
@@ -84,6 +98,29 @@ public:
 
     static String urlEncodeSegment(const char* raw);
     static uint32_t hashArtKey(const char* folder, const char* name);
+
+    static size_t buildOfflineShowcaseProbePaths(
+        const char* cleanSystem,
+        const char* primaryFolder,
+        const char* secondaryFolder,
+        const char* localStem,
+        const char* strippedStem,
+        const char* rawGame,
+        bool isTate,
+        char (*outPaths)[128],
+        size_t maxPaths
+    );
+
+    static OfflineShowcaseCycleAction stepOfflineShowcaseCycle(
+        OfflineShowcaseCycleState& state,
+        uint32_t nowMs,
+        uint32_t completedGifLoops,
+        bool isGamePlaying,
+        bool syncCardPreempting,
+        const char* cycleMode,
+        uint16_t marqueeIntervalSec,
+        uint32_t initialMarqueeDwellMs = 3500U
+    );
 };
 
 } // namespace engines

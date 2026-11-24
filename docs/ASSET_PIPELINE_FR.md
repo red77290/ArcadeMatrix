@@ -54,3 +54,13 @@ python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD
 
 - **Format** : Píxels bruts en RGB565 little-endian (exactement `largeur * hauteur * 2` octets).
 - **Utilisation** : Affichage d'arrière-plans fixes de combat (`SD:/fighters_32/backgrounds/stage1.raw`) ou poussés via l'API REST `POST /api/marquee`.
+
+---
+
+## ⚡ 5. Packs GIF Showcase In-Game Offline (`/showcase` & `/showcase_tate`)
+
+- **Objectif** : Synchronisation Showcase In-Game instantanée (`0 ms`, `0` appel réseau — Fiche Info + Synopsis + Artworks + Vidéo Gameplay) sur Recalbox, Batocera et RetroPie sans serveur `dmd_media_showcase` allumé pendant le jeu.
+- **Arborescence Carte SD** (générée automatiquement depuis vos `gamelist.xml` via l'onglet #7 de `dmd_media_showcase`) :
+  - 🖥️ **Horizontal (YOKO)** : `/showcase/<system>/<rom_stem>.gif` (ex. `/showcase/snes/smw.gif`, `/showcase/neogeo/mslugx.gif`).
+  - 📱 **Vertical (TATE)** : `/showcase_tate/<system>/<rom_stem>.gif` (repli automatique vers `/showcase/<system>/<rom_stem>.gif`).
+- **Encodage & Cycles** : `.gif` `RGB888` 24 bits (`-gifflags -offsetting-transdiff`), respectant `ingame_cycle_mode` (`once`, `alternating` toutes les `ingame_marquee_interval_sec`, ou `loop`) avec bascule vers le serveur Showcase distant uniquement si aucun `.gif` local n'est présent.
