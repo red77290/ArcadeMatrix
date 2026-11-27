@@ -61,6 +61,12 @@ private:
     std::atomic<uint8_t> m_topicsIdx{0};
     std::atomic<uint32_t> m_configGen{0};
 
+    // Per-topic "waiting" label override, index-aligned with m_topics and double-buffered
+    // the same way: written to the spare slot on config apply, published by the
+    // m_topicsIdx release store, read on the render thread (Core 1).
+    char m_waitingLabels[2][mqd::MAX_TOPICS][mqd::WAIT_LABEL_LEN] = {};
+    uint8_t m_waitingCount[2] = {0, 0};
+
     // Task lifecycle.
     TaskHandle_t m_task = nullptr;
     std::atomic<bool> m_wantActive{false};
@@ -90,7 +96,10 @@ private:
     void runTask();
     void runSession();
     void draw(mqd::Session& s);
-    void drawNotice(Notice n);
+    /// Draws `n`. For Notice::Connecting, if `topicIdx` is a configured topic
+    /// with a non-blank waiting_labels entry, that text replaces the default
+    /// CONNECTING label. Pass -1 (or any out-of-range index) to skip the override.
+    void drawNotice(Notice n, int topicIdx);
 };
 
 class MqttDataEngineDescriptorHandler : public IEngineDescriptorHandler {

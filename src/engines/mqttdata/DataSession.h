@@ -23,6 +23,8 @@ namespace mqd {
 
 static constexpr uint8_t MAX_TOPICS = 6;
 static constexpr size_t TOPIC_LEN = 96;
+/// Max length (including the NUL terminator) of a per-topic waiting-label override.
+static constexpr size_t WAIT_LABEL_LEN = 32;
 static constexpr uint8_t MAX_WEATHER_DAYS = 5;
 
 /// Memory budget of one activation.
@@ -40,6 +42,13 @@ Limits limitsFor(bool hasPsram);
 /// repeated entries. Returns how many were kept (at most `max`); `tooLong` counts entries dropped
 /// for not fitting TOPIC_LEN.
 uint8_t parseTopics(const char* list, char out[][TOPIC_LEN], uint8_t max, uint8_t* tooLong = nullptr);
+
+/// Parses the "waiting_labels" setting with the same separators as parseTopics
+/// (comma, newline, carriage return) but blanks are KEPT as empty strings so
+/// each entry stays aligned with the topic at the same index. Trimmed, no
+/// dedupe. Entries longer than WAIT_LABEL_LEN - 1 are truncated. Returns the
+/// number of entries written (0 for an empty/null `list`).
+uint8_t parseWaitingLabels(const char* list, char out[][WAIT_LABEL_LEN], uint8_t max);
 
 struct Allocator {
     void* (*alloc)(size_t bytes);

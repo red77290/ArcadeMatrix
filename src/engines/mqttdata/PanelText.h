@@ -43,4 +43,9 @@ enum class Message : uint8_t { Connecting, NoConnection, Unsupported };
 /// NON PRIS EN CHARGE / NO COMPATIBLE in #C08000.
 void drawNotice(IDrawingSurface* m, Message msg);
 
+/// Per-topic override of Message::Connecting: draws `text` in #787878, same layout
+/// and style as drawNotice. Null or empty `text` draws nothing (caller falls back
+/// to drawNotice(m, Message::Connecting)).
+void drawWaitingLabel(IDrawingSurface* m, const char* text);
+
 }  // namespace panel_text
